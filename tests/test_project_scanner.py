@@ -76,20 +76,36 @@ class ProjectScannerTests(unittest.TestCase):
             target = Path(outside)
             (target / "outside.rpy").write_text("label outside:", encoding="utf-8")
             junction = root / "linked-junction"
-            command = f'mklink /J "{junction}" "{target}"'
-            completed = subprocess.run(
-                ["cmd", "/d", "/c", command],
-                capture_output=True,
-                check=False,
-                text=True,
-            )
-            if completed.returncode:
-                self.skipTest("current environment does not allow directory junctions")
+            self.create_directory_junction(junction, target)
 
             snapshot = scan_project(root)
 
             self.assertFalse(snapshot.has_file("linked-junction/outside.rpy"))
             self.assertIn("linked-junction", snapshot.ignored_directories)
+
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows reparse points")
+    def test_scan_rejects_a_directory_junction_as_the_root(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            junction = Path(directory) / "linked-junction"
+            self.create_directory_junction(junction, Path(outside))
+
+            with self.assertRaises(ProjectScanError):
+                scan_project(junction)
+
+    def test_create_directory_junction_uses_separate_command_arguments(self):
+        junction = Path("C:/test/junction")
+        target = Path("C:/test/target")
+        completed = Mock(returncode=0, stdout="", stderr="")
+
+        with patch("tests.test_project_scanner.subprocess.run", return_value=completed) as run:
+            self.create_directory_junction(junction, target)
+
+        run.assert_called_once_with(
+            ["cmd", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
 
     def test_scan_wraps_is_symlink_errors(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -115,3 +131,22 @@ class ProjectScannerTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ProjectScanError, "项目目录"):
                 scan_project(file_path)
+
+    def create_directory_junction(self, junction: Path, target: Path) -> None:
+        try:
+            completed = subprocess.run(
+                ["cmd", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        except OSError as exc:
+            self.skipTest(f"current environment cannot run mklink: {exc}")
+
+        if completed.returncode == 0:
+            return
+
+        output = f"{completed.stdout}\n{completed.stderr}".casefold()
+        if any(marker in output for marker in ("access denied", "permission denied", "privilege", "not supported")):
+            self.skipTest("current environment does not permit directory junctions")
+        self.fail(f"mklink /J failed: {completed.stdout}{completed.stderr}")
