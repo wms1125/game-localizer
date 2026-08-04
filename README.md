@@ -1,0 +1,49 @@
+# 本地游戏汉化辅助工具
+
+这是一个无需联网、无需第三方依赖的本地翻译辅助工具。它使用 JSON 字典翻译你合法拥有或已获授权的游戏明文资源，并生成汉化结果和待翻译清单。
+
+仅用于合法拥有或已获授权的游戏资源；不支持破解、解密、绕过保护或用于传播盗版内容。
+
+## 快速开始
+
+示例文件位于 `examples/`。运行后会匹配四个字典条目，`Options` 会作为未匹配条目写入待翻译清单。
+
+```powershell
+python cli.py examples/game.json examples/dictionary.json
+python cli.py game.csv dictionary.json --output translated.csv
+python cli.py game.txt dictionary.json --untranslated todo.json
+python gui.py
+python -m unittest discover -s tests -v
+```
+
+命令行的 `--output` 用于指定汉化资源输出位置，`--untranslated` 用于指定待翻译 JSON 清单的位置。运行 `python cli.py --help` 可查看参数说明和授权提示。`python gui.py` 启动提供相同处理能力的本地图形界面。
+
+## 翻译字典
+
+字典必须是 UTF-8 编码的 JSON 对象：键是原文，值是简体中文译文。例如：
+
+```json
+{
+  "New Game": "新游戏",
+  "Hello, {name}!": "你好，{name}！"
+}
+```
+
+也就是 `{ "原文": "中文" }` 的格式。键和值都必须是字符串，键不能是空字符串。项目提供的 `examples/dictionary.json` 以英文→简体中文为主，并保留一个日文条目，方便确认多语言字典兼容性。
+
+请保留原文中的占位符，例如 `{name}`、`{0}`、`%1`、`%s` 与换行标记 `\\n`。工具会报告译文缺少的占位符，但不会自动修复；请在交付前人工核对所有警告。
+
+## 支持的资源与输出
+
+只处理以下**明文**资源扩展名：`.txt`、`.ks`、`.rpy`、`.script`、`.csv`、`.json`。输入会依次识别 UTF-8 BOM、UTF-8、CP932 和 Shift-JIS；无论输入编码为何，输出一律为无 BOM 的 UTF-8。
+
+默认情况下，工具不会覆盖源文件：
+
+- `game.json` 会生成 `game.zh.json`
+- 同时生成 `game.untranslated.json`，其中包含可补充进字典的未翻译原文
+
+对于 JSON，仅翻译字符串值，绝不改动对象键；CSV 按完整单元格精确匹配；纯文本按最长键优先进行单次行内替换。压缩包、二进制、加密、受保护或需要反编译的游戏资源不在支持范围内。
+
+## 本地与授权限制
+
+所有处理都在本机离线完成：本工具不会调用网络服务、上传资源或下载翻译。请先备份原始游戏文件，并仅处理你拥有合法权利或明确授权修改的资源。使用本工具不提供破解、解密、规避 DRM 或其他保护措施的能力或指导。
