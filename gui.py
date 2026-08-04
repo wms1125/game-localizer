@@ -166,10 +166,11 @@ class GameTranslatorApp:
 
     def run_translation(self) -> None:
         if not self.resource_path.get() or not self.dictionary_path.get():
-            messagebox.showwarning(
-                "\u7f3a\u5c11\u6587\u4ef6",
-                "\u8bf7\u5148\u9009\u62e9\u8d44\u6e90\u6587\u4ef6\u5e76\u52a0\u8f7d\u7ffb\u8bd1\u5b57\u5178\u3002",
+            prompt = (
+                "\u8bf7\u5148\u9009\u62e9\u8d44\u6e90\u6587\u4ef6\u5e76\u52a0\u8f7d\u7ffb\u8bd1\u5b57\u5178\u3002"
             )
+            self._append_log(prompt)
+            messagebox.showwarning("\u7f3a\u5c11\u6587\u4ef6", prompt)
             return
 
         self._append_log("\u5f00\u59cb\u6c49\u5316\u5904\u7406\u2026")
