@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def format_result(result: ProcessingResult, preview_limit: int = 50) -> str:
+    preview_limit = max(0, preview_limit)
     lines: list[str] = []
     for item in result.matches[:preview_limit]:
         lines.append(
@@ -47,6 +48,8 @@ def format_result(result: ProcessingResult, preview_limit: int = 50) -> str:
         lines.append(
             f"[\u5360\u4f4d\u7b26\u8b66\u544a] {warning.location}: \u7f3a\u5c11 {', '.join(warning.missing)}"
         )
+    for path in result.overwritten_paths:
+        lines.append(f"[\u8986\u76d6] \u5df2\u8986\u76d6\u73b0\u6709\u6587\u4ef6: {path}")
     lines.extend(
         [
             f"\u8f93\u5165\u7f16\u7801: {result.input_encoding}",

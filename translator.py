@@ -19,7 +19,7 @@ PLACEHOLDER_RE = re.compile(
     r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{(?:[A-Za-z_][A-Za-z0-9_]*|\d+)\}|"
     r"%(?:\d+|[sdif])|\\r\\n|\\n"
 )
-CANDIDATE_RE = re.compile(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]")
+CANDIDATE_RE = re.compile(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]")
 URL_RE = re.compile(r"^(?:https?://|www\.)", re.IGNORECASE)
 PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]|\.{1,2}[\\/])")
 
@@ -72,6 +72,7 @@ class ProcessingResult:
     matches: list[MatchPreview]
     unmatched: list[UnmatchedPreview]
     warnings: list[PlaceholderWarning]
+    overwritten_paths: tuple[Path, ...] = ()
 
 
 def decode_bytes(data: bytes) -> tuple[str, str]:
@@ -98,6 +99,12 @@ def load_translation_dictionary(path: str | Path) -> dict[str, str]:
         raise TranslationError("翻译字典的键和值必须都是字符串")
     if any(key == "" for key in data):
         raise TranslationError("翻译字典的原文键不能为空")
+    try:
+        for key, value in data.items():
+            key.encode("utf-8")
+            value.encode("utf-8")
+    except UnicodeError as exc:
+        raise TranslationError("翻译字典的键和值必须可编码为 UTF-8") from exc
     return data
 
 
@@ -164,10 +171,13 @@ def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
 def transform_csv(text: str, dictionary: dict[str, str]) -> TransformResult:
     sample = text[:8192]
     try:
-        dialect = csv.Sniffer().sniff(sample)
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
     except csv.Error:
         dialect = csv.excel
-    rows = list(csv.reader(io.StringIO(text, newline=""), dialect))
+    try:
+        rows = list(csv.reader(io.StringIO(text, newline=""), dialect, strict=True))
+    except csv.Error as exc:
+        raise TranslationError(f"CSV 资源解析失败: {exc}") from exc
     result = TransformResult(content="")
     for row_number, row in enumerate(rows, start=1):
         for column_number, value in enumerate(row, start=1):
@@ -178,8 +188,18 @@ def transform_csv(text: str, dictionary: dict[str, str]) -> TransformResult:
                 result,
             )
     output = io.StringIO(newline="")
-    writer = csv.writer(output, dialect=dialect, lineterminator="\n")
-    writer.writerows(rows)
+    try:
+        writer = csv.writer(
+            output,
+            delimiter=dialect.delimiter,
+            quotechar='"',
+            doublequote=True,
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator="\n",
+        )
+        writer.writerows(rows)
+    except csv.Error as exc:
+        raise TranslationError(f"CSV 资源写出失败: {exc}") from exc
     result.content = output.getvalue()
     return result
 
@@ -210,7 +230,7 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
         translated_line = pattern.sub(replace, line) if pattern else line
         output_lines.append(translated_line)
-        original_candidate = line.strip()
+        original_candidate = line.removesuffix("\n").removesuffix("\r")
         remaining_parts: list[str] = []
         cursor = 0
         for start, end in matched_spans:
@@ -239,7 +259,7 @@ def _cleanup_file(path: Path, errors: list[str]) -> None:
         errors.append(f"清理 {path} 失败: {exc}")
 
 
-def atomic_write_many(outputs: dict[Path, str]) -> None:
+def atomic_write_many(outputs: dict[Path, str]) -> tuple[Path, ...]:
     ordered_outputs = [(Path(path), content) for path, content in outputs.items()]
     resolved_outputs = [path.resolve() for path, _ in ordered_outputs]
     if len(set(resolved_outputs)) != len(resolved_outputs):
@@ -286,7 +306,7 @@ def atomic_write_many(outputs: dict[Path, str]) -> None:
             os.replace(staged[path], path)
             staged.pop(path)
             committed.add(path)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         restored_backups: set[Path] = set()
         for path, _ in reversed(ordered_outputs):
             if path in backups:
@@ -310,6 +330,7 @@ def atomic_write_many(outputs: dict[Path, str]) -> None:
             _cleanup_file(backup, cleanup_errors)
         if cleanup_errors:
             raise TranslationError(f"输出文件已写入，但清理备份失败: {'; '.join(cleanup_errors)}")
+        return tuple(backups)
 
 
 def atomic_write_text(path: Path, content: str) -> None:
@@ -323,6 +344,7 @@ def process_resource(
     untranslated_path: str | Path | None = None,
 ) -> ProcessingResult:
     resource = Path(resource_path)
+    dictionary_file = Path(dictionary_path)
     if not resource.is_file():
         raise TranslationError(f"资源文件不存在: {resource}")
     suffix = resource.suffix.lower()
@@ -334,10 +356,13 @@ def process_resource(
     untranslated_output = Path(untranslated_path) if untranslated_path is not None else default_untranslated
     if output.resolve() == untranslated_output.resolve():
         raise TranslationError("输出路径不能相同")
-    if output.resolve() == resource.resolve() or untranslated_output.resolve() == resource.resolve():
+    resolved_outputs = (output.resolve(), untranslated_output.resolve())
+    if resource.resolve() in resolved_outputs:
         raise TranslationError("输出路径不能覆盖源文件")
+    if dictionary_file.resolve() in resolved_outputs:
+        raise TranslationError("输出路径不能覆盖翻译字典")
 
-    dictionary = load_translation_dictionary(dictionary_path)
+    dictionary = load_translation_dictionary(dictionary_file)
     try:
         text, input_encoding = decode_bytes(resource.read_bytes())
     except OSError as exc:
@@ -350,7 +375,7 @@ def process_resource(
     else:
         transformed = transform_plaintext(text, dictionary, suffix.removeprefix(".").upper())
 
-    atomic_write_many(
+    overwritten_paths = atomic_write_many(
         {
             output: transformed.content,
             untranslated_output: json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
@@ -367,4 +392,5 @@ def process_resource(
         matches=transformed.matches,
         unmatched=transformed.unmatched,
         warnings=transformed.warnings,
+        overwritten_paths=overwritten_paths,
     )

@@ -51,6 +51,26 @@ class CliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 1)
             self.assertIn("\u9519\u8bef:", completed.stderr)
 
+    def test_cli_reports_unencodable_dictionary_text_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"\\ud800"}', encoding="ascii")
+
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "cli.py"), str(resource), str(dictionary)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("\u9519\u8bef:", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+
     def test_format_result_escapes_preview_values_to_one_line(self):
         original = 'Quote " slash \\ newline\nnext'
         translated = 'Translated " slash \\ newline\nnext'
@@ -86,6 +106,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len([line for line in unmatched_lines if ":" in line]), 50)
         self.assertIn("[\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", match_lines)
         self.assertIn("[\u672a\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", unmatched_lines)
+
+    def test_format_result_normalizes_negative_preview_limit_to_zero(self):
+        result = self.make_result(
+            matches=[MatchPreview("match", "source", "target")],
+            unmatched=[UnmatchedPreview("unmatched", "source")],
+        )
+
+        output = format_result(result, preview_limit=-1)
+
+        self.assertNotIn("match: ", output)
+        self.assertNotIn("unmatched: ", output)
+        self.assertIn("[\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", output)
+        self.assertIn("[\u672a\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", output)
+
+    def test_format_result_lists_each_target_overwritten_by_this_run(self):
+        result = self.make_result()
+        result.overwritten_paths = (Path("translated.json"), Path("untranslated.json"))
+
+        output = format_result(result)
+
+        self.assertIn("[\u8986\u76d6] \u5df2\u8986\u76d6\u73b0\u6709\u6587\u4ef6: translated.json", output)
+        self.assertIn("[\u8986\u76d6] \u5df2\u8986\u76d6\u73b0\u6709\u6587\u4ef6: untranslated.json", output)
 
     @staticmethod
     def make_result(

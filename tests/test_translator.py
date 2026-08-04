@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import tempfile
@@ -36,6 +37,15 @@ class EncodingAndDictionaryTests(unittest.TestCase):
             with self.assertRaisesRegex(TranslationError, "字符串"):
                 load_translation_dictionary(path)
 
+    def test_dictionary_keys_and_values_must_be_utf8_encodable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "dictionary.json")
+            for document in ('{"\\ud800":"value"}', '{"key":"\\ud800"}'):
+                with self.subTest(document=document):
+                    path.write_text(document, encoding="ascii")
+                    with self.assertRaisesRegex(TranslationError, "UTF-8"):
+                        load_translation_dictionary(path)
+
     def test_placeholder_check_reports_only_missing_occurrences(self):
         self.assertEqual(
             missing_placeholders("Hello {name}, %1\\n", "你好 %1，{name}\\n"),
@@ -64,6 +74,32 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.replacement_count, 1)
         self.assertIn("CSV 第 3 行第 2 列", [item.location for item in result.unmatched])
 
+    def test_csv_limits_sniffing_so_single_column_text_remains_complete_cells(self):
+        result = transform_csv("New Game\nLoad Game\n", {"New Game": "新游戏"})
+
+        self.assertEqual(result.content, "新游戏\nLoad Game\n")
+        self.assertEqual(result.replacement_count, 1)
+        self.assertEqual(result.untranslated, {"Load Game": ""})
+
+    def test_csv_writes_translation_containing_delimiter_and_double_quote_safely(self):
+        result = transform_csv(
+            "id|text\n1|'New Game'\n",
+            {"New Game": '译文|带"引号"'},
+        )
+
+        rows = list(csv.reader(result.content.splitlines(), delimiter="|", quotechar='"'))
+        self.assertEqual(rows[1], ["1", '译文|带"引号"'])
+        self.assertIn('"译文|带""引号"""', result.content)
+
+    def test_csv_wraps_reader_errors_as_translation_errors(self):
+        with self.assertRaisesRegex(TranslationError, "CSV.*解析"):
+            transform_csv('id,text\n1,"unterminated\n', {})
+
+    def test_csv_wraps_writer_errors_as_translation_errors(self):
+        with patch("translator.csv.writer", side_effect=csv.Error("cannot write")):
+            with self.assertRaisesRegex(TranslationError, "CSV.*写出"):
+                transform_csv("id,text\n1,New Game\n", {})
+
     def test_plaintext_uses_single_pass_longest_first_matching(self):
         result = transform_plaintext(
             "Start New Game, {name}!\nOptions\n",
@@ -79,6 +115,31 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.content, "Open 新游戏\n")
         self.assertEqual(result.untranslated, {"Open New Game": ""})
         self.assertEqual(result.unmatched[0].original, "Open New Game")
+
+    def test_plaintext_untranslated_keys_preserve_horizontal_whitespace_for_lf_and_crlf(self):
+        result = transform_plaintext(
+            "  Open New Game  \n\tLoad Game \t\r\n",
+            {"New Game": "新游戏"},
+        )
+
+        self.assertEqual(result.content, "  Open 新游戏  \n\tLoad Game \t\r\n")
+        self.assertEqual(
+            result.untranslated,
+            {"  Open New Game  ": "", "\tLoad Game \t": ""},
+        )
+
+    def test_plaintext_preserves_complete_whitespace_lines(self):
+        source = " \t\r\n\nOptions\n"
+
+        result = transform_plaintext(source, {})
+
+        self.assertEqual(result.content, source)
+        self.assertEqual(result.untranslated, {"Options": ""})
+
+    def test_halfwidth_katakana_is_an_untranslated_candidate(self):
+        result = transform_json('{"label":"ｶﾀｶﾅ"}', {})
+
+        self.assertEqual(result.untranslated, {"ｶﾀｶﾅ": ""})
 
 
 class ProcessingTests(unittest.TestCase):
@@ -111,6 +172,32 @@ class ProcessingTests(unittest.TestCase):
 
             with self.assertRaisesRegex(TranslationError, "不能覆盖源文件"):
                 process_resource(resource, dictionary, output_path=resource)
+
+    def test_process_resource_rejects_either_output_aliasing_resource_or_dictionary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            alias_parent = root / "alias"
+            alias_parent.mkdir()
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+            aliases = {
+                "resource": alias_parent / ".." / resource.name,
+                "dictionary": alias_parent / ".." / dictionary.name,
+            }
+
+            for protected_name, protected_path in aliases.items():
+                for role in ("output", "untranslated"):
+                    with self.subTest(protected=protected_name, role=role):
+                        dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+                        kwargs = {
+                            "output_path": root / "safe.zh.txt",
+                            "untranslated_path": root / "safe.untranslated.json",
+                        }
+                        kwargs[f"{role}_path"] = protected_path
+                        with self.assertRaisesRegex(TranslationError, "不能覆盖"):
+                            process_resource(resource, dictionary, **kwargs)
 
     def test_unsupported_extension_fails_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -174,3 +261,47 @@ class ProcessingTests(unittest.TestCase):
             self.assertEqual(untranslated.read_text(encoding="utf-8"), "old todo")
             self.assertEqual(list(root.glob(".*.tmp")), [])
             self.assertEqual(list(root.glob(".*.bak")), [])
+
+    def test_atomic_write_many_wraps_unicode_errors_and_cleans_staged_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.txt"
+            second = root / "second.txt"
+            first.write_text("old first", encoding="utf-8")
+            second.write_text("old second", encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "事务方式"):
+                atomic_write_many({first: "new first", second: "bad \ud800"})
+
+            self.assertEqual(first.read_text(encoding="utf-8"), "old first")
+            self.assertEqual(second.read_text(encoding="utf-8"), "old second")
+            self.assertEqual(list(root.glob(".*.tmp")), [])
+            self.assertEqual(list(root.glob(".*.bak")), [])
+
+    def test_atomic_write_many_returns_only_targets_actually_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "existing.txt"
+            new = root / "new.txt"
+            existing.write_text("old", encoding="utf-8")
+
+            overwritten = atomic_write_many({existing: "updated", new: "created"})
+
+            self.assertEqual(overwritten, (existing,))
+            self.assertEqual(existing.read_text(encoding="utf-8"), "updated")
+            self.assertEqual(new.read_text(encoding="utf-8"), "created")
+
+    def test_process_resource_reports_mixed_existing_and_new_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            output = root / "game.zh.txt"
+            untranslated = root / "game.untranslated.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+            output.write_text("old", encoding="utf-8")
+
+            result = process_resource(resource, dictionary, output, untranslated)
+
+            self.assertEqual(result.overwritten_paths, (output,))
