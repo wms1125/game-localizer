@@ -6,8 +6,10 @@ from pathlib import Path
 from translator import (
     TranslationError,
     decode_bytes,
+    default_output_paths,
     load_translation_dictionary,
     missing_placeholders,
+    process_resource,
     transform_csv,
     transform_json,
     transform_plaintext,
@@ -73,3 +75,48 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.content, "Open 新游戏\n")
         self.assertEqual(result.untranslated, {"Open New Game": ""})
         self.assertEqual(result.unmatched[0].original, "Open New Game")
+
+
+class ProcessingTests(unittest.TestCase):
+    def test_default_paths_and_json_end_to_end(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"title":"New Game","missing":"Options"}', encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+
+            result = process_resource(resource, dictionary)
+
+            self.assertEqual(result.output_path, root / "game.zh.json")
+            self.assertEqual(result.untranslated_path, root / "game.untranslated.json")
+            self.assertEqual(json.loads(result.output_path.read_text(encoding="utf-8"))["title"], "新游戏")
+            self.assertEqual(
+                json.loads(result.untranslated_path.read_text(encoding="utf-8")),
+                {"Options": ""},
+            )
+            self.assertEqual(default_output_paths(resource), (result.output_path, result.untranslated_path))
+
+    def test_process_resource_rejects_source_as_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "不能覆盖源文件"):
+                process_resource(resource, dictionary, output_path=resource)
+
+    def test_unsupported_extension_fails_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.exe"
+            dictionary = root / "dictionary.json"
+            resource.write_bytes(b"not a resource")
+            dictionary.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "不支持"):
+                process_resource(resource, dictionary)
+
+            self.assertFalse((root / "game.zh.exe").exists())

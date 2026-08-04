@@ -6,8 +6,10 @@ import csv
 from dataclasses import dataclass, field
 import io
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Any
 
 
@@ -220,3 +222,86 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
             result.unmatched.append(UnmatchedPreview(location, original_candidate))
     result.content = "".join(output_lines)
     return result
+
+
+def default_output_paths(resource_path: str | Path) -> tuple[Path, Path]:
+    resource = Path(resource_path)
+    return (
+        resource.with_name(f"{resource.stem}.zh{resource.suffix}"),
+        resource.with_name(f"{resource.stem}.untranslated.json"),
+    )
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    temporary_name: str | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_name = handle.name
+        os.replace(temporary_name, path)
+    except OSError as exc:
+        if temporary_name:
+            Path(temporary_name).unlink(missing_ok=True)
+        raise TranslationError(f"无法写入输出文件 {path}: {exc}") from exc
+
+
+def process_resource(
+    resource_path: str | Path,
+    dictionary_path: str | Path,
+    output_path: str | Path | None = None,
+    untranslated_path: str | Path | None = None,
+) -> ProcessingResult:
+    resource = Path(resource_path)
+    if not resource.is_file():
+        raise TranslationError(f"资源文件不存在: {resource}")
+    suffix = resource.suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise TranslationError(f"不支持的资源扩展名: {suffix or '(无扩展名)'}")
+
+    default_output, default_untranslated = default_output_paths(resource)
+    output = Path(output_path) if output_path is not None else default_output
+    untranslated_output = Path(untranslated_path) if untranslated_path is not None else default_untranslated
+    if output.resolve() == resource.resolve() or untranslated_output.resolve() == resource.resolve():
+        raise TranslationError("输出路径不能覆盖源文件")
+
+    dictionary = load_translation_dictionary(dictionary_path)
+    try:
+        text, input_encoding = decode_bytes(resource.read_bytes())
+    except OSError as exc:
+        raise TranslationError(f"无法读取资源文件: {exc}") from exc
+
+    if suffix == ".json":
+        transformed = transform_json(text, dictionary)
+    elif suffix == ".csv":
+        transformed = transform_csv(text, dictionary)
+    else:
+        transformed = transform_plaintext(text, dictionary, suffix.removeprefix(".").upper())
+
+    atomic_write_text(output, transformed.content)
+    atomic_write_text(
+        untranslated_output,
+        json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
+    )
+    return ProcessingResult(
+        input_encoding=input_encoding,
+        output_encoding=OUTPUT_ENCODING,
+        output_path=output,
+        untranslated_path=untranslated_output,
+        matched_keys=transformed.matched_keys,
+        replacement_count=transformed.replacement_count,
+        untranslated=transformed.untranslated,
+        matches=transformed.matches,
+        unmatched=transformed.unmatched,
+        warnings=transformed.warnings,
+    )
