@@ -38,6 +38,20 @@ class UnityAdapterTests(unittest.TestCase):
         self.assertEqual(report.candidates[0].capability, CapabilityLevel.DETECT_ONLY)
         self.assertTrue(report.candidates[0].warnings)
 
+    def test_packaged_build_uses_data_directory_containing_managers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            touch(root, "UnityPlayer.dll")
+            (root / "A_Data").mkdir()
+            (root / "Game_Data").mkdir()
+            touch(root, "Game_Data/globalgamemanagers")
+            report = detect_project(root, adapters=(UnityAdapter(),))
+
+        self.assertEqual(report.status, DetectionStatus.AUTO_SELECTED)
+        evidence = {item.code: item.path for item in report.candidates[0].evidence}
+        self.assertEqual(evidence["unity_data"], "game_data")
+        self.assertEqual(evidence["unity_managers"], "game_data/globalgamemanagers")
+
     def test_assets_directory_alone_does_not_auto_select_unity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

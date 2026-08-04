@@ -26,10 +26,14 @@ class GodotAdapter(EngineAdapter):
 
         packs = snapshot.root_files_with_suffix(".pck")
         if packs:
-            evidence.append(DetectionEvidence("godot_pack", packs[0], "发现 Godot PCK", 60))
             pack_stems = {Path(path).stem for path in packs}
             executables = snapshot.root_files_with_suffix(".exe")
             matching = next((path for path in executables if Path(path).stem in pack_stems), None)
+            pack = next(
+                (path for path in packs if matching and Path(path).stem == Path(matching).stem),
+                packs[0],
+            )
+            evidence.append(DetectionEvidence("godot_pack", pack, "发现 Godot PCK", 60))
             if matching:
                 evidence.append(
                     DetectionEvidence("godot_executable", matching, "发现同名可执行文件", 25)

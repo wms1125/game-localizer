@@ -28,13 +28,24 @@ class UnityAdapter(EngineAdapter):
             )
         data_dirs = snapshot.root_dirs_with_suffix("_data")
         if data_dirs:
+            manager_dir = next(
+                (
+                    data_dir
+                    for data_dir in data_dirs
+                    if any(
+                        path.startswith(f"{data_dir}/")
+                        for path in snapshot.files_named("globalgamemanagers")
+                    )
+                ),
+                data_dirs[0],
+            )
             evidence.append(
-                DetectionEvidence("unity_data", data_dirs[0], "发现 Unity Data 目录", 30)
+                DetectionEvidence("unity_data", manager_dir, "发现 Unity Data 目录", 30)
             )
             managers = tuple(
                 path
                 for path in snapshot.files_named("globalgamemanagers")
-                if path.startswith(f"{data_dirs[0]}/")
+                if path.startswith(f"{manager_dir}/")
             )
             if managers:
                 evidence.append(

@@ -26,3 +26,15 @@ class GodotAdapterTests(unittest.TestCase):
 
         self.assertEqual(report.status, DetectionStatus.AUTO_SELECTED)
         self.assertTrue(report.candidates[0].warnings)
+
+    def test_pck_evidence_uses_the_pack_matching_the_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.pck").write_bytes(b"pack")
+            (root / "b.pck").write_bytes(b"pack")
+            (root / "b.exe").write_bytes(b"executable")
+            report = detect_project(root, adapters=(GodotAdapter(),))
+
+        evidence = {item.code: item.path for item in report.candidates[0].evidence}
+        self.assertEqual(evidence["godot_pack"], "b.pck")
+        self.assertEqual(evidence["godot_executable"], "b.exe")
