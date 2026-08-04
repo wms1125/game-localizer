@@ -43,6 +43,37 @@ class DetectionCliTests(unittest.TestCase):
         self.assertIn("错误:", completed.stderr)
         self.assertNotIn("Traceback", completed.stderr)
 
+    def test_detect_returns_one_for_missing_project_argument(self):
+        completed = self.run_cli("detect")
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("usage:", completed.stderr)
+        self.assertIn("error:", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_detect_returns_one_for_unknown_argument(self):
+        completed = self.run_cli("detect", ".", "--bad")
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("usage:", completed.stderr)
+        self.assertIn("error:", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_engines_returns_one_for_extra_argument(self):
+        completed = self.run_cli("engines", "extra")
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("usage:", completed.stderr)
+        self.assertIn("error:", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_detect_help_returns_zero(self):
+        completed = self.run_cli("detect", "--help")
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("usage:", completed.stdout)
+
+    def test_engines_help_returns_zero(self):
+        completed = self.run_cli("engines", "--help")
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("usage:", completed.stdout)
+
     def test_engines_lists_all_registered_engine_ids(self):
         completed = self.run_cli("engines", "--json")
         self.assertEqual(completed.returncode, 0, completed.stderr)

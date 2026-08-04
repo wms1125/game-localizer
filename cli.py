@@ -84,7 +84,10 @@ def build_engines_parser() -> argparse.ArgumentParser:
 
 
 def run_detect(argv: list[str]) -> int:
-    args = build_detect_parser().parse_args(argv)
+    try:
+        args = build_detect_parser().parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
     try:
         report = detect_project(args.project)
     except ProjectScanError as exc:
@@ -98,7 +101,10 @@ def run_detect(argv: list[str]) -> int:
 
 
 def run_engines(argv: list[str]) -> int:
-    args = build_engines_parser().parse_args(argv)
+    try:
+        args = build_engines_parser().parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
     payload = [
         {
             "engine_id": adapter.engine_id,
