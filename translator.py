@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections import Counter
 import codecs
+import csv
 from dataclasses import dataclass, field
+import io
 import json
 from pathlib import Path
 import re
+from typing import Any
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".ks", ".rpy", ".script", ".csv", ".json"}
@@ -14,6 +17,9 @@ PLACEHOLDER_RE = re.compile(
     r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{(?:[A-Za-z_][A-Za-z0-9_]*|\d+)\}|"
     r"%(?:\d+|[sdif])|\\r\\n|\\n"
 )
+CANDIDATE_RE = re.compile(r"[A-Za-z\u3040-\u30ff\u3400-\u9fff]")
+URL_RE = re.compile(r"^(?:https?://|www\.)", re.IGNORECASE)
+PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]|\.{1,2}[\\/])")
 
 
 class TranslationError(Exception):
@@ -96,3 +102,114 @@ def load_translation_dictionary(path: str | Path) -> dict[str, str]:
 def missing_placeholders(source: str, translated: str) -> tuple[str, ...]:
     missing = Counter(PLACEHOLDER_RE.findall(source)) - Counter(PLACEHOLDER_RE.findall(translated))
     return tuple(token for token, count in sorted(missing.items()) for _ in range(count))
+
+
+def is_translation_candidate(value: str) -> bool:
+    stripped = value.strip()
+    return bool(
+        stripped
+        and CANDIDATE_RE.search(stripped)
+        and not URL_RE.match(stripped)
+        and not PATH_RE.match(stripped)
+    )
+
+
+def _record_exact(value: str, location: str, dictionary: dict[str, str], result: TransformResult) -> str:
+    if value in dictionary:
+        translated = dictionary[value]
+        result.matched_keys.add(value)
+        result.replacement_count += 1
+        result.matches.append(MatchPreview(location, value, translated))
+        missing = missing_placeholders(value, translated)
+        if missing:
+            result.warnings.append(PlaceholderWarning(location, value, translated, missing))
+        return translated
+    if is_translation_candidate(value):
+        result.untranslated.setdefault(value, "")
+        result.unmatched.append(UnmatchedPreview(location, value))
+    return value
+
+
+def _json_path(parent: str, key: str | int) -> str:
+    if isinstance(key, int):
+        return f"{parent}[{key}]"
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        return f"{parent}.{key}"
+    return f"{parent}[{key!r}]"
+
+
+def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise TranslationError(f"JSON 资源格式无效: {exc}") from exc
+    result = TransformResult(content="")
+
+    def walk(value: Any, path: str) -> Any:
+        if isinstance(value, str):
+            return _record_exact(value, f"JSON {path}", dictionary, result)
+        if isinstance(value, list):
+            return [walk(item, _json_path(path, index)) for index, item in enumerate(value)]
+        if isinstance(value, dict):
+            return {key: walk(item, _json_path(path, key)) for key, item in value.items()}
+        return value
+
+    transformed = walk(data, "$")
+    result.content = json.dumps(transformed, ensure_ascii=False, indent=2) + "\n"
+    return result
+
+
+def transform_csv(text: str, dictionary: dict[str, str]) -> TransformResult:
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample)
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.reader(io.StringIO(text, newline=""), dialect))
+    result = TransformResult(content="")
+    for row_number, row in enumerate(rows, start=1):
+        for column_number, value in enumerate(row, start=1):
+            row[column_number - 1] = _record_exact(
+                value,
+                f"CSV 第 {row_number} 行第 {column_number} 列",
+                dictionary,
+                result,
+            )
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, dialect=dialect, lineterminator="\n")
+    writer.writerows(rows)
+    result.content = output.getvalue()
+    return result
+
+
+def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT") -> TransformResult:
+    result = TransformResult(content="")
+    pattern = (
+        re.compile("|".join(re.escape(key) for key in sorted(dictionary, key=len, reverse=True)))
+        if dictionary
+        else None
+    )
+    output_lines: list[str] = []
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        location = f"{label} 第 {line_number} 行"
+
+        def replace(match: re.Match[str]) -> str:
+            original = match.group(0)
+            translated = dictionary[original]
+            result.matched_keys.add(original)
+            result.replacement_count += 1
+            result.matches.append(MatchPreview(location, original, translated))
+            missing = missing_placeholders(original, translated)
+            if missing:
+                result.warnings.append(PlaceholderWarning(location, original, translated, missing))
+            return translated
+
+        translated_line = pattern.sub(replace, line) if pattern else line
+        output_lines.append(translated_line)
+        candidate = translated_line.strip()
+        if candidate not in dictionary.values() and is_translation_candidate(candidate):
+            if not result.matches or result.matches[-1].location != location or re.search(r"[A-Za-z\u3040-\u30ff]", candidate):
+                result.untranslated.setdefault(candidate, "")
+                result.unmatched.append(UnmatchedPreview(location, candidate))
+    result.content = "".join(output_lines)
+    return result
