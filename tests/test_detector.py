@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from game_localizer.adapters.base import EngineAdapter
 from game_localizer.detector import detect_project, resolve_detection
@@ -21,8 +22,10 @@ class FixedAdapter(EngineAdapter):
     def __init__(self, engine_id: str, score: int):
         self.engine_id = engine_id
         self.score = score
+        self.snapshots: list[ProjectSnapshot] = []
 
     def detect(self, snapshot: ProjectSnapshot) -> DetectionResult | None:
+        self.snapshots.append(snapshot)
         if self.score == 0:
             return None
         return self.build_result(
@@ -68,9 +71,18 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(low.status, DetectionStatus.UNKNOWN)
 
     def test_detect_project_scans_once_and_uses_injected_adapters(self):
-        with tempfile.TemporaryDirectory() as directory:
-            report = detect_project(directory, adapters=(FixedAdapter("fixed", 90),))
-        self.assertEqual(report.selected_engine, "fixed")
+        root = Path("C:/game")
+        snapshot = self.empty_snapshot()
+        first = FixedAdapter("first", 90)
+        second = FixedAdapter("second", 10)
+
+        with patch("game_localizer.detector.scan_project", return_value=snapshot) as scan_project:
+            report = detect_project(root, adapters=(first, second))
+
+        scan_project.assert_called_once_with(root)
+        self.assertEqual(report.selected_engine, "first")
+        self.assertEqual(first.snapshots, [snapshot])
+        self.assertEqual(second.snapshots, [snapshot])
 
     def test_detect_project_does_not_modify_project_files(self):
         with tempfile.TemporaryDirectory() as directory:

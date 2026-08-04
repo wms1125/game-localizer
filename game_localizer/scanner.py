@@ -31,14 +31,36 @@ def _normalize(relative_path: Path | str) -> str:
     return Path(relative_path).as_posix().strip("/").casefold()
 
 
+def _metadata_for(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as exc:
+        raise ProjectScanError(f"无法检查项目路径: {path}: {exc}") from exc
+
+
+def _has_reparse_attribute(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    return bool(reparse_flag and attributes & reparse_flag)
+
+
+def _reject_reparse_path_components(path: Path) -> None:
+    current = Path(path.anchor)
+    for part in path.parts:
+        if part == path.anchor:
+            continue
+        current /= part
+        metadata = _metadata_for(current)
+        if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+            raise ProjectScanError(f"项目路径不能包含符号链接或重解析点: {current}")
+
+
 def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
     try:
         metadata = entry.stat(follow_symlinks=False)
+        return entry.is_symlink() or _has_reparse_attribute(metadata)
     except OSError as exc:
         raise ProjectScanError(f"无法检查项目路径: {entry.path}: {exc}") from exc
-    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    attributes = getattr(metadata, "st_file_attributes", 0)
-    return entry.is_symlink() or bool(reparse_flag and attributes & reparse_flag)
 
 
 @dataclass(frozen=True)
@@ -75,8 +97,12 @@ class ProjectSnapshot:
 
 
 def scan_project(root: str | Path) -> ProjectSnapshot:
-    project_root = Path(root).resolve()
-    if not project_root.is_dir():
+    try:
+        project_root = Path(root).absolute()
+    except OSError as exc:
+        raise ProjectScanError(f"无法检查项目路径: {root}: {exc}") from exc
+    _reject_reparse_path_components(project_root)
+    if not stat.S_ISDIR(_metadata_for(project_root).st_mode):
         raise ProjectScanError(f"项目目录不存在或不是目录: {project_root}")
 
     files: set[str] = set()
@@ -91,8 +117,11 @@ def scan_project(root: str | Path) -> ProjectSnapshot:
         except OSError as exc:
             raise ProjectScanError(f"无法扫描项目目录: {current}: {exc}") from exc
         for entry in entries:
-            path = Path(entry.path)
-            relative = _normalize(path.relative_to(project_root))
+            try:
+                path = Path(entry.path)
+                relative = _normalize(path.relative_to(project_root))
+            except (OSError, ValueError) as exc:
+                raise ProjectScanError(f"无法检查项目路径: {entry.path}: {exc}") from exc
             if _is_reparse_point(entry):
                 ignored.add(relative)
                 continue
