@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from cli import format_result
+from translator import MatchPreview, ProcessingResult, UnmatchedPreview
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +20,7 @@ class CliTests(unittest.TestCase):
             dictionary = root / "dictionary.json"
             resource.write_text('{"title":"New Game","other":"Options"}', encoding="utf-8")
             dictionary.write_text(
-                json.dumps({"New Game": "鏂版父鎴?"}, ensure_ascii=False), encoding="utf-8"
+                json.dumps({"New Game": "\u65b0\u6e38\u620f"}, ensure_ascii=False), encoding="utf-8"
             )
             completed = subprocess.run(
                 [sys.executable, str(ROOT / "cli.py"), str(resource), str(dictionary)],
@@ -27,9 +30,9 @@ class CliTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn("[鍖归厤]", completed.stdout)
-            self.assertIn("瀹為檯鏇挎崲: 1", completed.stdout)
-            self.assertIn("鏈炕璇戞潯鐩? 1", completed.stdout)
+            self.assertIn("[\u5339\u914d]", completed.stdout)
+            self.assertIn("\u5b9e\u9645\u66ff\u6362: 1", completed.stdout)
+            self.assertIn("\u672a\u7ffb\u8bd1\u6761\u76ee: 1", completed.stdout)
 
     def test_cli_returns_nonzero_for_invalid_dictionary(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -46,4 +49,58 @@ class CliTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(completed.returncode, 1)
-            self.assertIn("閿欒:", completed.stderr)
+            self.assertIn("\u9519\u8bef:", completed.stderr)
+
+    def test_format_result_escapes_preview_values_to_one_line(self):
+        original = 'Quote " slash \\ newline\nnext'
+        translated = 'Translated " slash \\ newline\nnext'
+        result = self.make_result(matches=[MatchPreview("JSON $.title", original, translated)])
+
+        output = format_result(result)
+
+        self.assertEqual(
+            output.splitlines()[0],
+            f"[\u5339\u914d] JSON $.title: {json.dumps(original, ensure_ascii=False)} -> "
+            f"{json.dumps(translated, ensure_ascii=False)}",
+        )
+        self.assertEqual(len(output.splitlines()), 9)
+
+    def test_format_result_has_no_preview_lines_when_nothing_matches(self):
+        output = format_result(self.make_result())
+
+        self.assertNotIn("[\u5339\u914d]", output)
+        self.assertNotIn("[\u672a\u5339\u914d]", output)
+        self.assertIn("\u5339\u914d\u6761\u76ee: 0", output)
+        self.assertIn("\u672a\u7ffb\u8bd1\u6761\u76ee: 0", output)
+
+    def test_format_result_limits_each_preview_category_to_fifty_items(self):
+        matches = [MatchPreview(f"match-{index}", f"source-{index}", f"target-{index}") for index in range(51)]
+        unmatched = [UnmatchedPreview(f"unmatched-{index}", f"source-{index}") for index in range(51)]
+
+        output = format_result(self.make_result(matches=matches, unmatched=unmatched))
+        lines = output.splitlines()
+        match_lines = [line for line in lines if line.startswith("[\u5339\u914d]")]
+        unmatched_lines = [line for line in lines if line.startswith("[\u672a\u5339\u914d]")]
+
+        self.assertEqual(len([line for line in match_lines if ":" in line]), 50)
+        self.assertEqual(len([line for line in unmatched_lines if ":" in line]), 50)
+        self.assertIn("[\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", match_lines)
+        self.assertIn("[\u672a\u5339\u914d] \u53e6\u6709 1 \u9879\u5df2\u7701\u7565", unmatched_lines)
+
+    @staticmethod
+    def make_result(
+        matches: list[MatchPreview] | None = None,
+        unmatched: list[UnmatchedPreview] | None = None,
+    ) -> ProcessingResult:
+        return ProcessingResult(
+            input_encoding="utf-8",
+            output_encoding="utf-8",
+            output_path=Path("translated.json"),
+            untranslated_path=Path("untranslated.json"),
+            matched_keys=set(),
+            replacement_count=0,
+            untranslated={},
+            matches=matches or [],
+            unmatched=unmatched or [],
+            warnings=[],
+        )
