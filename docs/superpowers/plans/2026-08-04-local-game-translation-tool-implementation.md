@@ -254,6 +254,12 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.replacement_count, 1)
         self.assertEqual(result.matches[0].location, "TXT 第 1 行")
         self.assertEqual(result.untranslated, {"Options": ""})
+
+    def test_plaintext_partial_match_exports_the_complete_original_line(self):
+        result = transform_plaintext("Open New Game\n", {"New Game": "新游戏"})
+        self.assertEqual(result.content, "Open 新游戏\n")
+        self.assertEqual(result.untranslated, {"Open New Game": ""})
+        self.assertEqual(result.unmatched[0].original, "Open New Game")
 ```
 
 - [ ] **Step 2: Run transformation tests and verify RED**
@@ -361,10 +367,12 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
     output_lines: list[str] = []
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         location = f"{label} 第 {line_number} 行"
+        matched_spans: list[tuple[int, int]] = []
 
         def replace(match: re.Match[str]) -> str:
             original = match.group(0)
             translated = dictionary[original]
+            matched_spans.append(match.span())
             result.matched_keys.add(original)
             result.replacement_count += 1
             result.matches.append(MatchPreview(location, original, translated))
@@ -375,11 +383,16 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
         translated_line = pattern.sub(replace, line) if pattern else line
         output_lines.append(translated_line)
-        candidate = translated_line.strip()
-        if candidate not in dictionary.values() and is_translation_candidate(candidate):
-            if not result.matches or result.matches[-1].location != location or re.search(r"[A-Za-z\u3040-\u30ff]", candidate):
-                result.untranslated.setdefault(candidate, "")
-                result.unmatched.append(UnmatchedPreview(location, candidate))
+        original_candidate = line.strip()
+        remaining_parts: list[str] = []
+        cursor = 0
+        for start, end in matched_spans:
+            remaining_parts.append(line[cursor:start])
+            cursor = end
+        remaining_parts.append(line[cursor:])
+        if is_translation_candidate("".join(remaining_parts)):
+            result.untranslated.setdefault(original_candidate, "")
+            result.unmatched.append(UnmatchedPreview(location, original_candidate))
     result.content = "".join(output_lines)
     return result
 ```
@@ -388,7 +401,7 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
 Run: `python -m unittest tests.test_translator -v`
 
-Expected: 6 tests pass.
+Expected: 7 tests pass.
 
 - [ ] **Step 6: Commit format-aware transformations**
 
@@ -552,7 +565,7 @@ def process_resource(
 
 Run: `python -m unittest tests.test_translator -v`
 
-Expected: 9 tests pass and no temporary files remain.
+Expected: 10 tests pass and no temporary files remain.
 
 - [ ] **Step 5: Commit the safe processing pipeline**
 
