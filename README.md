@@ -18,6 +18,22 @@ python -m unittest discover -s tests -v
 
 命令行的 `--output` 用于指定汉化资源输出位置，`--untranslated` 用于指定待翻译 JSON 清单的位置。运行 `python cli.py --help` 可查看参数说明和授权提示。`python gui.py` 启动提供相同处理能力的本地图形界面。
 
+## 项目引擎检测（Phase 1）
+
+可先对你合法拥有或获明确授权的游戏项目目录进行只读检测：
+
+```powershell
+python cli.py engines
+python cli.py detect "C:\Games\AuthorizedProject"
+python cli.py detect "C:\Games\AuthorizedProject" --json
+```
+
+Phase 1 **仅扫描文件名和目录结构**，用于识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。退出码 `0` 表示自动选定了一个高置信度引擎；退出码 `2` 表示未知、不确定或证据冲突，且项目不会被修改。
+
+本版本的所有适配器均为 `experimental`，能力均为 `detect_only`。检测不会创建、修改、解包、执行或删除项目资源；Unity、Unreal、Godot 的封包容器，以及 Ren'Py 归档，均不会被解包或修改。
+
+原有的单文件翻译命令仍然可用，例如 `python cli.py game.json dictionary.json`；它们仅面向前述受支持的明文资源，且同样只应处理你拥有合法权利或已获授权修改的内容。
+
 ## 翻译字典
 
 字典必须是 UTF-8 编码的 JSON 对象：键是原文，值是简体中文译文。例如：
