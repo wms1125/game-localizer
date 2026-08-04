@@ -192,10 +192,12 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
     output_lines: list[str] = []
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         location = f"{label} 第 {line_number} 行"
+        matched_spans: list[tuple[int, int]] = []
 
         def replace(match: re.Match[str]) -> str:
             original = match.group(0)
             translated = dictionary[original]
+            matched_spans.append(match.span())
             result.matched_keys.add(original)
             result.replacement_count += 1
             result.matches.append(MatchPreview(location, original, translated))
@@ -206,10 +208,15 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
         translated_line = pattern.sub(replace, line) if pattern else line
         output_lines.append(translated_line)
-        candidate = translated_line.strip()
-        if candidate not in dictionary.values() and is_translation_candidate(candidate):
-            if not result.matches or result.matches[-1].location != location or re.search(r"[A-Za-z\u3040-\u30ff]", candidate):
-                result.untranslated.setdefault(candidate, "")
-                result.unmatched.append(UnmatchedPreview(location, candidate))
+        original_candidate = line.strip()
+        remaining_parts: list[str] = []
+        cursor = 0
+        for start, end in matched_spans:
+            remaining_parts.append(line[cursor:start])
+            cursor = end
+        remaining_parts.append(line[cursor:])
+        if is_translation_candidate("".join(remaining_parts)):
+            result.untranslated.setdefault(original_candidate, "")
+            result.unmatched.append(UnmatchedPreview(location, original_candidate))
     result.content = "".join(output_lines)
     return result

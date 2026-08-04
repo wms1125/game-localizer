@@ -67,3 +67,9 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.replacement_count, 1)
         self.assertEqual(result.matches[0].location, "TXT 第 1 行")
         self.assertEqual(result.untranslated, {"Options": ""})
+
+    def test_plaintext_partial_match_exports_the_complete_original_line(self):
+        result = transform_plaintext("Open New Game\n", {"New Game": "新游戏"})
+        self.assertEqual(result.content, "Open 新游戏\n")
+        self.assertEqual(result.untranslated, {"Open New Game": ""})
+        self.assertEqual(result.unmatched[0].original, "Open New Game")
