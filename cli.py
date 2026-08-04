@@ -4,6 +4,11 @@ import argparse
 import json
 import sys
 
+from game_localizer.adapters import get_adapters
+from game_localizer.detector import detect_project
+from game_localizer.models import DetectionStatus
+from game_localizer.reporting import format_detection_report
+from game_localizer.scanner import ProjectScanError
 from translator import ProcessingResult, TranslationError, process_resource
 
 
@@ -65,9 +70,62 @@ def format_result(result: ProcessingResult, preview_limit: int = 50) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+def build_detect_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=f"自动检测游戏项目引擎。\n{ETHICS}")
+    parser.add_argument("project", help="游戏项目目录")
+    parser.add_argument("--json", action="store_true", help="将检测报告以 JSON 输出到标准输出")
+    return parser
+
+
+def build_engines_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="列出内置引擎检测适配器")
+    parser.add_argument("--json", action="store_true", help="以 JSON 输出")
+    return parser
+
+
+def run_detect(argv: list[str]) -> int:
+    try:
+        args = build_detect_parser().parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
+    try:
+        report = detect_project(args.project)
+    except ProjectScanError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_detection_report(report))
+    return 0 if report.status is DetectionStatus.AUTO_SELECTED else 2
+
+
+def run_engines(argv: list[str]) -> int:
+    try:
+        args = build_engines_parser().parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
+    payload = [
+        {
+            "engine_id": adapter.engine_id,
+            "display_name": adapter.display_name,
+            "maturity": adapter.maturity.value,
+            "capability": "detect_only",
+        }
+        for adapter in get_adapters()
+    ]
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for item in payload:
+            print(
+                f"{item['engine_id']}: {item['display_name']} / "
+                f"{item['capability']} / {item['maturity']}"
+            )
+    return 0
+
+
+def run_legacy(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
         result = process_resource(
@@ -81,6 +139,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(format_result(result))
     return 0
+
+
+def _configure_utf8(stream: object) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    _configure_utf8(sys.stdout)
+    _configure_utf8(sys.stderr)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "detect":
+        return run_detect(arguments[1:])
+    if arguments and arguments[0] == "engines":
+        return run_engines(arguments[1:])
+    return run_legacy(arguments)
 
 
 if __name__ == "__main__":

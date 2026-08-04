@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -65,6 +67,44 @@ class GuiTests(unittest.TestCase):
             ["\u5f00\u59cb\u6c49\u5316\u5904\u7406\u2026", "\u9519\u8bef: bad data"],
         )
         showerror.assert_called_once_with("\u6c49\u5316\u5931\u8d25", "bad data")
+
+    def test_path_resolution_failure_uses_the_translation_error_dialog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            loop = root / "loop"
+            resource.write_text("New Game", encoding="utf-8")
+            os.symlink(loop, loop, target_is_directory=True)
+            app = self.make_app(str(resource), str(loop))
+
+            with patch.object(gui.messagebox, "showerror") as showerror:
+                app.run_translation()
+
+        error_message = app._append_log.call_args_list[-1].args[0]
+        self.assertIn("Symlink loop", error_message)
+        showerror.assert_called_once()
+        self.assertEqual(showerror.call_args.args[0], "汉化失败")
+        self.assertIn("Symlink loop", showerror.call_args.args[1])
+
+    def test_integer_digit_limit_uses_error_dialog_without_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"value":' + "1" * 5000 + "}", encoding="utf-8")
+            dictionary.write_text("{}", encoding="utf-8")
+            app = self.make_app(str(resource), str(dictionary))
+
+            with patch.object(gui.messagebox, "showerror") as showerror:
+                app.run_translation()
+
+            self.assertFalse((root / "game.zh.json").exists())
+            self.assertFalse((root / "game.untranslated.json").exists())
+
+        error_message = app._append_log.call_args_list[-1].args[0]
+        self.assertIn("错误:", error_message)
+        showerror.assert_called_once()
+        self.assertEqual(showerror.call_args.args[0], "汉化失败")
 
     @staticmethod
     def make_app(resource: str, dictionary: str):
