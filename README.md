@@ -28,7 +28,7 @@ python cli.py detect "C:\Games\AuthorizedProject"
 python cli.py detect "C:\Games\AuthorizedProject" --json
 ```
 
-Phase 1 **仅扫描文件名和目录结构**，用于识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。退出码 `0` 表示自动选定了一个高置信度引擎；退出码 `2` 表示未知、不确定或证据冲突，且项目不会被修改。
+Phase 1 **仅扫描文件名和目录结构**，用于识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。退出码 `0` 表示自动选定了一个高置信度引擎；退出码 `1` 表示命令参数错误、缺少必需输入或项目路径/扫描失败；退出码 `2` 表示未知、不确定或证据冲突，且项目不会被修改。
 
 本版本的所有适配器均为 `experimental`，能力均为 `detect_only`。检测不会创建、修改、解包、执行或删除项目资源；Unity、Unreal、Godot 的封包容器，以及 Ren'Py 归档，均不会被解包或修改。
 
