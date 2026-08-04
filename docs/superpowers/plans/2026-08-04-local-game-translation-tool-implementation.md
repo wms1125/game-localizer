@@ -31,7 +31,7 @@
 - Create `examples/dictionary.json`: editable translation template.
 - Create `examples/game.json`: offline end-to-end sample resource.
 - Create `README.md`: scope, dictionary preparation, commands, outputs, limitations, and ethics.
-- Modify `.gitignore`: ignore Python caches and generated example outputs.
+- Modify `.gitignore`: retain `.worktrees/` and ignore Python caches and generated example outputs.
 
 ---
 
@@ -948,9 +948,10 @@ Also document the `{原文: 中文}` dictionary format, supported extensions and
 
 - [ ] **Step 3: Add generated-output ignores**
 
-`.gitignore`:
+Append the following entries to the existing `.gitignore`, retaining its `.worktrees/` entry:
 
 ```gitignore
+.worktrees/
 __pycache__/
 *.py[cod]
 examples/*.zh.json
