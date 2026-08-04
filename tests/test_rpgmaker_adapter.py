@@ -5,6 +5,7 @@ from pathlib import Path
 from game_localizer.adapters.rpgmaker import RpgMakerMVAdapter, RpgMakerMZAdapter
 from game_localizer.detector import detect_project
 from game_localizer.models import DetectionStatus
+from game_localizer.scanner import scan_project
 
 
 def touch(root: Path, relative: str, text: str = "") -> None:
@@ -43,3 +44,14 @@ class RpgMakerAdapterTests(unittest.TestCase):
 
         self.assertEqual(report.status, DetectionStatus.UNKNOWN)
         self.assertIsNone(report.selected_engine)
+
+    def test_www_package_evidence_reports_its_actual_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            touch(root, "www/package.json", "{}")
+
+            result = RpgMakerMZAdapter().detect(scan_project(root))
+
+        self.assertIsNotNone(result)
+        evidence = next(item for item in result.evidence if item.code == "rpgmaker_package")
+        self.assertEqual(evidence.path, "www/package.json")

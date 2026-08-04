@@ -44,6 +44,10 @@ def _has_reparse_attribute(metadata: os.stat_result) -> bool:
     return bool(reparse_flag and attributes & reparse_flag)
 
 
+def _identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
 def _reject_reparse_path_components(path: Path) -> None:
     current = Path(path.anchor)
     for part in path.parts:
@@ -61,6 +65,13 @@ def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
         return entry.is_symlink() or _has_reparse_attribute(metadata)
     except OSError as exc:
         raise ProjectScanError(f"无法检查项目路径: {entry.path}: {exc}") from exc
+
+
+def _validate_queued_directory(path: Path, expected_identity: tuple[int, int]) -> None:
+    _reject_reparse_path_components(path)
+    metadata = _metadata_for(path)
+    if not stat.S_ISDIR(metadata.st_mode) or _identity(metadata) != expected_identity:
+        raise ProjectScanError(f"项目目录在扫描过程中发生变化: {path}")
 
 
 @dataclass(frozen=True)
@@ -99,23 +110,26 @@ class ProjectSnapshot:
 def scan_project(root: str | Path) -> ProjectSnapshot:
     try:
         project_root = Path(root).absolute()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise ProjectScanError(f"无法检查项目路径: {root}: {exc}") from exc
     _reject_reparse_path_components(project_root)
-    if not stat.S_ISDIR(_metadata_for(project_root).st_mode):
+    root_metadata = _metadata_for(project_root)
+    if not stat.S_ISDIR(root_metadata.st_mode):
         raise ProjectScanError(f"项目目录不存在或不是目录: {project_root}")
 
     files: set[str] = set()
     directories: set[str] = set()
     ignored: set[str] = set()
-    pending = [project_root]
+    pending = [(project_root, _identity(root_metadata))]
 
     while pending:
-        current = pending.pop()
+        current, expected_identity = pending.pop()
+        _validate_queued_directory(current, expected_identity)
         try:
             entries = list(os.scandir(current))
         except OSError as exc:
             raise ProjectScanError(f"无法扫描项目目录: {current}: {exc}") from exc
+        _validate_queued_directory(current, expected_identity)
         for entry in entries:
             try:
                 path = Path(entry.path)
@@ -131,7 +145,10 @@ def scan_project(root: str | Path) -> ProjectSnapshot:
                     if entry.name.casefold() in DEFAULT_IGNORED_DIRS:
                         ignored.add(relative)
                     else:
-                        pending.append(path)
+                        metadata = _metadata_for(path)
+                        if not stat.S_ISDIR(metadata.st_mode):
+                            raise ProjectScanError(f"项目目录在扫描过程中发生变化: {path}")
+                        pending.append((path, _identity(metadata)))
                 elif entry.is_file(follow_symlinks=False):
                     files.add(relative)
             except OSError as exc:

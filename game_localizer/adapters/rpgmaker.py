@@ -27,8 +27,12 @@ class _RpgMakerAdapter(EngineAdapter):
         )
         if system:
             evidence.append(DetectionEvidence("rpgmaker_system", system, "发现系统数据库", 35))
-        if snapshot.has_file("package.json") or snapshot.has_file("www/package.json"):
-            evidence.append(DetectionEvidence("rpgmaker_package", "package.json", "发现 NW.js 配置", 10))
+        package = next(
+            (path for path in ("package.json", "www/package.json") if snapshot.has_file(path)),
+            None,
+        )
+        if package:
+            evidence.append(DetectionEvidence("rpgmaker_package", package, "发现 NW.js 配置", 10))
         if not evidence:
             return None
         return self.build_result(evidence, ("阶段一仅提供只读检测",))

@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -67,6 +68,31 @@ class TransformationTests(unittest.TestCase):
         self.assertIn("New Game", parsed)
         self.assertEqual(result.matches[0].location, "JSON $['New Game']")
         self.assertEqual(result.unmatched[0].location, "JSON $.menu[0].label")
+
+    def test_json_rejects_duplicate_object_keys(self):
+        with self.assertRaisesRegex(TranslationError, "重复键"):
+            transform_json('{"title":"first","title":"second"}', {})
+
+    def test_json_rejects_non_finite_numeric_constants(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                with self.assertRaisesRegex(TranslationError, "非有限"):
+                    transform_json(f'{{"value":{constant}}}', {})
+
+    def test_json_rejects_decimal_values_that_float_cannot_preserve(self):
+        for number in (
+            "0.12345678901234567890123456789",
+            "1e400",
+            "1e9999999999999999999",
+        ):
+            with self.subTest(number=number):
+                with self.assertRaisesRegex(TranslationError, "数值"):
+                    transform_json(f'{{"value":{number}}}', {})
+
+    def test_json_preserves_ordinary_finite_numbers_and_translates_strings(self):
+        result = transform_json('{"value":1.5,"title":"New Game"}', {"New Game": "新游戏"})
+
+        self.assertEqual(json.loads(result.content), {"value": 1.5, "title": "新游戏"})
 
     def test_csv_sniffs_semicolon_and_matches_complete_cells(self):
         result = transform_csv("id;text\n1;New Game\n2;Options\n", {"New Game": "新游戏"})
@@ -224,6 +250,45 @@ class ProcessingTests(unittest.TestCase):
             with self.assertRaisesRegex(TranslationError, "输出路径不能相同"):
                 process_resource(resource, dictionary, shared_output, shared_output)
 
+    def test_process_resource_invalid_json_does_not_create_either_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"title":"first","title":"second"}', encoding="utf-8")
+            dictionary.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "重复键"):
+                process_resource(resource, dictionary)
+
+            output, untranslated = default_output_paths(resource)
+            self.assertFalse(output.exists())
+            self.assertFalse(untranslated.exists())
+
+    def test_process_resource_wraps_output_resolve_runtime_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            loop = root / "loop"
+            cyclic_output = loop / "translated.txt"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+            os.symlink(loop, loop, target_is_directory=True)
+
+            with self.assertRaisesRegex(TranslationError, "Symlink loop"):
+                process_resource(resource, dictionary, output_path=cyclic_output)
+
+    def test_atomic_write_many_wraps_lstat_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "output.txt"
+
+            with patch("translator.os.lstat", side_effect=OSError("metadata unavailable")):
+                with self.assertRaisesRegex(TranslationError, "metadata unavailable"):
+                    atomic_write_many({target: "content"})
+
+            self.assertFalse(target.exists())
+
     def test_atomic_write_cleans_temporary_file_when_fsync_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory, "output.txt")
@@ -261,6 +326,77 @@ class ProcessingTests(unittest.TestCase):
             self.assertEqual(untranslated.read_text(encoding="utf-8"), "old todo")
             self.assertEqual(list(root.glob(".*.tmp")), [])
             self.assertEqual(list(root.glob(".*.bak")), [])
+
+    def test_atomic_write_many_rolls_back_and_reraises_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            translated = root / "game.zh.txt"
+            untranslated = root / "game.untranslated.json"
+            translated.write_text("old translated", encoding="utf-8")
+            untranslated.write_text("old todo", encoding="utf-8")
+            real_replace = os.replace
+            replace_calls = 0
+
+            def interrupt_second_commit(source, destination):
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 4:
+                    raise KeyboardInterrupt()
+                return real_replace(source, destination)
+
+            with patch("translator.os.replace", side_effect=interrupt_second_commit):
+                with self.assertRaises(KeyboardInterrupt):
+                    atomic_write_many({translated: "new translated", untranslated: "new todo"})
+
+            self.assertEqual(translated.read_text(encoding="utf-8"), "old translated")
+            self.assertEqual(untranslated.read_text(encoding="utf-8"), "old todo")
+            self.assertEqual(list(root.glob(".*.tmp")), [])
+            self.assertEqual(list(root.glob(".*.bak")), [])
+
+    def test_process_resource_stops_if_output_directory_identity_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            outputs = root / "outputs"
+            displaced_outputs = root / "displaced-outputs"
+            inputs.mkdir()
+            outputs.mkdir()
+            resource = inputs / "game.txt"
+            dictionary = inputs / "dictionary.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+            (outputs / "game.txt").write_text("old output", encoding="utf-8")
+            (outputs / "dictionary.json").write_text("old todo", encoding="utf-8")
+            real_named_temporary_file = tempfile.NamedTemporaryFile
+            temporary_file_calls = 0
+
+            @contextmanager
+            def replace_output_directory_after_staging(*args, **kwargs):
+                nonlocal temporary_file_calls
+                with real_named_temporary_file(*args, **kwargs) as handle:
+                    yield handle
+                temporary_file_calls += 1
+                if temporary_file_calls == 2:
+                    outputs.rename(displaced_outputs)
+                    inputs.rename(outputs)
+
+            with patch(
+                "translator.tempfile.NamedTemporaryFile",
+                side_effect=replace_output_directory_after_staging,
+            ):
+                with self.assertRaisesRegex(TranslationError, "发生变化"):
+                    process_resource(
+                        resource,
+                        dictionary,
+                        output_path=outputs / "game.txt",
+                        untranslated_path=outputs / "dictionary.json",
+                    )
+
+            self.assertEqual((outputs / "game.txt").read_text(encoding="utf-8"), "New Game")
+            self.assertEqual(
+                (outputs / "dictionary.json").read_text(encoding="utf-8"),
+                '{"New Game":"新游戏"}',
+            )
 
     def test_atomic_write_many_wraps_unicode_errors_and_cleans_staged_files(self):
         with tempfile.TemporaryDirectory() as directory:

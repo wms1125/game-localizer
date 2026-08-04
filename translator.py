@@ -4,11 +4,14 @@ from collections import Counter
 import codecs
 import csv
 from dataclasses import dataclass, field
+from decimal import Decimal, DecimalException
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 from typing import Any
 
@@ -148,10 +151,28 @@ def _json_path(parent: str, key: str | int) -> str:
 
 
 def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise TranslationError(f"JSON 资源包含重复键: {key}")
+            value[key] = item
+        return value
+
+    def reject_non_finite(constant: str) -> None:
+        raise TranslationError(f"JSON 资源包含非有限数值: {constant}")
+
     try:
-        data = json.loads(text)
+        data = json.loads(
+            text,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite,
+            parse_float=Decimal,
+        )
     except json.JSONDecodeError as exc:
         raise TranslationError(f"JSON 资源格式无效: {exc}") from exc
+    except DecimalException as exc:
+        raise TranslationError(f"JSON 数值无法安全解析: {exc}") from exc
     result = TransformResult(content="")
 
     def walk(value: Any, path: str) -> Any:
@@ -161,10 +182,24 @@ def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
             return [walk(item, _json_path(path, index)) for index, item in enumerate(value)]
         if isinstance(value, dict):
             return {key: walk(item, _json_path(path, key)) for key, item in value.items()}
+        if isinstance(value, Decimal):
+            try:
+                converted = float(value)
+                equivalent = Decimal(str(converted)) == value
+            except (DecimalException, OverflowError, ValueError) as exc:
+                raise TranslationError(f"JSON 数值无法无损转换为 float: {value}") from exc
+            if not math.isfinite(converted) or not equivalent:
+                raise TranslationError(f"JSON 数值无法无损转换为 float: {value}")
+            return converted
         return value
 
     transformed = walk(data, "$")
-    result.content = json.dumps(transformed, ensure_ascii=False, indent=2) + "\n"
+    result.content = json.dumps(
+        transformed,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    ) + "\n"
     return result
 
 
@@ -252,27 +287,146 @@ def default_output_paths(resource_path: str | Path) -> tuple[Path, Path]:
     )
 
 
-def _cleanup_file(path: Path, errors: list[str]) -> None:
+FileIdentity = tuple[int, int]
+
+
+def _identity(metadata: os.stat_result) -> FileIdentity:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _resolve_path(path: Path) -> Path:
     try:
-        path.unlink(missing_ok=True)
-    except OSError as exc:
+        return path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise TranslationError(f"无法解析路径 {path}: {exc}") from exc
+
+
+def _absolute_path(path: Path) -> Path:
+    try:
+        return path.absolute()
+    except (OSError, RuntimeError) as exc:
+        raise TranslationError(f"无法检查路径 {path}: {exc}") from exc
+
+
+def _metadata_for(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except (OSError, RuntimeError) as exc:
+        raise TranslationError(f"无法检查路径 {path}: {exc}") from exc
+
+
+def _optional_metadata_for(path: Path) -> os.stat_result | None:
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, RuntimeError) as exc:
+        raise TranslationError(f"无法检查路径 {path}: {exc}") from exc
+
+
+def _has_reparse_attribute(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    return bool(reparse_flag and attributes & reparse_flag)
+
+
+def _is_link_or_reparse(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata)
+
+
+def _reject_existing_reparse_components(path: Path) -> None:
+    current = Path(path.anchor)
+    for part in path.parts:
+        if part == path.anchor:
+            continue
+        current /= part
+        metadata = _optional_metadata_for(current)
+        if metadata is None:
+            return
+        if _is_link_or_reparse(metadata):
+            raise TranslationError(f"输出路径不能包含符号链接或重解析点: {current}")
+
+
+def _directory_identity(path: Path) -> FileIdentity:
+    _reject_existing_reparse_components(path)
+    metadata = _metadata_for(path)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise TranslationError(f"输出父路径不是目录: {path}")
+    return _identity(metadata)
+
+
+def _validate_output_location(
+    path: Path,
+    parent_identity: FileIdentity,
+    protected_identities: frozenset[FileIdentity],
+) -> FileIdentity | None:
+    _reject_existing_reparse_components(path)
+    if _directory_identity(path.parent) != parent_identity:
+        raise TranslationError(f"输出父目录在写入过程中发生变化: {path.parent}")
+    metadata = _optional_metadata_for(path)
+    if metadata is not None and _identity(metadata) in protected_identities:
+        raise TranslationError(f"输出路径不能覆盖输入文件: {path}")
+    return _identity(metadata) if metadata is not None else None
+
+
+def _validate_managed_file(
+    path: Path,
+    expected_identity: FileIdentity,
+    parent_identity: FileIdentity,
+) -> None:
+    _reject_existing_reparse_components(path)
+    metadata = _metadata_for(path)
+    if not stat.S_ISREG(metadata.st_mode) or _identity(metadata) != expected_identity:
+        raise TranslationError(f"事务文件在写入过程中发生变化: {path}")
+    if _directory_identity(path.parent) != parent_identity:
+        raise TranslationError(f"输出父目录在写入过程中发生变化: {path.parent}")
+
+
+def _cleanup_managed_file(
+    path: Path,
+    expected_identity: FileIdentity,
+    errors: list[str],
+) -> None:
+    try:
+        metadata = _optional_metadata_for(path)
+        if metadata is None:
+            return
+        if _is_link_or_reparse(metadata) or _identity(metadata) != expected_identity:
+            errors.append(f"未清理已变化的事务文件: {path}")
+            return
+        path.unlink()
+    except BaseException as exc:
         errors.append(f"清理 {path} 失败: {exc}")
 
 
-def atomic_write_many(outputs: dict[Path, str]) -> tuple[Path, ...]:
-    ordered_outputs = [(Path(path), content) for path, content in outputs.items()]
-    resolved_outputs = [path.resolve() for path, _ in ordered_outputs]
+def atomic_write_many(
+    outputs: dict[Path, str],
+    *,
+    protected_identities: frozenset[FileIdentity] = frozenset(),
+) -> tuple[Path, ...]:
+    ordered_outputs = [
+        (Path(path), _absolute_path(Path(path)), content) for path, content in outputs.items()
+    ]
+    resolved_outputs = [_resolve_path(path) for _, path, _ in ordered_outputs]
     if len(set(resolved_outputs)) != len(resolved_outputs):
         raise TranslationError("输出路径不能相同")
 
     staged: dict[Path, Path] = {}
+    staged_identities: dict[Path, FileIdentity] = {}
     backups: dict[Path, Path] = {}
+    backup_identities: dict[Path, FileIdentity] = {}
     backup_placeholders: list[Path] = []
-    committed: set[Path] = set()
+    parent_identities: dict[Path, FileIdentity] = {}
+    commit_attempted: set[Path] = set()
     cleanup_errors: list[str] = []
     try:
-        for path, content in ordered_outputs:
+        for _, path, _ in ordered_outputs:
+            _reject_existing_reparse_components(path.parent)
             path.parent.mkdir(parents=True, exist_ok=True)
+            parent_identities[path] = _directory_identity(path.parent)
+
+        for _, path, content in ordered_outputs:
+            _validate_output_location(path, parent_identities[path], protected_identities)
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -284,12 +438,19 @@ def atomic_write_many(outputs: dict[Path, str]) -> tuple[Path, ...]:
             ) as handle:
                 temporary = Path(handle.name)
                 staged[path] = temporary
+                staged_identities[path] = _identity(_metadata_for(temporary))
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
 
-        for path, _ in ordered_outputs:
-            if path.exists():
+        for _, path, _ in ordered_outputs:
+            target_identity = _validate_output_location(
+                path,
+                parent_identities[path],
+                protected_identities,
+            )
+            if target_identity is not None:
+                _validate_output_location(path, parent_identities[path], protected_identities)
                 with tempfile.NamedTemporaryFile(
                     mode="wb",
                     dir=path.parent,
@@ -299,38 +460,72 @@ def atomic_write_many(outputs: dict[Path, str]) -> tuple[Path, ...]:
                 ) as handle:
                     backup = Path(handle.name)
                 backup_placeholders.append(backup)
+                backup_identities[backup] = _identity(_metadata_for(backup))
+                _validate_managed_file(
+                    backup,
+                    backup_identities[backup],
+                    parent_identities[path],
+                )
+                target_identity = _validate_output_location(
+                    path,
+                    parent_identities[path],
+                    protected_identities,
+                )
+                if target_identity is None:
+                    raise TranslationError(f"输出文件在备份前消失: {path}")
                 os.replace(path, backup)
                 backups[path] = backup
+                backup_identities[backup] = target_identity
 
-        for path, _ in ordered_outputs:
+        for _, path, _ in ordered_outputs:
+            _validate_managed_file(
+                staged[path],
+                staged_identities[path],
+                parent_identities[path],
+            )
+            _validate_output_location(path, parent_identities[path], protected_identities)
+            commit_attempted.add(path)
             os.replace(staged[path], path)
             staged.pop(path)
-            committed.add(path)
-    except (OSError, UnicodeError) as exc:
+    except BaseException as exc:
         restored_backups: set[Path] = set()
-        for path, _ in reversed(ordered_outputs):
+        for _, path, _ in reversed(ordered_outputs):
             if path in backups:
                 backup = backups[path]
                 try:
+                    _validate_managed_file(
+                        backup,
+                        backup_identities[backup],
+                        parent_identities[path],
+                    )
+                    current_identity = _validate_output_location(
+                        path,
+                        parent_identities[path],
+                        protected_identities,
+                    )
+                    if current_identity not in (None, staged_identities[path]):
+                        raise TranslationError(f"输出文件在回滚前发生变化: {path}")
                     os.replace(backup, path)
                     restored_backups.add(backup)
-                except OSError as rollback_exc:
+                except BaseException as rollback_exc:
                     cleanup_errors.append(f"恢复 {path} 失败: {rollback_exc}")
-            elif path in committed:
-                _cleanup_file(path, cleanup_errors)
-        for temporary in staged.values():
-            _cleanup_file(temporary, cleanup_errors)
+            elif path in commit_attempted:
+                _cleanup_managed_file(path, staged_identities[path], cleanup_errors)
+        for path, temporary in staged.items():
+            _cleanup_managed_file(temporary, staged_identities[path], cleanup_errors)
         for backup in backup_placeholders:
             if backup not in backups.values() or backup in restored_backups:
-                _cleanup_file(backup, cleanup_errors)
+                _cleanup_managed_file(backup, backup_identities[backup], cleanup_errors)
         details = f"; {'; '.join(cleanup_errors)}" if cleanup_errors else ""
-        raise TranslationError(f"无法以事务方式写入输出文件: {exc}{details}") from exc
+        if isinstance(exc, (OSError, UnicodeError)):
+            raise TranslationError(f"无法以事务方式写入输出文件: {exc}{details}") from exc
+        raise
     else:
         for backup in backup_placeholders:
-            _cleanup_file(backup, cleanup_errors)
+            _cleanup_managed_file(backup, backup_identities[backup], cleanup_errors)
         if cleanup_errors:
             raise TranslationError(f"输出文件已写入，但清理备份失败: {'; '.join(cleanup_errors)}")
-        return tuple(backups)
+        return tuple(original for original, path, _ in ordered_outputs if path in backups)
 
 
 def atomic_write_text(path: Path, content: str) -> None:
@@ -345,7 +540,11 @@ def process_resource(
 ) -> ProcessingResult:
     resource = Path(resource_path)
     dictionary_file = Path(dictionary_path)
-    if not resource.is_file():
+    resource_resolved = _resolve_path(resource)
+    dictionary_resolved = _resolve_path(dictionary_file)
+    resource_metadata = _metadata_for(resource_resolved)
+    dictionary_metadata = _metadata_for(dictionary_resolved)
+    if not stat.S_ISREG(resource_metadata.st_mode):
         raise TranslationError(f"资源文件不存在: {resource}")
     suffix = resource.suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -354,17 +553,19 @@ def process_resource(
     default_output, default_untranslated = default_output_paths(resource)
     output = Path(output_path) if output_path is not None else default_output
     untranslated_output = Path(untranslated_path) if untranslated_path is not None else default_untranslated
-    if output.resolve() == untranslated_output.resolve():
+    resolved_output = _resolve_path(output)
+    resolved_untranslated = _resolve_path(untranslated_output)
+    if resolved_output == resolved_untranslated:
         raise TranslationError("输出路径不能相同")
-    resolved_outputs = (output.resolve(), untranslated_output.resolve())
-    if resource.resolve() in resolved_outputs:
+    resolved_outputs = (resolved_output, resolved_untranslated)
+    if resource_resolved in resolved_outputs:
         raise TranslationError("输出路径不能覆盖源文件")
-    if dictionary_file.resolve() in resolved_outputs:
+    if dictionary_resolved in resolved_outputs:
         raise TranslationError("输出路径不能覆盖翻译字典")
 
-    dictionary = load_translation_dictionary(dictionary_file)
+    dictionary = load_translation_dictionary(dictionary_resolved)
     try:
-        text, input_encoding = decode_bytes(resource.read_bytes())
+        text, input_encoding = decode_bytes(resource_resolved.read_bytes())
     except OSError as exc:
         raise TranslationError(f"无法读取资源文件: {exc}") from exc
 
@@ -379,7 +580,10 @@ def process_resource(
         {
             output: transformed.content,
             untranslated_output: json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
-        }
+        },
+        protected_identities=frozenset(
+            (_identity(resource_metadata), _identity(dictionary_metadata))
+        ),
     )
     return ProcessingResult(
         input_encoding=input_encoding,

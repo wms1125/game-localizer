@@ -124,6 +124,34 @@ class ProjectScannerTests(unittest.TestCase):
             with self.assertRaisesRegex(ProjectScanError, "cwd unavailable"):
                 scan_project("project")
 
+    def test_scan_rejects_a_queued_directory_replaced_before_scandir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            queued = root / "queued"
+            replacement = base / "replacement"
+            displaced = base / "displaced"
+            queued.mkdir(parents=True)
+            replacement.mkdir()
+            (queued / "original.rpy").write_text("label original:", encoding="utf-8")
+            (replacement / "foreign.rpy").write_text("label foreign:", encoding="utf-8")
+            real_scandir = os.scandir
+            replaced = False
+
+            def replace_queued_directory(path):
+                nonlocal replaced
+                if Path(path) == queued and not replaced:
+                    replaced = True
+                    queued.rename(displaced)
+                    replacement.rename(queued)
+                return real_scandir(path)
+
+            with patch("game_localizer.scanner.os.scandir", side_effect=replace_queued_directory):
+                with self.assertRaisesRegex(ProjectScanError, "变化"):
+                    scan_project(root)
+
+            self.assertTrue((queued / "foreign.rpy").exists())
+
     def test_scan_rejects_non_directory_input(self):
         with tempfile.TemporaryDirectory() as directory:
             file_path = Path(directory) / "game.exe"
