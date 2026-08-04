@@ -1,3 +1,4 @@
+from .detector import detect_project
 from .models import (
     CapabilityLevel,
     DetectionEvidence,
@@ -6,6 +7,7 @@ from .models import (
     DetectionStatus,
     MaturityLevel,
 )
+from .reporting import format_detection_report
 
 __all__ = [
     "CapabilityLevel",
@@ -14,4 +16,6 @@ __all__ = [
     "DetectionResult",
     "DetectionStatus",
     "MaturityLevel",
+    "detect_project",
+    "format_detection_report",
 ]
