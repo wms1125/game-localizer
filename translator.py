@@ -232,28 +232,88 @@ def default_output_paths(resource_path: str | Path) -> tuple[Path, Path]:
     )
 
 
-def atomic_write_text(path: Path, content: str) -> None:
-    temporary_name: str | None = None
+def _cleanup_file(path: Path, errors: list[str]) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary_name = handle.name
-        os.replace(temporary_name, path)
+        path.unlink(missing_ok=True)
     except OSError as exc:
-        if temporary_name:
-            Path(temporary_name).unlink(missing_ok=True)
-        raise TranslationError(f"无法写入输出文件 {path}: {exc}") from exc
+        errors.append(f"清理 {path} 失败: {exc}")
+
+
+def atomic_write_many(outputs: dict[Path, str]) -> None:
+    ordered_outputs = [(Path(path), content) for path, content in outputs.items()]
+    resolved_outputs = [path.resolve() for path, _ in ordered_outputs]
+    if len(set(resolved_outputs)) != len(resolved_outputs):
+        raise TranslationError("输出路径不能相同")
+
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    backup_placeholders: list[Path] = []
+    committed: set[Path] = set()
+    cleanup_errors: list[str] = []
+    try:
+        for path, content in ordered_outputs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                staged[path] = temporary
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+        for path, _ in ordered_outputs:
+            if path.exists():
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                    suffix=".bak",
+                    delete=False,
+                ) as handle:
+                    backup = Path(handle.name)
+                backup_placeholders.append(backup)
+                os.replace(path, backup)
+                backups[path] = backup
+
+        for path, _ in ordered_outputs:
+            os.replace(staged[path], path)
+            staged.pop(path)
+            committed.add(path)
+    except OSError as exc:
+        restored_backups: set[Path] = set()
+        for path, _ in reversed(ordered_outputs):
+            if path in backups:
+                backup = backups[path]
+                try:
+                    os.replace(backup, path)
+                    restored_backups.add(backup)
+                except OSError as rollback_exc:
+                    cleanup_errors.append(f"恢复 {path} 失败: {rollback_exc}")
+            elif path in committed:
+                _cleanup_file(path, cleanup_errors)
+        for temporary in staged.values():
+            _cleanup_file(temporary, cleanup_errors)
+        for backup in backup_placeholders:
+            if backup not in backups.values() or backup in restored_backups:
+                _cleanup_file(backup, cleanup_errors)
+        details = f"; {'; '.join(cleanup_errors)}" if cleanup_errors else ""
+        raise TranslationError(f"无法以事务方式写入输出文件: {exc}{details}") from exc
+    else:
+        for backup in backup_placeholders:
+            _cleanup_file(backup, cleanup_errors)
+        if cleanup_errors:
+            raise TranslationError(f"输出文件已写入，但清理备份失败: {'; '.join(cleanup_errors)}")
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    atomic_write_many({Path(path): content})
 
 
 def process_resource(
@@ -272,6 +332,8 @@ def process_resource(
     default_output, default_untranslated = default_output_paths(resource)
     output = Path(output_path) if output_path is not None else default_output
     untranslated_output = Path(untranslated_path) if untranslated_path is not None else default_untranslated
+    if output.resolve() == untranslated_output.resolve():
+        raise TranslationError("输出路径不能相同")
     if output.resolve() == resource.resolve() or untranslated_output.resolve() == resource.resolve():
         raise TranslationError("输出路径不能覆盖源文件")
 
@@ -288,10 +350,11 @@ def process_resource(
     else:
         transformed = transform_plaintext(text, dictionary, suffix.removeprefix(".").upper())
 
-    atomic_write_text(output, transformed.content)
-    atomic_write_text(
-        untranslated_output,
-        json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
+    atomic_write_many(
+        {
+            output: transformed.content,
+            untranslated_output: json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
+        }
     )
     return ProcessingResult(
         input_encoding=input_encoding,

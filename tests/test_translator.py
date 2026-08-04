@@ -1,10 +1,14 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from translator import (
     TranslationError,
+    atomic_write_many,
+    atomic_write_text,
     decode_bytes,
     default_output_paths,
     load_translation_dictionary,
@@ -120,3 +124,53 @@ class ProcessingTests(unittest.TestCase):
                 process_resource(resource, dictionary)
 
             self.assertFalse((root / "game.zh.exe").exists())
+
+    def test_process_resource_rejects_colliding_output_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            shared_output = root / "same.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "输出路径不能相同"):
+                process_resource(resource, dictionary, shared_output, shared_output)
+
+    def test_atomic_write_cleans_temporary_file_when_fsync_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory, "output.txt")
+            target.write_text("old", encoding="utf-8")
+
+            with patch("translator.os.fsync", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(TranslationError, "disk full"):
+                    atomic_write_text(target, "new")
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "old")
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_atomic_write_many_rolls_back_when_second_commit_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            translated = root / "game.zh.txt"
+            untranslated = root / "game.untranslated.json"
+            translated.write_text("old translated", encoding="utf-8")
+            untranslated.write_text("old todo", encoding="utf-8")
+            real_replace = os.replace
+            replace_calls = 0
+
+            def fail_second_commit(source, destination):
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 4:
+                    raise OSError("second commit failed")
+                return real_replace(source, destination)
+
+            with patch("translator.os.replace", side_effect=fail_second_commit):
+                with self.assertRaisesRegex(TranslationError, "second commit failed"):
+                    atomic_write_many({translated: "new translated", untranslated: "new todo"})
+
+            self.assertEqual(translated.read_text(encoding="utf-8"), "old translated")
+            self.assertEqual(untranslated.read_text(encoding="utf-8"), "old todo")
+            self.assertEqual(list(root.glob(".*.tmp")), [])
+            self.assertEqual(list(root.glob(".*.bak")), [])
