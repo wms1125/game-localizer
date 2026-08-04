@@ -86,6 +86,26 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(showerror.call_args.args[0], "汉化失败")
         self.assertIn("Symlink loop", showerror.call_args.args[1])
 
+    def test_integer_digit_limit_uses_error_dialog_without_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"value":' + "1" * 5000 + "}", encoding="utf-8")
+            dictionary.write_text("{}", encoding="utf-8")
+            app = self.make_app(str(resource), str(dictionary))
+
+            with patch.object(gui.messagebox, "showerror") as showerror:
+                app.run_translation()
+
+            self.assertFalse((root / "game.zh.json").exists())
+            self.assertFalse((root / "game.untranslated.json").exists())
+
+        error_message = app._append_log.call_args_list[-1].args[0]
+        self.assertIn("错误:", error_message)
+        showerror.assert_called_once()
+        self.assertEqual(showerror.call_args.args[0], "汉化失败")
+
     @staticmethod
     def make_app(resource: str, dictionary: str):
         app = object.__new__(gui.GameTranslatorApp)

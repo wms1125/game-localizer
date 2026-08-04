@@ -31,6 +31,15 @@ class TranslationError(Exception):
     pass
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise TranslationError(f"JSON 包含重复键: {key}")
+        value[key] = item
+    return value
+
+
 @dataclass(frozen=True)
 class MatchPreview:
     location: str
@@ -93,8 +102,12 @@ def decode_bytes(data: bytes) -> tuple[str, str]:
 def load_translation_dictionary(path: str | Path) -> dict[str, str]:
     dictionary_path = Path(path)
     try:
-        data = json.loads(dictionary_path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        text = dictionary_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        raise TranslationError(f"无法加载翻译字典: {exc}") from exc
+    try:
+        data = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except ValueError as exc:
         raise TranslationError(f"无法加载翻译字典: {exc}") from exc
     if not isinstance(data, dict):
         raise TranslationError("翻译字典必须是 JSON 对象")
@@ -151,21 +164,13 @@ def _json_path(parent: str, key: str | int) -> str:
 
 
 def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
-    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        value: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in value:
-                raise TranslationError(f"JSON 资源包含重复键: {key}")
-            value[key] = item
-        return value
-
     def reject_non_finite(constant: str) -> None:
         raise TranslationError(f"JSON 资源包含非有限数值: {constant}")
 
     try:
         data = json.loads(
             text,
-            object_pairs_hook=reject_duplicate_keys,
+            object_pairs_hook=_reject_duplicate_keys,
             parse_constant=reject_non_finite,
             parse_float=Decimal,
         )
@@ -173,6 +178,8 @@ def transform_json(text: str, dictionary: dict[str, str]) -> TransformResult:
         raise TranslationError(f"JSON 资源格式无效: {exc}") from exc
     except DecimalException as exc:
         raise TranslationError(f"JSON 数值无法安全解析: {exc}") from exc
+    except ValueError as exc:
+        raise TranslationError(f"JSON 资源包含无法安全解析的数值: {exc}") from exc
     result = TransformResult(content="")
 
     def walk(value: Any, path: str) -> Any:

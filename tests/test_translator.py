@@ -47,6 +47,17 @@ class EncodingAndDictionaryTests(unittest.TestCase):
                     with self.assertRaisesRegex(TranslationError, "UTF-8"):
                         load_translation_dictionary(path)
 
+    def test_dictionary_rejects_duplicate_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "dictionary.json")
+            path.write_text(
+                '{"New Game":"甲","New Game":"乙"}',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(TranslationError, "重复键.*New Game"):
+                load_translation_dictionary(path)
+
     def test_placeholder_check_reports_only_missing_occurrences(self):
         self.assertEqual(
             missing_placeholders("Hello {name}, %1\\n", "你好 %1，{name}\\n"),
@@ -93,6 +104,12 @@ class TransformationTests(unittest.TestCase):
         result = transform_json('{"value":1.5,"title":"New Game"}', {"New Game": "新游戏"})
 
         self.assertEqual(json.loads(result.content), {"value": 1.5, "title": "新游戏"})
+
+    def test_json_wraps_python_integer_digit_limit_errors(self):
+        source = '{"value":' + "1" * 5000 + "}"
+
+        with self.assertRaisesRegex(TranslationError, "JSON.*数值"):
+            transform_json(source, {})
 
     def test_csv_sniffs_semicolon_and_matches_complete_cells(self):
         result = transform_csv("id;text\n1;New Game\n2;Options\n", {"New Game": "新游戏"})
@@ -259,6 +276,21 @@ class ProcessingTests(unittest.TestCase):
             dictionary.write_text("{}", encoding="utf-8")
 
             with self.assertRaisesRegex(TranslationError, "重复键"):
+                process_resource(resource, dictionary)
+
+            output, untranslated = default_output_paths(resource)
+            self.assertFalse(output.exists())
+            self.assertFalse(untranslated.exists())
+
+    def test_process_resource_integer_digit_limit_does_not_create_either_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"value":' + "1" * 5000 + "}", encoding="utf-8")
+            dictionary.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(TranslationError, "JSON.*数值"):
                 process_resource(resource, dictionary)
 
             output, untranslated = default_output_paths(resource)

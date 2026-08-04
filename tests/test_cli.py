@@ -72,6 +72,53 @@ class CliTests(unittest.TestCase):
             self.assertIn("\u9519\u8bef:", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
 
+    def test_cli_rejects_duplicate_dictionary_keys_without_outputs_or_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text(
+                '{"New Game":"甲","New Game":"乙"}',
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "cli.py"), str(resource), str(dictionary)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("重复键", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertFalse((root / "game.zh.txt").exists())
+            self.assertFalse((root / "game.untranslated.json").exists())
+
+    def test_cli_wraps_integer_digit_limit_without_outputs_or_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.json"
+            dictionary = root / "dictionary.json"
+            resource.write_text('{"value":' + "1" * 5000 + "}", encoding="utf-8")
+            dictionary.write_text("{}", encoding="utf-8")
+
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "cli.py"), str(resource), str(dictionary)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("错误:", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertFalse((root / "game.zh.json").exists())
+            self.assertFalse((root / "game.untranslated.json").exists())
+
     def test_cli_reports_output_resolve_runtime_error_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
