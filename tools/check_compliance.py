@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +36,7 @@ REQUIRED_IMPLEMENTATION_SOURCES = frozenset({
     ("official_documentation", "documented per implementation change"),
 })
 _SHA256_PATTERN = re.compile(r"[0-9A-Fa-f]{64}\Z")
+_REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 @dataclass(frozen=True)
@@ -243,41 +246,164 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _has_reparse_attribute(metadata: object) -> bool:
+    return bool(getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE)
+
+
+def _identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _directory_metadata(
+    path: Path,
+    relative_path: Path,
+    expected_identity: tuple[int, int] | None,
+    findings: list[ComplianceFinding],
+) -> os.stat_result | None:
+    try:
+        metadata = os.lstat(path)
+    except OSError:
+        findings.append(
+            _finding(
+                "COMPLIANCE_SCAN_FAILED",
+                "ERROR",
+                "Repository directory could not be inspected.",
+                relative_path,
+            )
+        )
+        return None
+    if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+        findings.append(
+            _finding(
+                "COMPLIANCE_PATH_UNSAFE",
+                "ERROR",
+                "Repository path is a symbolic link or reparse point.",
+                relative_path,
+            )
+        )
+        return None
+    if not stat.S_ISDIR(metadata.st_mode) or (
+        expected_identity is not None and _identity(metadata) != expected_identity
+    ):
+        findings.append(
+            _finding(
+                "COMPLIANCE_PATH_UNSAFE",
+                "ERROR",
+                "Repository directory changed during scan.",
+                relative_path,
+            )
+        )
+        return None
+    return metadata
+
+
 def _scan_restricted_material(
     root: Path,
     restricted_hashes: frozenset[str],
     findings: list[ComplianceFinding],
 ) -> None:
-    for path in root.rglob("*"):
-        if not path.is_file():
+    root_metadata = _directory_metadata(root, Path("."), None, findings)
+    if root_metadata is None:
+        return
+    pending = [(root, Path("."), _identity(root_metadata))]
+    while pending:
+        current, current_relative, expected_identity = pending.pop()
+        if _directory_metadata(current, current_relative, expected_identity, findings) is None:
             continue
-        relative_path = path.relative_to(root)
-        casefolded_parts = frozenset(part.casefold() for part in relative_path.parts)
-        if SKIPPED_PATH_SEGMENTS.intersection(casefolded_parts):
-            continue
-        restricted_by_path = bool(FORBIDDEN_PATH_SEGMENTS.intersection(casefolded_parts))
-        restricted_by_name = path.name.casefold() in RESTRICTED_ARCHIVE_NAMES
         try:
-            restricted_by_hash = _sha256_file(path).casefold() in restricted_hashes
+            with os.scandir(current) as iterator:
+                entries = sorted(iterator, key=lambda item: item.name.casefold())
         except OSError:
             findings.append(
                 _finding(
-                    "COMPLIANCE_FILE_UNREADABLE",
+                    "COMPLIANCE_SCAN_FAILED",
                     "ERROR",
-                    "Repository file could not be hashed.",
-                    relative_path,
+                    "Repository directory could not be enumerated.",
+                    current_relative,
                 )
             )
             continue
-        if restricted_by_path or restricted_by_name or restricted_by_hash:
-            findings.append(
-                _finding(
-                    "RESTRICTED_MATERIAL_TRACKED",
-                    "ERROR",
-                    "Restricted material path is forbidden in the repository.",
-                    relative_path,
+        if _directory_metadata(current, current_relative, expected_identity, findings) is None:
+            continue
+        for entry in entries:
+            relative_path = current_relative / entry.name
+            casefolded_parts = frozenset(part.casefold() for part in relative_path.parts)
+            if SKIPPED_PATH_SEGMENTS.intersection(casefolded_parts):
+                continue
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError:
+                findings.append(
+                    _finding(
+                        "COMPLIANCE_SCAN_FAILED",
+                        "ERROR",
+                        "Repository entry could not be inspected.",
+                        relative_path,
+                    )
                 )
-            )
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+                findings.append(
+                    _finding(
+                        "COMPLIANCE_PATH_UNSAFE",
+                        "ERROR",
+                        "Repository path is a symbolic link or reparse point.",
+                        relative_path,
+                    )
+                )
+                continue
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+                is_file = entry.is_file(follow_symlinks=False)
+            except OSError:
+                findings.append(
+                    _finding(
+                        "COMPLIANCE_SCAN_FAILED",
+                        "ERROR",
+                        "Repository entry could not be inspected.",
+                        relative_path,
+                    )
+                )
+                continue
+            if is_directory != stat.S_ISDIR(metadata.st_mode) or is_file != stat.S_ISREG(metadata.st_mode):
+                findings.append(
+                    _finding(
+                        "COMPLIANCE_PATH_UNSAFE",
+                        "ERROR",
+                        "Repository entry type changed during scan.",
+                        relative_path,
+                    )
+                )
+                continue
+            path = current / entry.name
+            if is_directory:
+                directory_metadata = _directory_metadata(path, relative_path, None, findings)
+                if directory_metadata is not None:
+                    pending.append((path, relative_path, _identity(directory_metadata)))
+                continue
+            restricted_by_path = bool(FORBIDDEN_PATH_SEGMENTS.intersection(casefolded_parts))
+            restricted_by_name = entry.name.casefold() in RESTRICTED_ARCHIVE_NAMES
+            try:
+                restricted_by_hash = _sha256_file(path).casefold() in restricted_hashes
+            except OSError:
+                findings.append(
+                    _finding(
+                        "COMPLIANCE_FILE_UNREADABLE",
+                        "ERROR",
+                        "Repository file could not be hashed.",
+                        relative_path,
+                    )
+                )
+                continue
+            if restricted_by_path or restricted_by_name or restricted_by_hash:
+                findings.append(
+                    _finding(
+                        "RESTRICTED_MATERIAL_TRACKED",
+                        "ERROR",
+                        "Restricted material path is forbidden in the repository.",
+                        relative_path,
+                    )
+                )
 
 
 def check_repository(root: Path, *, release: bool = False) -> ComplianceReport:

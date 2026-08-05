@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -78,6 +80,21 @@ class ComplianceTests(unittest.TestCase):
 
     def provenance_error_codes(self, root: Path) -> list[str]:
         return [finding.code for finding in check_repository(root).errors]
+
+    def scandir_context(self, entries: list[object]) -> mock.MagicMock:
+        context = mock.MagicMock()
+        context.__enter__.return_value = iter(entries)
+        context.__exit__.return_value = False
+        return context
+
+    def regular_tree_hashes(self, root: Path) -> dict[str, str]:
+        hashes: dict[str, str] = {}
+        for current, _, files in os.walk(root, followlinks=False):
+            for name in files:
+                path = Path(current) / name
+                if stat.S_ISREG(os.lstat(path).st_mode):
+                    hashes[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        return hashes
 
     def test_current_repository_audit_has_only_undecided_license_warning(self) -> None:
         report = check_repository(REPOSITORY_ROOT)
@@ -204,6 +221,182 @@ class ComplianceTests(unittest.TestCase):
             [(item.code, item.message) for item in unreadable],
             [("COMPLIANCE_FILE_UNREADABLE", "Repository file could not be hashed.")] * len(unreadable),
         )
+
+    def test_file_symlink_to_outside_is_rejected_before_hashing_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            outside = base / "outside.bin"
+            outside.write_bytes(b"outside synthetic fixture")
+            link = root / "outside-link.bin"
+            os.symlink(outside, link)
+            before_root = self.regular_tree_hashes(root)
+            before_outside = hashlib.sha256(outside.read_bytes()).hexdigest()
+            hashed: list[Path] = []
+
+            def record_hash(path: Path) -> str:
+                hashed.append(path)
+                return "0" * 64
+
+            with mock.patch("tools.check_compliance._sha256_file", side_effect=record_hash):
+                report = check_repository(root)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertNotIn(link, hashed)
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(hashlib.sha256(outside.read_bytes()).hexdigest(), before_outside)
+
+    def test_directory_symlink_to_outside_is_rejected_without_descending_or_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            outside = base / "outside"
+            outside.mkdir()
+            secret = outside / "secret.bin"
+            secret.write_bytes(b"outside directory fixture")
+            link = root / "linked-directory"
+            os.symlink(outside, link, target_is_directory=True)
+            before_root = self.regular_tree_hashes(root)
+            before_outside = self.regular_tree_hashes(outside)
+            hashed: list[Path] = []
+
+            with mock.patch(
+                "tools.check_compliance._sha256_file",
+                side_effect=lambda path: hashed.append(path) or "0" * 64,
+            ):
+                report = check_repository(root)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertFalse(any(path == link or link in path.parents for path in hashed))
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(self.regular_tree_hashes(outside), before_outside)
+
+    def test_windows_reparse_attribute_is_rejected_before_type_checks_or_hashing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            entry = mock.MagicMock()
+            entry.name = "junction"
+            entry.path = str(root / entry.name)
+            entry.stat.return_value = mock.Mock(
+                st_mode=stat.S_IFDIR,
+                st_dev=1,
+                st_ino=2,
+                st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+            )
+
+            with mock.patch("os.scandir", return_value=self.scandir_context([entry])), mock.patch(
+                "tools.check_compliance._sha256_file"
+            ) as hash_file:
+                report = check_repository(root)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            entry.stat.assert_called_once_with(follow_symlinks=False)
+            entry.is_dir.assert_not_called()
+            entry.is_file.assert_not_called()
+            hash_file.assert_not_called()
+
+    def test_scandir_permission_error_fails_closed_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+
+            with mock.patch("os.scandir", side_effect=PermissionError("denied")):
+                report = check_repository(root)
+
+        failures = [item for item in report.errors if item.code == "COMPLIANCE_SCAN_FAILED"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].message, "Repository directory could not be enumerated.")
+
+    def test_directory_lstat_error_fails_closed_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+
+            with mock.patch("tools.check_compliance.os.lstat", side_effect=PermissionError("denied")):
+                report = check_repository(root)
+
+        failures = [item for item in report.errors if item.code == "COMPLIANCE_SCAN_FAILED"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].message, "Repository directory could not be inspected.")
+
+    def test_queued_directory_identity_change_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            queued = root / "queued"
+            queued.mkdir()
+            (queued / "hidden.bin").write_bytes(b"synthetic")
+            displaced = root / "queued-before-swap"
+            real_scandir = os.scandir
+            replaced = False
+
+            def replace_before_enumeration(path: object):
+                nonlocal replaced
+                if Path(path) == queued and not replaced:
+                    queued.rename(displaced)
+                    queued.mkdir()
+                    replaced = True
+                return real_scandir(path)
+
+            with mock.patch("os.scandir", side_effect=replace_before_enumeration):
+                report = check_repository(root)
+
+        changed = [item for item in report.errors if item.code == "COMPLIANCE_PATH_UNSAFE"]
+        self.assertTrue(changed)
+        self.assertIn("Repository directory changed during scan.", [item.message for item in changed])
+
+    def test_entry_lstat_and_type_errors_fail_closed_deterministically(self) -> None:
+        cases = ("stat", "is_dir", "is_file")
+        for failing_method in cases:
+            with self.subTest(failing_method=failing_method), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                self.make_repository(root)
+                candidate = root / "candidate.bin"
+                candidate.write_bytes(b"synthetic")
+                metadata = os.lstat(candidate)
+                entry = mock.MagicMock()
+                entry.name = candidate.name
+                entry.path = str(candidate)
+                entry.stat.return_value = metadata
+                entry.is_dir.return_value = False
+                entry.is_file.return_value = True
+                getattr(entry, failing_method).side_effect = OSError("denied")
+
+                with mock.patch("os.scandir", return_value=self.scandir_context([entry])):
+                    report = check_repository(root)
+
+                failures = [item for item in report.errors if item.code == "COMPLIANCE_SCAN_FAILED"]
+                self.assertEqual(len(failures), 1)
+                self.assertEqual(failures[0].message, "Repository entry could not be inspected.")
+
+    def test_safe_regular_entry_uses_nonfollowing_checks_and_is_hashed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            candidate = root / "candidate.bin"
+            candidate.write_bytes(b"synthetic")
+            entry = mock.MagicMock()
+            entry.name = candidate.name
+            entry.path = str(candidate)
+            entry.stat.return_value = os.lstat(candidate)
+            entry.is_dir.return_value = False
+            entry.is_file.return_value = True
+
+            with mock.patch("os.scandir", return_value=self.scandir_context([entry])), mock.patch(
+                "tools.check_compliance._sha256_file", return_value="0" * 64
+            ) as hash_file:
+                report = check_repository(root)
+
+            self.assertTrue(report.ok)
+            entry.stat.assert_called_once_with(follow_symlinks=False)
+            entry.is_dir.assert_called_once_with(follow_symlinks=False)
+            entry.is_file.assert_called_once_with(follow_symlinks=False)
+            hash_file.assert_called_once_with(candidate)
 
     def test_restricted_reference_material_requires_complete_nonempty_records(self) -> None:
         cases = {
