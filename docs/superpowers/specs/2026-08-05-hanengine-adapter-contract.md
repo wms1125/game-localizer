@@ -64,7 +64,7 @@
 - `declared_mode`：`PLAYER` 或 `STUDIO`。
 - `project_id`。
 - HanGuard 第一阶段产生的临时 `risk_level`；此时 `allowed_operations` 只能包含只读 `DETECT`。
-- `cancellation_token`、`event_sink`。
+- `context`：由 `TaskRunner` 为当前步骤创建的活动 `TaskContext`。
 
 输出 `DetectionResult`：
 
@@ -78,7 +78,7 @@
 
 ### 3.2 `extract`
 
-输入 `ExtractRequest`：`source_root`、`working_root`、候选编码列表、过滤规则、项目 ID、取消令牌和事件接收器。
+输入 `ExtractRequest`：`source_root`、`working_root`、候选编码列表、过滤规则、项目 ID，以及由 `TaskRunner` 创建的活动 `TaskContext`。
 
 输出 `ExtractResult`：`segments`、源树指纹、读取文件清单、跳过文件清单、警告和统计。若只提取了部分支持范围，必须返回 `EXTRACT_PARTIAL`，不能用成功状态掩盖缺失。
 
@@ -86,7 +86,7 @@
 
 ### 3.3 `validate`
 
-输入 `ValidationRequest`：源树指纹、原始文本段、候选翻译文本段、目标编码和项目规则。
+输入 `ValidationRequest`：源树指纹、原始文本段、候选翻译文本段、目标编码、项目规则，以及由 `TaskRunner` 创建的活动 `TaskContext`。
 
 输出 `ValidationResult`：`valid`、问题列表、自动修复列表、阻断问题数量和警告数量。每个 `ValidationIssue` 包含稳定问题码、严重度、文本段 ID、来源位置、消息、是否可自动恢复和建议操作。
 
@@ -94,7 +94,7 @@
 
 ### 3.4 `build`
 
-输入 `BuildRequest`：只读源目录、独立暂存目录、已验证文本段、源树指纹、输出选项、取消令牌和事件接收器。
+输入 `BuildRequest`：只读源目录、独立暂存目录、已验证文本段、源树指纹、输出选项，以及由 `TaskRunner` 创建的活动 `TaskContext`。
 
 输出 `BuildResult`：生成文件清单、删除/新增/修改分类、产物、候选输出指纹、警告和统计。
 
@@ -102,13 +102,13 @@
 
 ### 3.5 `verify`
 
-输入 `VerifyRequest`：源树指纹、暂存目录、构建清单和验证级别。
+输入 `VerifyRequest`：源树指纹、暂存目录、构建清单、验证级别，以及由 `TaskRunner` 创建的活动 `TaskContext`。
 
 输出 `VerifyResult`：总体结果、逐项检查、语法/编码结果、产物哈希、启动冒烟结果和问题列表。实际启动冒烟仅允许对仓库自有的合法基准项目执行。
 
 ### 3.6 `rollback`
 
-输入 `RollbackRequest`：项目 ID、安装清单、备份清单、目标根目录和预期原始哈希。
+输入 `RollbackRequest`：项目 ID、安装清单、备份清单、目标根目录、预期原始哈希，以及由 `TaskRunner` 创建的活动 `TaskContext`。
 
 输出 `RollbackResult`：恢复文件、未改变文件、失败文件、恢复后哈希验证和问题列表。
 
@@ -149,11 +149,14 @@
 
 ## 5. 任务事件与取消
 
-- 每次调用接收 `event_sink` 和 `cancellation_token`。
-- 事件必须包含 `task_id`、`step_id`、单调递增 `sequence`、类型、时间戳、摘要和结构化数据。
-- 适配器至少在开始、可量化进度、警告、产物生成、完成或失败时发出事件。
+- 六类请求只接收由 `TaskRunner` 为当前步骤创建的活动 `TaskContext`，不得包含独立的 `event_sink` 或 `cancellation_token` 字段。
+- 适配器只能通过请求的 `TaskContext` 方法报告进度、日志、警告和产物，并通过同一上下文执行协作式取消检查。
+- `TaskRunner` 独占任务级单调递增事件序列、UTC 时间戳、`TaskEvent` 构造以及向 `EventSink` 的投递。适配器不得接收原始 `EventSink`、自行构造 `TaskEvent`，也不得选择事件序号或时间戳。
+- 适配器在存在可量化进度、需记录的日志或警告、产物生成以及取消检查点时使用活动上下文；步骤开始、完成和失败事件由 `TaskRunner` 负责。
 - 事件摘要不得包含 API 密钥、完整在线请求、完整游戏截图或模型内部推理。
 - 取消检查必须出现在文件边界和耗时循环内。原子写入开始后可延迟取消，但必须在事件中说明。
+
+以上调整是在实现前对已审阅 v1 设计的校正，不是已发布契约的破坏性变更；契约标识继续为 `hanengine.adapter/v1`。
 
 ## 6. 不变量
 
