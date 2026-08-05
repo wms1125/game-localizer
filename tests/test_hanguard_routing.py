@@ -289,6 +289,26 @@ class RoutingModelTests(unittest.TestCase):
                         decision_reasons=("policy test",),
                     )
 
+    def test_route_plan_constructor_rejects_low_risk_unknown_evidence(self):
+        for phase, allowed in (
+            (RoutePhase.PROVISIONAL, frozenset({RouteOperation.DETECT})),
+            (RoutePhase.FINAL, ALL_OPERATIONS),
+        ):
+            with self.subTest(phase=phase):
+                with self.assertRaisesRegex(ValueError, "unknown_evidence"):
+                    RoutePlan(
+                        project_id="project-a",
+                        phase=phase,
+                        risk_before=RiskLevel.H0_PROJECT,
+                        risk_after=RiskLevel.H0_PROJECT,
+                        allowed_operations=allowed,
+                        blocked_operations=ALL_OPERATIONS - allowed,
+                        matches=(),
+                        evaluation_status=EvaluationStatus.COMPLETE,
+                        unknown_evidence=True,
+                        decision_reasons=("missing evidence",),
+                    )
+
     def test_route_plan_from_dict_rejects_policy_mutations(self):
         h3_match = RuleMatch(
             "protected",
@@ -368,6 +388,27 @@ class RoutingModelTests(unittest.TestCase):
         for payload in mutations:
             with self.subTest(payload=payload):
                 with self.assertRaises(ValueError):
+                    RoutePlan.from_dict(payload)
+
+    def test_route_plan_from_dict_rejects_low_risk_unknown_evidence(self):
+        guard = HanGuard(())
+        provisional = guard.evaluate_provisional(
+            "project-a",
+            RiskLevel.H0_PROJECT,
+            (),
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        final = guard.evaluate_final(
+            provisional,
+            RiskLevel.H0_PROJECT,
+            (),
+            available_operations=ALL_OPERATIONS,
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        for plan in (provisional, final):
+            payload = {**plan.to_dict(), "unknown_evidence": True}
+            with self.subTest(phase=plan.phase):
+                with self.assertRaisesRegex(ValueError, "unknown_evidence"):
                     RoutePlan.from_dict(payload)
 
     def test_evidence_rule_match_and_plan_round_trip_exact_schemas(self):
@@ -768,6 +809,58 @@ class HanGuardRoutingTests(unittest.TestCase):
         self.assertEqual(final.risk_after, RiskLevel.H3_PROTECTED)
         self.assertEqual(final.evaluation_status, EvaluationStatus.UNKNOWN_RULE)
         self.assertTrue(final.unknown_evidence)
+
+    def test_final_fails_closed_for_corrupted_unknown_predecessors(self):
+        guard = HanGuard(())
+        unknown_flag = guard.evaluate_provisional(
+            "project-a",
+            None,
+            (),
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        unknown_status = guard.evaluate_provisional(
+            "project-b",
+            RiskLevel.H0_PROJECT,
+            (),
+            evaluation_status=EvaluationStatus.UNKNOWN_RULE,
+        )
+        object.__setattr__(unknown_flag, "risk_after", RiskLevel.H0_PROJECT)
+        object.__setattr__(unknown_status, "risk_after", RiskLevel.H0_PROJECT)
+        object.__setattr__(unknown_status, "unknown_evidence", False)
+
+        for provisional in (unknown_flag, unknown_status):
+            with self.subTest(project_id=provisional.project_id):
+                final = guard.evaluate_final(
+                    provisional,
+                    RiskLevel.H0_PROJECT,
+                    (),
+                    available_operations=ALL_OPERATIONS,
+                    evaluation_status=EvaluationStatus.COMPLETE,
+                )
+                self.assertEqual(final.risk_before, RiskLevel.H2_RESTRICTED)
+                self.assertEqual(final.risk_after, RiskLevel.H2_RESTRICTED)
+                self.assertTrue(final.unknown_evidence)
+                self.assertEqual(final.allowed_operations, SAFE_EXTERNAL_OPERATIONS)
+
+    def test_complete_known_predecessor_still_allows_h0(self):
+        guard = HanGuard(())
+        provisional = guard.evaluate_provisional(
+            "project-a",
+            RiskLevel.H0_PROJECT,
+            (),
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        final = guard.evaluate_final(
+            provisional,
+            RiskLevel.H0_PROJECT,
+            (),
+            available_operations=ALL_OPERATIONS,
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        self.assertFalse(provisional.unknown_evidence)
+        self.assertFalse(final.unknown_evidence)
+        self.assertEqual(final.risk_after, RiskLevel.H0_PROJECT)
+        self.assertEqual(final.allowed_operations, ALL_OPERATIONS)
 
     def test_final_rejects_wrong_phase_and_invalid_capabilities(self):
         provisional = HanGuard(()).evaluate_provisional(

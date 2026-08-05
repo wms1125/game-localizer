@@ -432,6 +432,10 @@ class RoutePlan:
         _require_enum(self.evaluation_status, EvaluationStatus, "evaluation_status")
         if not isinstance(self.unknown_evidence, bool):
             raise TypeError("unknown_evidence must be a bool")
+        if self.unknown_evidence and self.risk_after < RiskLevel.H2_RESTRICTED:
+            raise ValueError(
+                "unknown_evidence requires risk_after of at least H2_RESTRICTED"
+            )
         if any(match.risk_after > self.risk_after for match in matches):
             raise ValueError("risk_after must preserve every matched rule risk")
         if self.phase is RoutePhase.PROVISIONAL:
@@ -585,6 +589,11 @@ class HanGuard:
             default=provisional.risk_after,
         )
         risk_before = max(risk_before, provisional.risk_after)
+        if (
+            provisional.unknown_evidence
+            or provisional.evaluation_status is not EvaluationStatus.COMPLETE
+        ):
+            risk_before = max(risk_before, RiskLevel.H2_RESTRICTED)
         risk_base = (
             RiskLevel.H2_RESTRICTED
             if adapter_baseline is None
