@@ -91,6 +91,32 @@ class ComplianceTests(unittest.TestCase):
 
         self.assertIn("THIRD_PARTY_METADATA_INVALID", [finding.code for finding in report.findings])
 
+    def test_fully_populated_third_party_component_with_valid_sha256_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            self.write_json(
+                root / "compliance" / "third_party_components.json",
+                {
+                    "components": [
+                        {
+                            "name": "Example",
+                            "version": "1.0.0",
+                            "source_url": "https://example.invalid/component",
+                            "sha256": "a" * 64,
+                            "license_spdx": "MIT",
+                            "usage": "test fixture",
+                            "redistributed": False,
+                        }
+                    ],
+                    "contract": THIRD_PARTY_CONTRACT,
+                },
+            )
+
+            report = check_repository(root)
+
+        self.assertNotIn("THIRD_PARTY_METADATA_INVALID", [finding.code for finding in report.findings])
+
     def test_missing_invalid_and_incompatible_manifests_are_errors(self) -> None:
         cases = (
             ("missing", None),
@@ -159,6 +185,10 @@ class ComplianceTests(unittest.TestCase):
             json.dumps(report.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n",
             '{\n  "findings": [\n    {\n      "code": "A_CODE",\n      "message": "first",\n      "path": null,\n      "severity": "ERROR"\n    },\n    {\n      "code": "Z_CODE",\n      "message": "last",\n      "path": "z",\n      "severity": "WARNING"\n    }\n  ],\n  "ok": false\n}\n',
         )
+
+    def test_finding_rejects_an_invalid_severity(self) -> None:
+        with self.assertRaises(ValueError):
+            ComplianceFinding("CODE", "INFO", "message")
 
     def test_cli_json_audit_and_release_exit_codes(self) -> None:
         command = [sys.executable, str(REPOSITORY_ROOT / "tools" / "check_compliance.py"), "--json"]

@@ -21,7 +21,7 @@ SKIPPED_PATH_SEGMENTS = frozenset({".git", ".superpowers", "__pycache__"})
 COMPONENT_FIELDS = frozenset({
     "name", "version", "source_url", "sha256", "license_spdx", "usage", "redistributed",
 })
-_SHA256_PATTERN = re.compile(r"[0-9A-Fa-f]{64}\\Z")
+_SHA256_PATTERN = re.compile(r"[0-9A-Fa-f]{64}\Z")
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,10 @@ class ComplianceFinding:
     severity: str
     message: str
     path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.severity not in {"ERROR", "WARNING"}:
+            raise ValueError("severity must be ERROR or WARNING")
 
     def to_dict(self) -> dict[str, str | None]:
         return {
