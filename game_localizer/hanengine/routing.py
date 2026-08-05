@@ -423,14 +423,37 @@ class RoutePlan:
             )
         object.__setattr__(self, "allowed_operations", allowed)
         object.__setattr__(self, "blocked_operations", blocked)
+        matches = _ordered_typed_tuple(self.matches, RuleMatch, "matches")
         object.__setattr__(
             self,
             "matches",
-            _ordered_typed_tuple(self.matches, RuleMatch, "matches"),
+            matches,
         )
         _require_enum(self.evaluation_status, EvaluationStatus, "evaluation_status")
         if not isinstance(self.unknown_evidence, bool):
             raise TypeError("unknown_evidence must be a bool")
+        if any(match.risk_after > self.risk_after for match in matches):
+            raise ValueError("risk_after must preserve every matched rule risk")
+        if self.phase is RoutePhase.PROVISIONAL:
+            if allowed != frozenset({RouteOperation.DETECT}):
+                raise ValueError("provisional routes must allow exactly DETECT")
+        else:
+            if not allowed <= _risk_base_operations(self.risk_after):
+                raise ValueError("final allowed_operations exceed the risk policy")
+            matched_blocks = frozenset(
+                operation
+                for match in matches
+                for operation in match.blocked_operations
+            )
+            if allowed & matched_blocks:
+                raise ValueError("final allowed_operations include a matched rule block")
+        if (
+            self.evaluation_status is not EvaluationStatus.COMPLETE
+            and not self.unknown_evidence
+        ):
+            raise ValueError(
+                "a non-complete evaluation status requires unknown_evidence"
+            )
         reasons = _string_tuple(self.decision_reasons, "decision_reasons")
         object.__setattr__(self, "decision_reasons", _unique_in_order(reasons))
 
@@ -480,7 +503,16 @@ class RoutePlan:
 class HanGuard:
     def __init__(self, rules: Iterable[HanGuardRule]):
         items = _typed_tuple(rules, HanGuardRule, "rules")
-        self._rules = tuple(sorted(items, key=_rule_sort_key))
+        versioned_rules: dict[tuple[str, str], HanGuardRule] = {}
+        for rule in items:
+            identity = (rule.rule_id, rule.rule_version)
+            existing = versioned_rules.get(identity)
+            if existing is not None and existing != rule:
+                raise ValueError(
+                    "conflicting HanGuard rules share rule_id and rule_version"
+                )
+            versioned_rules[identity] = rule
+        self._rules = tuple(sorted(versioned_rules.values(), key=_rule_sort_key))
 
     def evaluate_provisional(
         self,
@@ -548,7 +580,11 @@ class HanGuard:
         )
         signal_items = _validated_signals(signals)
 
-        risk_before = provisional.risk_after
+        risk_before = max(
+            (match.risk_after for match in provisional.matches),
+            default=provisional.risk_after,
+        )
+        risk_before = max(risk_before, provisional.risk_after)
         risk_base = (
             RiskLevel.H2_RESTRICTED
             if adapter_baseline is None
@@ -576,11 +612,7 @@ class HanGuard:
             reasons.append(evaluation_status.value)
         reasons = list(_unique_in_order(reasons))
 
-        base_operations = (
-            _ALL_OPERATIONS
-            if risk_after in (RiskLevel.H0_PROJECT, RiskLevel.H1_OFFLINE)
-            else _SAFE_EXTERNAL_OPERATIONS
-        )
+        base_operations = _risk_base_operations(risk_after)
         rule_blocks = frozenset(
             operation
             for match in matches
@@ -598,6 +630,7 @@ class HanGuard:
             evaluation_status=final_status,
             unknown_evidence=(
                 provisional.unknown_evidence
+                or provisional.evaluation_status is not EvaluationStatus.COMPLETE
                 or adapter_baseline is None
                 or evaluation_status is not EvaluationStatus.COMPLETE
             ),
@@ -649,6 +682,12 @@ class HanGuard:
 def _require_optional_risk(value: object, field_name: str) -> None:
     if value is not None:
         _require_enum(value, RiskLevel, field_name)
+
+
+def _risk_base_operations(risk: RiskLevel) -> frozenset[RouteOperation]:
+    if risk in (RiskLevel.H0_PROJECT, RiskLevel.H1_OFFLINE):
+        return _ALL_OPERATIONS
+    return _SAFE_EXTERNAL_OPERATIONS
 
 
 def _validated_signals(signals: Iterable[RiskSignal]) -> tuple[RiskSignal, ...]:

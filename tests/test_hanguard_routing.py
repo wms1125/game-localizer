@@ -199,6 +199,177 @@ class RoutingModelTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             RoutePlan(matches=(), decision_reasons={"reason"}, **common)
 
+    def test_route_plan_constructor_rejects_policy_contradictions(self):
+        h3_match = RuleMatch(
+            "protected",
+            "1.0.0",
+            "ac.exe",
+            "root",
+            RiskLevel.H0_PROJECT,
+            RiskLevel.H3_PROTECTED,
+            (),
+            "protected",
+        )
+        blocking_match = RuleMatch(
+            "block-extract",
+            "1.0.0",
+            "resource_write",
+            "manifest",
+            RiskLevel.H0_PROJECT,
+            RiskLevel.H0_PROJECT,
+            {RouteOperation.EXTRACT},
+            "extract blocked",
+        )
+        cases = (
+            {
+                "phase": RoutePhase.FINAL,
+                "risk_after": RiskLevel.H0_PROJECT,
+                "allowed": ALL_OPERATIONS,
+                "matches": (h3_match,),
+                "status": EvaluationStatus.COMPLETE,
+                "unknown": False,
+            },
+            {
+                "phase": RoutePhase.PROVISIONAL,
+                "risk_after": RiskLevel.H0_PROJECT,
+                "allowed": frozenset(),
+                "matches": (),
+                "status": EvaluationStatus.COMPLETE,
+                "unknown": False,
+            },
+            {
+                "phase": RoutePhase.PROVISIONAL,
+                "risk_after": RiskLevel.H0_PROJECT,
+                "allowed": {RouteOperation.DETECT, RouteOperation.EXTRACT},
+                "matches": (),
+                "status": EvaluationStatus.COMPLETE,
+                "unknown": False,
+            },
+            {
+                "phase": RoutePhase.FINAL,
+                "risk_after": RiskLevel.H2_RESTRICTED,
+                "allowed": {
+                    RouteOperation.DETECT,
+                    RouteOperation.EXTRACT,
+                },
+                "matches": (),
+                "status": EvaluationStatus.COMPLETE,
+                "unknown": False,
+            },
+            {
+                "phase": RoutePhase.FINAL,
+                "risk_after": RiskLevel.H0_PROJECT,
+                "allowed": ALL_OPERATIONS,
+                "matches": (blocking_match,),
+                "status": EvaluationStatus.COMPLETE,
+                "unknown": False,
+            },
+            {
+                "phase": RoutePhase.FINAL,
+                "risk_after": RiskLevel.H2_RESTRICTED,
+                "allowed": SAFE_EXTERNAL_OPERATIONS,
+                "matches": (),
+                "status": EvaluationStatus.UNKNOWN_RULE,
+                "unknown": False,
+            },
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                with self.assertRaises(ValueError):
+                    RoutePlan(
+                        project_id="project-a",
+                        phase=case["phase"],
+                        risk_before=RiskLevel.H0_PROJECT,
+                        risk_after=case["risk_after"],
+                        allowed_operations=case["allowed"],
+                        blocked_operations=ALL_OPERATIONS - case["allowed"],
+                        matches=case["matches"],
+                        evaluation_status=case["status"],
+                        unknown_evidence=case["unknown"],
+                        decision_reasons=("policy test",),
+                    )
+
+    def test_route_plan_from_dict_rejects_policy_mutations(self):
+        h3_match = RuleMatch(
+            "protected",
+            "1.0.0",
+            "ac.exe",
+            "root",
+            RiskLevel.H0_PROJECT,
+            RiskLevel.H3_PROTECTED,
+            (),
+            "protected",
+        )
+        valid = RoutePlan(
+            project_id="project-a",
+            phase=RoutePhase.FINAL,
+            risk_before=RiskLevel.H0_PROJECT,
+            risk_after=RiskLevel.H3_PROTECTED,
+            allowed_operations=SAFE_EXTERNAL_OPERATIONS,
+            blocked_operations=ALL_OPERATIONS - SAFE_EXTERNAL_OPERATIONS,
+            matches=(h3_match,),
+            evaluation_status=EvaluationStatus.COMPLETE,
+            unknown_evidence=False,
+            decision_reasons=("protected",),
+        ).to_dict()
+        mutations = []
+
+        low_risk = {**valid, "risk_after": "H0_PROJECT"}
+        mutations.append(low_risk)
+
+        provisional = {
+            **valid,
+            "phase": "provisional",
+            "allowed_operations": ["detect", "extract"],
+            "blocked_operations": sorted(
+                item.value
+                for item in ALL_OPERATIONS
+                - {RouteOperation.DETECT, RouteOperation.EXTRACT}
+            ),
+        }
+        mutations.append(provisional)
+
+        unsafe_h2 = {
+            **valid,
+            "risk_after": "H2_RESTRICTED",
+            "matches": [],
+            "allowed_operations": ["detect", "extract"],
+            "blocked_operations": sorted(
+                item.value
+                for item in ALL_OPERATIONS
+                - {RouteOperation.DETECT, RouteOperation.EXTRACT}
+            ),
+        }
+        mutations.append(unsafe_h2)
+
+        blocked_match = {
+            **h3_match.to_dict(),
+            "risk_after": "H0_PROJECT",
+            "blocked_operations": ["extract"],
+        }
+        blocked_operation = {
+            **valid,
+            "risk_after": "H0_PROJECT",
+            "matches": [blocked_match],
+            "allowed_operations": sorted(item.value for item in ALL_OPERATIONS),
+            "blocked_operations": [],
+        }
+        mutations.append(blocked_operation)
+
+        unknown_without_flag = {
+            **valid,
+            "risk_after": "H2_RESTRICTED",
+            "matches": [],
+            "evaluation_status": "unknown_rule",
+            "unknown_evidence": False,
+        }
+        mutations.append(unknown_without_flag)
+
+        for payload in mutations:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    RoutePlan.from_dict(payload)
+
     def test_evidence_rule_match_and_plan_round_trip_exact_schemas(self):
         signal = make_signal()
         rule = make_rule(
@@ -375,6 +546,39 @@ class HanGuardRoutingTests(unittest.TestCase):
         )
         self.assertEqual(forward.to_dict(), reverse.to_dict())
 
+    def test_conflicting_versioned_rules_are_rejected_in_both_orders(self):
+        low = make_rule(
+            rule_id="same-rule",
+            match_value="ac.exe",
+            minimum_risk=RiskLevel.H0_PROJECT,
+            blocked_operations=(),
+            reason="same reason",
+        )
+        high = make_rule(
+            rule_id="same-rule",
+            match_value="ac.exe",
+            minimum_risk=RiskLevel.H3_PROTECTED,
+            blocked_operations=(),
+            reason="same reason",
+        )
+        for rules in ((low, high), (high, low)):
+            with self.subTest(risks=[rule.minimum_risk for rule in rules]):
+                with self.assertRaisesRegex(ValueError, "conflicting"):
+                    HanGuard(rules)
+
+    def test_identical_duplicate_versioned_rules_are_normalized(self):
+        rule = make_rule(minimum_risk=RiskLevel.H3_PROTECTED)
+        duplicate = HanGuardRule.from_dict(rule.to_dict())
+        guard = HanGuard((rule, duplicate, rule))
+        plan = guard.evaluate_provisional(
+            "project-a",
+            RiskLevel.H0_PROJECT,
+            (make_signal(),),
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        self.assertEqual(plan.risk_after, RiskLevel.H3_PROTECTED)
+        self.assertEqual(len(plan.matches), 1)
+
     def test_final_route_intersects_capabilities_then_applies_rule_blocks(self):
         blocking_rule = make_rule(
             minimum_risk=RiskLevel.H0_PROJECT,
@@ -540,6 +744,30 @@ class HanGuardRoutingTests(unittest.TestCase):
             failed.decision_reasons,
             ("protected environment", "unknown_rule", "evaluation_failed"),
         )
+
+    def test_final_defends_against_corrupted_predecessor_risk_and_unknown_flag(self):
+        signal = make_signal()
+        provisional = self.guard.evaluate_provisional(
+            "project-a",
+            RiskLevel.H0_PROJECT,
+            (signal,),
+            evaluation_status=EvaluationStatus.UNKNOWN_RULE,
+        )
+        self.assertEqual(provisional.risk_after, RiskLevel.H3_PROTECTED)
+        object.__setattr__(provisional, "risk_after", RiskLevel.H0_PROJECT)
+        object.__setattr__(provisional, "unknown_evidence", False)
+
+        final = self.guard.evaluate_final(
+            provisional,
+            RiskLevel.H0_PROJECT,
+            (),
+            available_operations=ALL_OPERATIONS,
+            evaluation_status=EvaluationStatus.COMPLETE,
+        )
+        self.assertEqual(final.risk_before, RiskLevel.H3_PROTECTED)
+        self.assertEqual(final.risk_after, RiskLevel.H3_PROTECTED)
+        self.assertEqual(final.evaluation_status, EvaluationStatus.UNKNOWN_RULE)
+        self.assertTrue(final.unknown_evidence)
 
     def test_final_rejects_wrong_phase_and_invalid_capabilities(self):
         provisional = HanGuard(()).evaluate_provisional(
