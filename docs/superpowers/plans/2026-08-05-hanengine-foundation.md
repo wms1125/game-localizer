@@ -25,6 +25,8 @@
 - 继续使用 `unittest`；不引入 pytest。
 - 每个任务严格执行红灯测试、最小实现、绿灯验证和独立提交。
 - 所有操作仅面向用户合法拥有或明确获授权的项目和仓库自有合成测试资产。
+- 仓库根许可证在本周期仍未决；`benchmarks/LICENSE` 的 CC0-1.0 放弃声明只覆盖 `benchmarks/` 下仓库自有的合成资产与元数据，不覆盖生产代码、测试代码、文档或仓库其他内容。
+- 不复制、改编、生成或提交任何第三方代码、商业游戏内容、截图、译文或其他第三方资产；Task 1 只提交仓库自有合成元数据和对应许可载体。
 
 ## Scope Boundary
 
@@ -32,7 +34,9 @@
 
 ## File Map
 
+- Create `.gitattributes`: 固定根目录下 `benchmarks/*.json` 的 Git checkout 行尾为 LF，避免 Windows `core.autocrlf` 改写已提交基准字节。
 - Create `benchmarks/README.md`: 基准资产来源、生成方式、许可边界和本周期仅提交清单的说明。
+- Create `benchmarks/LICENSE`: 仅适用于 `benchmarks/` 仓库自有合成资产与元数据的 CC0-1.0 法律文本；仓库根许可证仍未决。
 - Create `benchmarks/manifest.json`: 全部固定基准集的版本和数量总清单。
 - Create `benchmarks/guard_risk_cases.json`: 80 个合成 HanGuard 风险快照。
 - Create `benchmarks/renpy_projects.json`: 4 个 Ren'Py 基准项目、500 个预期文本段和固定 SDK 版本清单。
@@ -48,6 +52,7 @@
 - Create `game_localizer/hanengine/store.py`: 数据根路径、全局项目索引、每项目 SQLite 存储和 schema v1。
 - Create `game_localizer/hanengine/core.py`: `HanCore` 无 GUI 编排门面。
 - Create `game_localizer/adapters/contract.py`: `hanengine.adapter/v1` 完整类型、错误模型和 `Protocol`。
+- Modify `docs/superpowers/specs/2026-08-05-hanengine-adapter-contract.md`: 同步 v1 书面契约，使每个操作请求只携带 runner 创建的 `TaskContext`，并禁止适配器直接使用事件接收器或自行构造任务事件。
 - Create `tests/test_hanengine_segments.py`: 文本段、来源位置、JSON 元数据和稳定指纹测试。
 - Create `tests/test_hanguard_routing.py`: 两阶段风险、从严合并、权限交集和 80 个风险样本测试。
 - Create `tests/test_hantask_models.py`: 状态、事件序列、进度和序列化测试。
@@ -62,7 +67,9 @@
 ### Task 1: Freeze Benchmark Manifests and the Adapter Contract Harness
 
 **Files:**
+- Create: `.gitattributes`
 - Create: `benchmarks/README.md`
+- Create: `benchmarks/LICENSE`
 - Create: `benchmarks/manifest.json`
 - Create: `benchmarks/guard_risk_cases.json`
 - Create: `benchmarks/renpy_projects.json`
@@ -77,6 +84,17 @@
 - `tools.generate_benchmark_manifests.write_payloads(root: Path) -> tuple[Path, ...]` 使用 UTF-8、`ensure_ascii=False`、`indent=2` 和末尾换行写入清单。
 - 所有清单的 `contract` 固定为 `hanengine.benchmark/v1`。
 - `tests.adapter_contract_v1.AdapterV1ContractMixin` 要求子类实现 `make_adapter()` 和 `make_detection_request()`；本任务只建立可复用测试骨架，不实现具体适配器。
+- `tests.adapter_contract_v1.AdapterV1ContractMixin` 还要求 `make_unmatched_detection_request()`；匹配与未匹配请求必须走无条件、互不替代的断言路径。
+
+- [ ] **Step 0: Verify the original regression baseline**
+
+Run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: exactly the original 99 tests run, all pass, and the summary contains no skipped tests. Record this count as the immutable regression baseline for every later task.
 
 - [ ] **Step 1: Write failing benchmark manifest tests**
 
@@ -114,6 +132,27 @@ class BenchmarkManifestTests(unittest.TestCase):
                 "guard_risk_cases": 80,
             },
         )
+
+    def test_benchmark_license_carrier_and_scope_are_separate(self):
+        license_text = (BENCHMARKS / "LICENSE").read_text(encoding="utf-8")
+        readme_text = (BENCHMARKS / "README.md").read_text(encoding="utf-8")
+        self.assertIn("CC0 1.0", license_text)
+        self.assertNotIn("root license remains undecided", license_text)
+        self.assertIn("benchmarks/", readme_text)
+        self.assertIn("root license remains undecided", readme_text)
+        self.assertIn("no third-party code or assets", readme_text.lower())
+
+    def test_git_attributes_pin_benchmark_json_to_lf(self):
+        completed = subprocess.run(
+            ["git", "check-attr", "text", "eol", "--", "benchmarks/manifest.json"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("benchmarks/manifest.json: text: set", completed.stdout)
+        self.assertIn("benchmarks/manifest.json: eol: lf", completed.stdout)
 
     def test_renpy_manifest_locks_versions_and_segment_counts(self):
         payload = load("renpy_projects.json")
@@ -162,6 +201,18 @@ class BenchmarkManifestTests(unittest.TestCase):
             self.assertIn("expected_risk", case)
             self.assertIn("expected_allowed_operations", case)
             self.assertIn("expected_blocked_operations", case)
+        edge_cases = [item for item in cases if item["stratum"] == "edge"]
+        self.assertEqual(
+            Counter(item["final_evaluation_status"] for item in edge_cases),
+            Counter(
+                {
+                    "complete": 4,
+                    "missing_evidence": 4,
+                    "unknown_rule": 4,
+                    "evaluation_failed": 4,
+                }
+            ),
+        )
 
     def test_generator_is_deterministic_and_check_mode_is_clean(self):
         completed = subprocess.run(
@@ -172,6 +223,20 @@ class BenchmarkManifestTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_committed_json_is_canonical_utf8_lf_without_bom(self):
+        for name in (
+            "manifest.json",
+            "guard_risk_cases.json",
+            "renpy_projects.json",
+            "player_cases.json",
+            "translation_gold_manifest.json",
+        ):
+            raw = (BENCHMARKS / name).read_bytes()
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), name)
+            self.assertTrue(raw.endswith(b"\n"), name)
+            self.assertFalse(raw.endswith(b"\n\n"), name)
+            self.assertNotIn(b"\r\n", raw, name)
 
 
 if __name__ == "__main__":
@@ -209,6 +274,12 @@ ROUTE_OPERATIONS = (
     "detect", "extract", "validate", "build", "verify", "rollback",
     "install_patch", "capture", "ocr", "visual_replace",
 )
+EVALUATION_STATUSES = (
+    "complete",
+    "missing_evidence",
+    "unknown_rule",
+    "evaluation_failed",
+)
 ```
 
 Generation rules:
@@ -218,10 +289,10 @@ Generation rules:
 - Player source language uses a deterministic 80/20 split: the first four cases in each block of five are `en`, the fifth is `ja`.
 - Translation slots are `gold-001` through `gold-300`: first 180 `dialogue`, next 60 `menu_ui`, last 60 `system`; within each block, four of every five are `en` and the fifth is `ja`.
 - Guard cases are `guard-h0-01..16`, `guard-h1-01..16`, `guard-h2-01..16`, `guard-h3-01..16`, and `guard-edge-01..16`.
-- Every guard case contains `project_id`, `user_baseline`, `adapter_baseline`, `available_operations`, `rules`, `signals`, `provisional_evidence_complete`, and `final_evidence_complete`. Every rule uses the exact `HanGuardRule.to_dict()` shape and every signal contains `signal_type`, `value`, `source`, and `evidence`.
+- Every guard case contains `project_id`, `user_baseline`, `adapter_baseline`, `available_operations`, `rules`, `signals`, `provisional_evaluation_status`, and `final_evaluation_status`. Status values are from `EVALUATION_STATUSES`; every rule uses the exact `HanGuardRule.to_dict()` shape and every signal contains `signal_type`, `value`, `source`, and `evidence`.
 - H0 expected operations are all `ROUTE_OPERATIONS`; H1 excludes no read/build/install/visual operation in this foundation; H2 allows only `detect`, `capture`, `ocr`, and `visual_replace`; H3 allows those four unless a case contains `overlay_forbidden` or `capture_black_frame`, in which case only `detect` is allowed.
-- Edge cases cover four conflicts, four missing-evidence cases, four unknown-rule cases, and four evaluation-error cases. Missing, unknown, and evaluation-error cases expect `H2_RESTRICTED`; conflicts expect the highest matched level.
-- `--check` renders each payload in memory and compares exact UTF-8 text with committed output without writing.
+- Every fixed case uses `provisional_evaluation_status: "complete"`; the 16 edge cases use final statuses of four `complete` conflicts, four `missing_evidence`, four `unknown_rule`, and four `evaluation_failed` cases. The latter three statuses expect `H2_RESTRICTED`; complete conflicts expect the highest matched level. These are distinct serialized inputs and must exercise distinct `decision_reasons` in Task 3.
+- Render canonical JSON as `json.dumps(..., ensure_ascii=False, indent=2, allow_nan=False) + "\n"`. Write with UTF-8, no BOM, and `newline="\n"`; `--check` compares `Path.read_bytes()` with `rendered.encode("utf-8")` without writing, so `core.autocrlf` or universal-newline reads cannot hide byte differences.
 
 The command-line entry point must be:
 
@@ -247,11 +318,21 @@ python tools/generate_benchmark_manifests.py
 
 Create `benchmarks/README.md` stating:
 
-- all content is repository-owned synthetic metadata under CC0-1.0;
+- `benchmarks/LICENSE` contains the CC0-1.0 legal text and applies only to repository-owned synthetic assets and metadata under `benchmarks/`;
+- the repository root license remains undecided, so this benchmark-scoped CC0 declaration does not license production code, tests, documentation, or any other repository path;
 - no commercial game files, screenshots or translated text are included;
+- no third-party code or assets are copied, adapted, generated, or committed;
 - this cycle commits only manifests and risk snapshots;
 - future Ren'Py, screenshot, dynamic and human-reference assets must match the committed IDs;
 - regeneration and verification commands are `python tools/generate_benchmark_manifests.py` and `python tools/generate_benchmark_manifests.py --check`.
+
+Create `benchmarks/LICENSE` from the unmodified standard CC0-1.0 legal text. Do not prepend, append, or edit that legal text. Keep the benchmark-only scope notice exclusively in `benchmarks/README.md`; do not add or imply a root repository license.
+
+Create root `.gitattributes` with this exact rule:
+
+```gitattributes
+/benchmarks/*.json text eol=lf
+```
 
 - [ ] **Step 5: Add the reusable adapter contract test harness**
 
@@ -261,7 +342,6 @@ Create `tests/adapter_contract_v1.py` with a non-discovered mixin exposing these
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import unittest
 from pathlib import Path
 
 
@@ -282,6 +362,10 @@ class AdapterV1ContractMixin(ABC):
     def make_detection_request(self):
         raise NotImplementedError
 
+    @abstractmethod
+    def make_unmatched_detection_request(self):
+        raise NotImplementedError
+
     def test_contract_metadata_is_valid(self):
         adapter = self.make_adapter()
         self.assertEqual(adapter.metadata.contract_version, "hanengine.adapter/v1")
@@ -291,12 +375,17 @@ class AdapterV1ContractMixin(ABC):
     def test_detect_is_deterministic(self):
         adapter = self.make_adapter()
         request = self.make_detection_request()
-        self.assertEqual(adapter.detect(request), adapter.detect(request))
+        first = adapter.detect(request)
+        second = adapter.detect(request)
+        self.assertTrue(first.matched)
+        self.assertEqual(first, second)
 
     def test_unmatched_detection_has_no_evidence(self):
-        result = self.make_adapter().detect(self.make_detection_request())
-        if not result.matched:
-            self.assertEqual(result.evidence, ())
+        result = self.make_adapter().detect(self.make_unmatched_detection_request())
+        self.assertFalse(result.matched)
+        self.assertEqual(result.evidence, ())
+        self.assertIsNone(result.engine_name)
+        self.assertIsNone(result.engine_version)
 
     def test_detect_does_not_modify_input_root(self):
         adapter = self.make_adapter()
@@ -309,14 +398,9 @@ class AdapterV1ContractMixin(ABC):
         request = self.make_detection_request()
         result = self.make_adapter().detect(request)
         self.assertIn(result.recommended_operation, request.allowed_operations)
-
-
-class AdapterV1ContractCase(AdapterV1ContractMixin, unittest.TestCase):
-    __unittest_skip__ = True
-    __unittest_skip_why__ = "abstract adapter contract harness"
 ```
 
-The concrete test in Task 6 will subclass the mixin directly and therefore will not inherit the skipped base class.
+The harness file name does not begin with `test_` and contains no `unittest.TestCase` subclass, so discovery cannot create an abstract or skipped test. The concrete Task 6 test subclasses the mixin and `unittest.TestCase` directly.
 
 - [ ] **Step 6: Run the benchmark checks**
 
@@ -325,14 +409,23 @@ Run:
 ```powershell
 python -m unittest tests.test_benchmark_manifests -v
 python tools/generate_benchmark_manifests.py --check
+git check-attr text eol -- benchmarks/manifest.json
 ```
 
-Expected: all benchmark tests pass; `--check` exits 0 and writes nothing.
+Expected: all benchmark tests pass; `--check` exits 0 and writes nothing; `git check-attr` reports `text: set` and `eol: lf` for `benchmarks/manifest.json`.
 
 - [ ] **Step 7: Commit Task 1**
 
+Immediately before staging, run the complete regression gate:
+
 ```powershell
-git add benchmarks tools/generate_benchmark_manifests.py tests/test_benchmark_manifests.py tests/adapter_contract_v1.py
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all Task 1 tests pass, and no existing or new test is skipped.
+
+```powershell
+git add .gitattributes benchmarks/README.md benchmarks/LICENSE benchmarks/*.json tools/generate_benchmark_manifests.py tests/test_benchmark_manifests.py tests/adapter_contract_v1.py
 git commit -m "test: lock HanEngine benchmark manifests"
 ```
 
@@ -346,6 +439,7 @@ git commit -m "test: lock HanEngine benchmark manifests"
 - Create: `tests/test_hanengine_segments.py`
 
 **Interfaces:**
+- `normalize_relative_path(value: str) -> str` is the one shared, cross-platform validator used by source locations, artifacts, adapter path lists, and manifests.
 - `ScreenRegion(x: int, y: int, width: int, height: int)` rejects negative coordinates and non-positive dimensions.
 - `SourceLocation(relative_path, logical_path, line, column, byte_offset, screen_region)` requires at least one real locator; absent values are `None`, never fabricated zeroes.
 - `SegmentDraft` mirrors adapter-contract fields and validates metadata as JSON serializable.
@@ -363,6 +457,7 @@ from game_localizer.hanengine.segments import (
     Segment,
     SegmentDraft,
     SourceLocation,
+    normalize_relative_path,
 )
 
 
@@ -396,9 +491,30 @@ class SegmentModelTests(unittest.TestCase):
             ScreenRegion(x=0, y=0, width=0, height=20)
 
     def test_location_rejects_absolute_or_parent_traversal_paths(self):
-        for path in ("C:/game/script.rpy", "../script.rpy"):
+        for path in (
+            "/game/script.rpy",
+            "C:/game/script.rpy",
+            "C:\\game\\script.rpy",
+            "C:game\\script.rpy",
+            "\\game\\script.rpy",
+            "\\\\server\\share\\script.rpy",
+            "\\\\?\\C:\\game\\script.rpy",
+            "../script.rpy",
+            "..\\script.rpy",
+            "safe/..\\script.rpy",
+        ):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 SourceLocation(relative_path=path)
+
+    def test_relative_path_normalization_is_platform_independent(self):
+        self.assertEqual(
+            normalize_relative_path("game\\scripts\\script.rpy"),
+            "game/scripts/script.rpy",
+        )
+
+    def test_relative_path_rejects_mixed_separators_without_traversal(self):
+        with self.assertRaisesRegex(ValueError, "mixed path separators"):
+            normalize_relative_path("game\\scripts/file.rpy")
 
     def test_segment_rejects_non_json_metadata(self):
         with self.assertRaisesRegex(ValueError, "JSON"):
@@ -433,6 +549,9 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'game_localizer.haneng
 Use these signatures:
 
 ```python
+def normalize_relative_path(value: str) -> str: ...
+
+
 @dataclass(frozen=True)
 class ScreenRegion:
     x: int
@@ -502,7 +621,8 @@ class Segment:
 
 Implementation requirements:
 
-- Normalize relative paths to forward slashes, reject absolute paths and any `..` component.
+- Implement `normalize_relative_path()` with both `PurePosixPath` and `PureWindowsPath`, independent of the host OS. Before any normalization, reject every input that contains both `/` and `\`, even when it has no `..` component (for example `game\scripts/file.rpy`). Continue to accept a pure-backslash relative path such as `game\scripts\script.rpy` and normalize it to forward slashes. Also reject empty paths, POSIX absolute paths, Windows drives (including `C:relative`), rooted paths, UNC shares, device paths, and any `..` component before returning a forward-slash relative path.
+- All later relative-path models import this function from `segments.py`; do not copy slightly different path checks into `tasks.py` or `adapters/contract.py`.
 - `line` and `column` are `None` or at least 1; `byte_offset` is `None` or at least 0.
 - Confidence values are `None` or within `[0.0, 1.0]`.
 - Validate metadata with `json.dumps(metadata, allow_nan=False)` and copy the dictionary so caller mutation cannot change the instance immediately after construction.
@@ -523,6 +643,14 @@ Expected: all segment tests pass.
 
 - [ ] **Step 5: Commit Task 2**
 
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 2 pass, with no skipped tests.
+
 ```powershell
 git add game_localizer/hanengine tests/test_hanengine_segments.py
 git commit -m "feat: add HanEngine segment models"
@@ -539,6 +667,7 @@ git commit -m "feat: add HanEngine segment models"
 
 **Interfaces:**
 - `RiskLevel`: `H0_PROJECT`, `H1_OFFLINE`, `H2_RESTRICTED`, `H3_PROTECTED` in increasing numeric order.
+- `EvaluationStatus`: `COMPLETE`, `MISSING_EVIDENCE`, `UNKNOWN_RULE`, `EVALUATION_FAILED`; every non-complete status fails closed to at least H2 with a distinct decision reason.
 - `RouteOperation`: `DETECT`, `EXTRACT`, `VALIDATE`, `BUILD`, `VERIFY`, `ROLLBACK`, `INSTALL_PATCH`, `CAPTURE`, `OCR`, `VISUAL_REPLACE`.
 - `HanGuard.evaluate_provisional(...) -> RoutePlan` only permits `DETECT`.
 - `HanGuard.evaluate_final(...) -> RoutePlan` may add operations only from the caller-supplied available-capability set and can never reduce risk below the provisional plan.
@@ -557,6 +686,7 @@ from game_localizer.hanengine.routing import (
     HanGuardRule,
     RiskLevel,
     RiskSignal,
+    EvaluationStatus,
     RouteOperation,
     RoutePhase,
     SignalType,
@@ -590,21 +720,24 @@ class HanGuardRoutingTests(unittest.TestCase):
             project_id="project-a",
             user_baseline=RiskLevel.H0_PROJECT,
             signals=(),
-            evidence_complete=True,
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         self.assertEqual(plan.phase, RoutePhase.PROVISIONAL)
         self.assertEqual(plan.allowed_operations, frozenset({RouteOperation.DETECT}))
 
     def test_final_route_never_lowers_provisional_risk(self):
         provisional = self.guard.evaluate_provisional(
-            "project-a", RiskLevel.H2_RESTRICTED, (), evidence_complete=True
+            "project-a",
+            RiskLevel.H2_RESTRICTED,
+            (),
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         final = self.guard.evaluate_final(
             provisional,
             adapter_baseline=RiskLevel.H0_PROJECT,
             signals=(),
             available_operations=frozenset(RouteOperation),
-            evidence_complete=True,
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         self.assertEqual(final.risk_after, RiskLevel.H2_RESTRICTED)
 
@@ -616,14 +749,20 @@ class HanGuardRoutingTests(unittest.TestCase):
             evidence="public file name",
         )
         provisional = self.guard.evaluate_provisional(
-            "project-a", RiskLevel.H1_OFFLINE, (signal,), evidence_complete=True
+            "project-a",
+            RiskLevel.H1_OFFLINE,
+            (signal,),
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         self.assertEqual(provisional.risk_after, RiskLevel.H3_PROTECTED)
         self.assertEqual(provisional.matches[0].actual_signal, "KnownAC.EXE")
 
     def test_final_route_intersects_actual_available_capabilities(self):
         provisional = self.guard.evaluate_provisional(
-            "project-a", RiskLevel.H0_PROJECT, (), evidence_complete=True
+            "project-a",
+            RiskLevel.H0_PROJECT,
+            (),
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         final = self.guard.evaluate_final(
             provisional,
@@ -632,20 +771,29 @@ class HanGuardRoutingTests(unittest.TestCase):
             available_operations=frozenset(
                 {RouteOperation.DETECT, RouteOperation.EXTRACT}
             ),
-            evidence_complete=True,
+            evaluation_status=EvaluationStatus.COMPLETE,
         )
         self.assertEqual(
             final.allowed_operations,
             frozenset({RouteOperation.DETECT, RouteOperation.EXTRACT}),
         )
 
-    def test_missing_or_failed_evidence_defaults_to_h2(self):
-        for complete in (False,):
+    def test_non_complete_evaluation_statuses_default_to_h2_with_distinct_reason(self):
+        for status in (
+            EvaluationStatus.MISSING_EVIDENCE,
+            EvaluationStatus.UNKNOWN_RULE,
+            EvaluationStatus.EVALUATION_FAILED,
+        ):
             plan = self.guard.evaluate_provisional(
-                "project-a", RiskLevel.H0_PROJECT, (), evidence_complete=complete
+                "project-a",
+                RiskLevel.H0_PROJECT,
+                (),
+                evaluation_status=status,
             )
             self.assertEqual(plan.risk_after, RiskLevel.H2_RESTRICTED)
             self.assertTrue(plan.unknown_evidence)
+            self.assertEqual(plan.evaluation_status, status)
+            self.assertIn(status.value, plan.decision_reasons)
 
     def test_all_fixed_guard_cases_match_expected_route(self):
         payload = json.loads(
@@ -660,7 +808,9 @@ class HanGuardRoutingTests(unittest.TestCase):
                     case["project_id"],
                     RiskLevel[case["user_baseline"]] if case["user_baseline"] else None,
                     signals,
-                    evidence_complete=case["provisional_evidence_complete"],
+                    evaluation_status=EvaluationStatus(
+                        case["provisional_evaluation_status"]
+                    ),
                 )
                 plan = guard.evaluate_final(
                     provisional,
@@ -673,9 +823,20 @@ class HanGuardRoutingTests(unittest.TestCase):
                     available_operations=frozenset(
                         RouteOperation(item) for item in case["available_operations"]
                     ),
-                    evidence_complete=case["final_evidence_complete"],
+                    evaluation_status=EvaluationStatus(
+                        case["final_evaluation_status"]
+                    ),
                 )
                 self.assertEqual(plan.risk_after.name, case["expected_risk"])
+                self.assertEqual(
+                    plan.evaluation_status.value,
+                    case["final_evaluation_status"],
+                )
+                if plan.evaluation_status is not EvaluationStatus.COMPLETE:
+                    self.assertIn(
+                        plan.evaluation_status.value,
+                        plan.decision_reasons,
+                    )
                 self.assertEqual(
                     sorted(item.value for item in plan.allowed_operations),
                     sorted(case["expected_allowed_operations"]),
@@ -715,6 +876,13 @@ class RiskLevel(IntEnum):
 class RoutePhase(str, Enum):
     PROVISIONAL = "provisional"
     FINAL = "final"
+
+
+class EvaluationStatus(str, Enum):
+    COMPLETE = "complete"
+    MISSING_EVIDENCE = "missing_evidence"
+    UNKNOWN_RULE = "unknown_rule"
+    EVALUATION_FAILED = "evaluation_failed"
 
 
 class SignalType(str, Enum):
@@ -781,6 +949,7 @@ class RoutePlan:
     allowed_operations: frozenset[RouteOperation]
     blocked_operations: frozenset[RouteOperation]
     matches: tuple[RuleMatch, ...]
+    evaluation_status: EvaluationStatus
     unknown_evidence: bool
     decision_reasons: tuple[str, ...]
 ```
@@ -801,7 +970,7 @@ class HanGuard:
         user_baseline: RiskLevel | None,
         signals: Iterable[RiskSignal],
         *,
-        evidence_complete: bool,
+        evaluation_status: EvaluationStatus,
     ) -> RoutePlan: ...
 
     def evaluate_final(
@@ -811,19 +980,20 @@ class HanGuard:
         signals: Iterable[RiskSignal],
         *,
         available_operations: frozenset[RouteOperation],
-        evidence_complete: bool,
+        evaluation_status: EvaluationStatus,
     ) -> RoutePlan: ...
 ```
 
 Policy implementation:
 
 - Case-fold both rule `match_value` and signal `value`; require exact normalized equality and matching `SignalType`.
-- Risk equals the maximum of the incoming baseline, every rule minimum, and `H2_RESTRICTED` when evidence is incomplete, the baseline is absent, a rule ID is unknown, or evaluation is marked failed by a benchmark case.
+- Risk equals the maximum of the incoming baseline and every rule minimum. A missing baseline or any `EvaluationStatus` other than `COMPLETE` also contributes `H2_RESTRICTED`; preserve the exact status on `RoutePlan`, set `unknown_evidence=True`, and append its exact `.value` to `decision_reasons` so missing evidence, unknown rules, and evaluation failures are auditable distinct paths.
 - Final permissions are `risk_base_operations ∩ available_operations`, followed by rule-block subtraction. The available-capability set may remove capabilities but can never add an operation forbidden by risk policy.
 - Provisional routes always have only `DETECT` allowed, even for H0/H1.
 - Final H0 and H1 base sets contain all operations; final H2 contains `DETECT`, `CAPTURE`, `OCR`, `VISUAL_REPLACE`; final H3 uses the same safe external set but capture-black-frame or overlay-forbidden rules block `CAPTURE`, `OCR`, and `VISUAL_REPLACE`, leaving only `DETECT`.
 - `blocked_operations` is always the exact complement of `allowed_operations` within the complete `RouteOperation` enum.
 - `evaluate_final` rejects a non-provisional input and preserves `max(provisional.risk_after, adapter_baseline, matched risks)`.
+- For the final plan, `evaluation_status` equals the final argument when it is non-complete; otherwise it preserves a non-complete provisional status; otherwise it is `COMPLETE`. Preserve distinct decision reasons from both phases. Fixed benchmarks place edge statuses in the final phase, while direct unit tests exercise each non-complete provisional path.
 - `H3_PROTECTED` is terminal for the current evaluation; no configuration parameter exists to force a lower result.
 
 - [ ] **Step 5: Run routing and benchmark tests**
@@ -837,6 +1007,14 @@ python -m unittest tests.test_hanguard_routing tests.test_benchmark_manifests -v
 Expected: all tests pass, including all 80 risk cases.
 
 - [ ] **Step 6: Commit Task 3**
+
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 3 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/routing.py game_localizer/hanengine/__init__.py tests/test_hanguard_routing.py
@@ -854,6 +1032,7 @@ git commit -m "feat: add two-phase HanGuard routing"
 
 **Interfaces:**
 - Task event types are exactly `queued`, `started`, `progress`, `log`, `warning`, `retrying`, `artifact`, `completed`, `failed`, and `cancelled`.
+- `ArtifactKind` is defined once in `tasks.py` with `PATCH`, `MANIFEST`, `BACKUP`, `REPORT`, and `UNTRANSLATED_LIST`; adapter contracts import and re-export this same enum instead of defining another one.
 - `TaskEvent.sequence` is positive and monotonically increasing per task.
 - `TaskProgress` validates `0 <= completed <= total` and allows `total=None` for indeterminate work.
 - All model dictionaries are JSON serializable and contain no callable or exception object.
@@ -882,7 +1061,7 @@ def test_task_plan_round_trips_with_steps(self):
     self.assertEqual(TaskPlan.from_dict(plan.to_dict()), plan)
 ```
 
-Also assert that `Artifact(relative_path="../escape.json", ...)` raises `ValueError`, and that sequence `0` is rejected.
+Also assert that `Artifact(relative_path="../escape.json", ...)`, Windows drive-relative/rooted/UNC/device paths, and backslash traversal raise `ValueError`; that `Artifact.kind` rejects plain strings or unknown enum values; and that sequence `0` is rejected.
 
 - [ ] **Step 2: Run the task model tests and verify the import failure**
 
@@ -932,6 +1111,14 @@ class EventType(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ArtifactKind(str, Enum):
+    PATCH = "patch"
+    MANIFEST = "manifest"
+    BACKUP = "backup"
+    REPORT = "report"
+    UNTRANSLATED_LIST = "untranslated_list"
+
+
 @dataclass(frozen=True)
 class TaskProgress:
     completed: int
@@ -975,7 +1162,7 @@ class Artifact:
     artifact_id: str
     task_id: str
     step_id: str
-    kind: str
+    kind: ArtifactKind
     relative_path: str
     sha256: str | None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
@@ -990,7 +1177,8 @@ class StepResult:
 Implementation requirements:
 
 - Use UTC ISO 8601 timestamps ending in `Z`; timestamps are created by the runner, not accepted from handler dictionaries.
-- Normalize and validate artifact relative paths using the same no-absolute/no-`..` rule as `SourceLocation`.
+- Require `Artifact.kind` to be an `ArtifactKind` instance; do not coerce arbitrary strings. Serialize it by `.value` and reconstruct it through `ArtifactKind(...)`.
+- Normalize and validate artifact relative paths only through `segments.normalize_relative_path()` so Windows and POSIX path behavior is identical.
 - Validate event and artifact metadata with `json.dumps(..., allow_nan=False)`.
 - Reject reserved/sensitive keys case-insensitively: `api_key`, `authorization`, `secret`, `token`, `request_body`, `screenshot`, `chain_of_thought`, and `reasoning_trace`.
 - Add deterministic `to_dict()` and `from_dict()` to every persisted model.
@@ -1006,6 +1194,14 @@ python -m unittest tests.test_hantask_models -v
 Expected: all task model tests pass.
 
 - [ ] **Step 5: Commit Task 4**
+
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 4 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/tasks.py game_localizer/hanengine/__init__.py tests/test_hantask_models.py
@@ -1024,6 +1220,7 @@ git commit -m "feat: add HanTask event models"
 **Interfaces:**
 - `TaskControl.pause()`, `resume()`, `cancel()`, and `checkpoint()` provide cooperative control.
 - `TaskContext.progress()`, `log()`, `warning()`, `artifact()`, and `checkpoint()` are the only handler-facing event APIs.
+- Adapter requests reuse the active `TaskContext`; adapters never construct `TaskEvent`, timestamps, or sequence numbers themselves.
 - `TaskRunner.run(plan, handlers, control=None) -> TaskPlan` is synchronous and deterministic apart from timestamps.
 - GUI threading and scheduling remain out of scope; a future caller may run this synchronous runner on a worker thread.
 
@@ -1039,7 +1236,7 @@ Create `tests/test_hantask_runner.py` covering:
 - a paused control blocks at `checkpoint()` until `resume()` is called, using a test thread with a one-second safety timeout;
 - no event includes exception objects or sensitive keys.
 
-The handler API used in tests must be:
+Import `ArtifactKind` with the other task models. The handler API used in tests must be:
 
 ```python
 def handler(context: TaskContext) -> StepResult:
@@ -1048,7 +1245,7 @@ def handler(context: TaskContext) -> StepResult:
         artifact_id="artifact-1",
         task_id=context.task_id,
         step_id=context.step_id,
-        kind="report",
+        kind=ArtifactKind.REPORT,
         relative_path="reports/extract.json",
         sha256=None,
     )
@@ -1084,9 +1281,21 @@ class TaskControl:
 
 
 EventSink = Callable[[TaskEvent], None]
+ContextEventEmitter = Callable[
+    [str, str, EventType, str, TaskProgress | None, dict[str, JsonValue]],
+    TaskEvent,
+]
 
 
 class TaskContext:
+    def __init__(
+        self,
+        task_id: str,
+        step_id: str,
+        control: TaskControl,
+        emit_event: ContextEventEmitter,
+    ): ...
+
     @property
     def task_id(self) -> str: ...
 
@@ -1109,6 +1318,14 @@ class TaskContext:
 ```
 
 Use `threading.Condition` inside `TaskControl`; `pause()` only changes the flag, `checkpoint()` waits while paused, and `cancel()` wakes all waiters and raises `TaskCancelled` at the next checkpoint.
+
+`TaskContext` is also the adapter execution context. Only `TaskRunner` and tests construct it; the runner-supplied `ContextEventEmitter` owns UTC timestamps, the task-wide next sequence, `TaskEvent` construction, and delivery to `EventSink`. Adapters receive only the context's safe event/checkpoint methods and never receive `ContextEventEmitter` or `EventSink` directly. `TaskContext.artifact()` must validate `artifact.task_id == context.task_id` and `artifact.step_id == context.step_id`, then emit exactly one `ARTIFACT` event with this fixed payload:
+
+```python
+data={"artifact": artifact.to_dict()}
+```
+
+No flattened alternative or second artifact event shape is allowed.
 
 - [ ] **Step 4: Implement state transitions, retries, and event sequencing**
 
@@ -1140,6 +1357,7 @@ Rules:
 - On success emit step `completed` events and one task-level `completed` event.
 - Event sequence is owned by one runner invocation and strictly increments for every event sent to the sink.
 - A handler returning an artifact must have already emitted it through `context.artifact()`; deduplicate by `artifact_id` when producing the final step data.
+- Tests must assert the exact nested artifact event payload, that the payload round-trips with `Artifact.from_dict()`, and that every event produced inside an adapter/handler shares the runner's single monotonically increasing sequence.
 
 - [ ] **Step 5: Run task tests**
 
@@ -1153,6 +1371,14 @@ Expected: all HanTask tests pass without a thread left alive.
 
 - [ ] **Step 6: Commit Task 5**
 
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 5 pass, with no skipped tests.
+
 ```powershell
 git add game_localizer/hanengine/tasks.py game_localizer/hanengine/__init__.py tests/test_hantask_runner.py
 git commit -m "feat: add headless HanTask runner"
@@ -1165,12 +1391,24 @@ git commit -m "feat: add headless HanTask runner"
 **Files:**
 - Create: `game_localizer/adapters/contract.py`
 - Create: `tests/test_adapter_contract.py`
+- Modify: `docs/superpowers/specs/2026-08-05-hanengine-adapter-contract.md`
 
 **Interfaces:**
 - Contract identifier: `hanengine.adapter/v1`.
 - `AdapterV1` is a `typing.Protocol`; this task does not replace the existing `EngineAdapter` ABC.
 - All failures are returned as `AdapterError`; concrete methods do not expose raw exceptions across the adapter boundary.
 - Contract `Operation` remains the six adapter operations and is intentionally separate from the larger HanGuard `RouteOperation` set.
+- `adapter_operations_for_route(route: RoutePlan) -> frozenset[Operation]` is the only bridge between the enums and uses an explicit six-entry mapping; string-based or constructor-based implicit conversion is forbidden.
+- Each request carries the active `TaskContext` rather than a raw `TaskControl` plus full-event sink, so adapter progress joins the runner-owned event sequence.
+
+- [ ] **Step 0: Synchronize the written adapter v1 contract**
+
+Modify `docs/superpowers/specs/2026-08-05-hanengine-adapter-contract.md` before materializing its types:
+
+- In section 3, require every one of `DetectionRequest`, `ExtractRequest`, `ValidationRequest`, `BuildRequest`, `VerifyRequest`, and `RollbackRequest` to carry the active `TaskContext` created by `TaskRunner`; remove all separate `cancellation_token` and `event_sink` request fields.
+- In section 5, state that adapters report progress, logs, warnings, artifacts and cooperative cancellation only through the request's `TaskContext` methods.
+- State that `TaskRunner` alone owns the task-wide event sequence, UTC timestamps, `TaskEvent` construction and delivery to `EventSink`; adapters must not receive a raw `EventSink`, construct `TaskEvent`, or choose sequence numbers/timestamps.
+- Keep the contract identifier `hanengine.adapter/v1`; this is a pre-implementation correction of the reviewed v1 design, not a shipped breaking change.
 
 - [ ] **Step 1: Write failing contract model and harness tests**
 
@@ -1178,10 +1416,85 @@ Create `tests/test_adapter_contract.py` with:
 
 - metadata version, semantic adapter version, nonempty version/platform declarations, and maturity/capability consistency tests;
 - `Evidence.weight` range and matched-result evidence requirements;
+- `EvidenceSource` accepts only approved non-invasive source categories;
 - `AdapterError` code/operation/recoverability and JSON-details tests;
-- request path and project ID validation;
-- a minimal `FakeAdapter` implementing `AdapterV1.detect`;
-- a concrete `AdapterContractTests(AdapterV1ContractMixin, unittest.TestCase)` that implements `make_adapter()` and `make_detection_request()` and runs all five shared detect-only tests from Task 1.
+- `DetectionRequest.allowed_operations` must equal exactly `{Operation.DETECT}`; request path, distinct-root, symlink, Windows junction, and project ID validation;
+- exact `adapter_operations_for_route()` mapping for all six shared operations, with policy-only route operations omitted and no implicit enum conversion;
+- a minimal structurally complete `FakeAdapter` implementing all six `AdapterV1` methods; `detect` returns deterministic matched/unmatched results by request root, while the five unavailable detect-only operations return the corresponding sanitized `AdapterError` without side effects;
+- a concrete `AdapterContractTests(AdapterV1ContractMixin, unittest.TestCase)` that implements `make_adapter()`, a guaranteed matched `make_detection_request()`, and a guaranteed unmatched `make_unmatched_detection_request()`, then runs all five shared detect-only tests from Task 1 without conditional assertions.
+- request-field tests using `dataclasses.fields()` that unconditionally prove all six request records contain exactly one runner-facing execution field named `context` and contain neither `event_sink` nor `cancellation_token`;
+- an adapter/runner integration test in which a `TaskRunner` handler constructs a `DetectionRequest` with that handler's current `TaskContext`, then calls `FakeAdapter.detect()`; `FakeAdapter.detect()` must call `request.context.progress()` and `request.context.log()` and must never receive/import `EventSink` or construct `TaskEvent`.
+
+The adapter/runner integration test must make these unconditional assertions (no `if result.matched`, filtering fallback, or optional branch):
+
+Import the `dataclasses` module; import `DetectionResult` and all six request dataclasses from `game_localizer.adapters.contract`; and import `EventType`, `StepResult`, `TaskContext`, `TaskPlan`, `TaskRunner`, `TaskState`, and `TaskStep` from `game_localizer.hanengine.tasks` plus `RouteOperation` from `game_localizer.hanengine.routing`. The request-field test iterates over the explicit six-request tuple rather than discovering subclasses dynamically.
+
+```python
+def test_requests_only_expose_runner_created_task_context(self):
+    request_types = (
+        DetectionRequest,
+        ExtractRequest,
+        ValidationRequest,
+        BuildRequest,
+        VerifyRequest,
+        RollbackRequest,
+    )
+    for request_type in request_types:
+        with self.subTest(request_type=request_type.__name__):
+            names = {field.name for field in dataclasses.fields(request_type)}
+            self.assertIn("context", names)
+            self.assertTrue({"event_sink", "cancellation_token"}.isdisjoint(names))
+```
+
+```python
+def test_adapter_events_share_the_runner_owned_sequence(self):
+    events = []
+    adapter = self.make_adapter()
+    plan = TaskPlan(
+        task_id="task-adapter-detect",
+        project_id="project-a",
+        kind="detect",
+        state=TaskState.QUEUED,
+        steps=(
+            TaskStep(
+                step_id="detect",
+                title="Detect engine",
+                operation=RouteOperation.DETECT,
+            ),
+        ),
+    )
+
+    def handler(context: TaskContext) -> StepResult:
+        request = dataclasses.replace(
+            self.make_detection_request(),
+            context=context,
+        )
+        result = adapter.detect(request)
+        self.assertIsInstance(result, DetectionResult)
+        self.assertTrue(result.matched)
+        return StepResult(data={"matched": result.matched})
+
+    completed = TaskRunner(events.append).run(plan, {"detect": handler})
+
+    self.assertEqual(completed.state, TaskState.COMPLETED)
+    self.assertEqual(
+        [event.event_type for event in events],
+        [
+            EventType.QUEUED,
+            EventType.STARTED,
+            EventType.PROGRESS,
+            EventType.LOG,
+            EventType.COMPLETED,
+            EventType.COMPLETED,
+        ],
+    )
+    self.assertEqual(
+        [event.sequence for event in events],
+        list(range(1, len(events) + 1)),
+    )
+```
+
+The `FakeAdapter.detect()` implementation used by both the mixin and integration test emits exactly one progress and one log event through `request.context`; tests may construct a context fixture for direct contract calls, but production adapter code never constructs a context or receives the runner's emitter/sink.
 
 Run:
 
@@ -1228,12 +1541,12 @@ class IssueSeverity(str, Enum):
     CRITICAL = "critical"
 
 
-class ArtifactKind(str, Enum):
-    PATCH = "patch"
-    MANIFEST = "manifest"
-    BACKUP = "backup"
-    REPORT = "report"
-    UNTRANSLATED_LIST = "untranslated_list"
+class EvidenceSource(str, Enum):
+    FILESYSTEM = "filesystem"
+    PROJECT_MANIFEST = "project_manifest"
+    ENGINE_MARKER = "engine_marker"
+    USER_DECLARATION = "user_declaration"
+    HANGUARD_SIGNAL = "hanguard_signal"
 
 
 class DeclaredMode(str, Enum):
@@ -1262,7 +1575,7 @@ class AdapterMetadata:
 @dataclass(frozen=True)
 class Evidence:
     code: str
-    source: str
+    source: EvidenceSource
     value: str
     weight: float
     description: str
@@ -1287,7 +1600,31 @@ Validation rules:
 - `adapter_id` uses lower-case reverse-domain components; `adapter_version` is `MAJOR.MINOR.PATCH` with nonnegative integers.
 - Capability maturity gates are cumulative: `DETECT_ONLY` needs `DETECT`; `EXTRACT_READY` also needs `EXTRACT`; `BUILD_READY` also needs `VALIDATE`, `BUILD`, and `VERIFY`; `VERIFIED` additionally needs `ROLLBACK`.
 - Evidence weights are `[0.0, 1.0]`.
+- `Evidence.source` must be an `EvidenceSource`; plain strings and unapproved categories are rejected. Re-export the single `ArtifactKind` imported from `game_localizer.hanengine.tasks`; do not declare an adapter-local duplicate.
 - Error details use the same JSON/sensitive-key validation as task events.
+
+Add the explicit route bridge beside the enums:
+
+```python
+_ROUTE_TO_ADAPTER_OPERATION = {
+    RouteOperation.DETECT: Operation.DETECT,
+    RouteOperation.EXTRACT: Operation.EXTRACT,
+    RouteOperation.VALIDATE: Operation.VALIDATE,
+    RouteOperation.BUILD: Operation.BUILD,
+    RouteOperation.VERIFY: Operation.VERIFY,
+    RouteOperation.ROLLBACK: Operation.ROLLBACK,
+}
+
+
+def adapter_operations_for_route(route: RoutePlan) -> frozenset[Operation]:
+    return frozenset(
+        _ROUTE_TO_ADAPTER_OPERATION[item]
+        for item in route.allowed_operations
+        if item in _ROUTE_TO_ADAPTER_OPERATION
+    )
+```
+
+Tests must prove the mapping has exactly six entries, every key/value is the declared enum instance (not a string conversion), policy-only `INSTALL_PATCH`, `CAPTURE`, `OCR`, and `VISUAL_REPLACE` never appear, and a provisional route maps to `{Operation.DETECT}`.
 
 - [ ] **Step 3: Implement all operation request/result records**
 
@@ -1301,8 +1638,7 @@ class DetectionRequest:
     project_id: str
     risk_level: RiskLevel
     allowed_operations: frozenset[Operation]
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class DetectionResult:
@@ -1323,8 +1659,7 @@ class ExtractRequest:
     candidate_encodings: tuple[str, ...]
     filters: tuple[str, ...]
     project_id: str
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class ExtractResult:
@@ -1352,8 +1687,7 @@ class ValidationRequest:
     translated_segments: tuple[Segment, ...]
     target_encoding: str
     project_rules: dict[str, JsonValue]
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -1370,8 +1704,7 @@ class BuildRequest:
     validated_segments: tuple[Segment, ...]
     source_tree_fingerprint: str
     output_options: dict[str, JsonValue]
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class BuildManifestEntry:
@@ -1397,8 +1730,7 @@ class VerifyRequest:
     staging_root: Path
     manifest: tuple[BuildManifestEntry, ...]
     verification_level: str
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class VerificationCheck:
@@ -1423,8 +1755,7 @@ class RollbackRequest:
     backup_manifest: tuple[BuildManifestEntry, ...]
     target_root: Path
     expected_original_hashes: dict[str, str]
-    cancellation_token: TaskControl
-    event_sink: EventSink
+    context: TaskContext
 
 @dataclass(frozen=True)
 class RollbackResult:
@@ -1435,14 +1766,13 @@ class RollbackResult:
     issues: tuple[ValidationIssue, ...]
 ```
 
-Use `Artifact` from `game_localizer.hanengine.tasks`, `Segment`/`SegmentDraft`/`SourceLocation` from `segments.py`, and routing risk from `routing.py`. Every path list is relative and normalized; request roots are resolved absolute paths and must be distinct where the contract requires it.
+Use `Artifact`, `ArtifactKind`, and `TaskContext` from `game_localizer.hanengine.tasks`, `Segment`/`SegmentDraft`/`SourceLocation`/`normalize_relative_path` from `segments.py`, and `RiskLevel`/`RouteOperation`/`RoutePlan` from `routing.py`. `DetectionRequest.__post_init__` requires `allowed_operations == frozenset({Operation.DETECT})`; any extra operation is rejected before adapter invocation. Every path list is normalized only with `normalize_relative_path()`.
+
+All request roots must already be absolute and resolved. For every pair that must be distinct (`source_root`/`working_root`, `source_root`/`staging_root`), compare resolved targets and reject equality or containment that violates the operation boundary. Tests must cover ordinary symlink and Windows directory-junction aliases without adding skips: use injected/mock-resolved path identities for the platform-neutral unit cases, plus a real junction case on the Windows release host. Build/verify path tests must also reject a staging child whose resolved symlink/junction target is outside the staging root.
 
 - [ ] **Step 4: Add the `AdapterV1` protocol**
 
 ```python
-AdapterOutcome = TypeVar("AdapterOutcome")
-
-
 class AdapterV1(Protocol):
     metadata: AdapterMetadata
 
@@ -1461,15 +1791,23 @@ Do not make this protocol inherit or modify the legacy `EngineAdapter`. The late
 Run:
 
 ```powershell
-python -m unittest tests.test_adapter_contract tests.test_hanengine_segments tests.test_hanguard_routing tests.test_hantask_models -v
+python -m unittest tests.test_adapter_contract tests.test_hanengine_segments tests.test_hanguard_routing tests.test_hantask_models tests.test_hantask_runner -v
 ```
 
-Expected: all tests pass; the concrete fake adapter executes the shared contract mixin.
+Expected: all tests pass; the concrete fake adapter executes the shared contract mixin, and the adapter/runner integration test proves adapter events share the runner-owned strictly increasing sequence.
 
 - [ ] **Step 6: Commit Task 6**
 
+Immediately before staging, run:
+
 ```powershell
-git add game_localizer/adapters/contract.py tests/test_adapter_contract.py
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 6 pass, with no skipped tests.
+
+```powershell
+git add game_localizer/adapters/contract.py tests/test_adapter_contract.py docs/superpowers/specs/2026-08-05-hanengine-adapter-contract.md
 git commit -m "feat: define HanEngine adapter v1 contract"
 ```
 
@@ -1498,7 +1836,8 @@ Create `tests/test_hanstore.py` covering:
 - `config.db` plus exact project database path `projects/<project_id>/hanengine.db`;
 - schema version `1` and foreign keys enabled;
 - two projects persist same `segment_id` without collision and cannot read each other's rows;
-- route, task, step, event, artifact, and checkpoint round trips;
+- route, task, step, event, artifact, and checkpoint round trips; the checkpoint case must save, close the project database, reopen it through `HanStore`, read through the public API, and compare the reconstructed `Checkpoint` for exact equality;
+- `ProjectRecord` and `Checkpoint` exact `to_dict()`/`from_dict()` round trips with canonical JSON;
 - duplicate event sequence for one task is rejected transactionally;
 - failed batch insertion rolls back the whole batch;
 - SQLite/JSON contains no API-key field.
@@ -1516,6 +1855,45 @@ with tempfile.TemporaryDirectory() as directory:
         self.assertEqual(len(first_db.list_segments()), 1)
         self.assertEqual(len(second_db.list_segments()), 1)
         self.assertNotEqual(first_db.path, second_db.path)
+```
+
+The persisted checkpoint round-trip must use only public APIs and resemble:
+
+```python
+with tempfile.TemporaryDirectory() as directory:
+    store = HanStore(Path(directory))
+    project = store.create_project(
+        "Checkpoint Project",
+        project_id="33333333-3333-4333-8333-333333333333",
+    )
+    task = TaskPlan(
+        task_id="task-1",
+        project_id=project.project_id,
+        kind="detect",
+        state=TaskState.QUEUED,
+        steps=(
+            TaskStep(
+                step_id="detect",
+                title="Detect engine",
+                operation=RouteOperation.DETECT,
+            ),
+        ),
+    )
+    checkpoint = Checkpoint(
+        checkpoint_id="checkpoint-1",
+        task_id=task.task_id,
+        step_id="detect",
+        sequence=1,
+        payload={"cursor": 7, "paths": ["game/script.rpy"]},
+    )
+    with store.open_project(project.project_id) as project_db:
+        project_db.save_task(task)
+        project_db.save_checkpoint(checkpoint)
+
+    with store.open_project(project.project_id) as reopened:
+        restored = reopened.get_checkpoint(checkpoint.checkpoint_id)
+
+    self.assertEqual(restored, checkpoint)
 ```
 
 - [ ] **Step 2: Run HanStore tests and verify the import failure**
@@ -1540,6 +1918,11 @@ class ProjectRecord:
     source_root: str | None
     created_at: str
 
+    def to_dict(self) -> dict[str, JsonValue]: ...
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, JsonValue]) -> "ProjectRecord": ...
+
 
 @dataclass(frozen=True)
 class Checkpoint:
@@ -1548,6 +1931,11 @@ class Checkpoint:
     step_id: str
     sequence: int
     payload: dict[str, JsonValue]
+
+    def to_dict(self) -> dict[str, JsonValue]: ...
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, JsonValue]) -> "Checkpoint": ...
 
 
 class HanStore:
@@ -1589,6 +1977,8 @@ Per-project schema v1 tables:
 
 Enable `PRAGMA foreign_keys = ON`, use explicit transactions, and store canonical JSON with `ensure_ascii=False`, `allow_nan=False`, `sort_keys=True`, compact separators.
 
+Every persisted model, including `ProjectRecord` and `Checkpoint`, must implement symmetric deterministic `to_dict()`/`from_dict()`. Validate and copy checkpoint payloads with the same recursive JSON and sensitive-key rules as task-event data; no SQLite row is reconstructed by ad-hoc field indexing when a model deserializer exists.
+
 - [ ] **Step 4: Implement the project database API**
 
 ```python
@@ -1610,12 +2000,13 @@ class ProjectStore:
     def save_artifact(self, artifact: Artifact) -> None: ...
     def list_artifacts(self, task_id: str) -> tuple[Artifact, ...]: ...
     def save_checkpoint(self, checkpoint: Checkpoint) -> None: ...
+    def get_checkpoint(self, checkpoint_id: str) -> Checkpoint | None: ...
     def close(self) -> None: ...
     def __enter__(self) -> "ProjectStore": ...
     def __exit__(self, exc_type, exc, traceback) -> None: ...
 ```
 
-Every write validates that model `project_id` or owning task belongs to `self.project_id`. A mismatch raises `ValueError` before starting a transaction. Do not add project deletion, backup retention, global translation memory, terms, or secret storage in this cycle.
+Every write validates that model `project_id` or owning task belongs to `self.project_id`. A mismatch raises `ValueError` before starting a transaction. `get_checkpoint()` reads the canonical `payload_json`, parses it as JSON, and returns `Checkpoint.from_dict(...)`; it returns `None` only when that checkpoint ID does not exist in the current project database. The close/reopen test above must not inspect a SQLite row or call a private helper. Do not add project deletion, backup retention, global translation memory, terms, or secret storage in this cycle.
 
 - [ ] **Step 5: Run storage and model tests**
 
@@ -1628,6 +2019,14 @@ python -m unittest tests.test_hanstore tests.test_hanengine_segments tests.test_
 Expected: all tests pass and temporary databases are removed when the test context exits.
 
 - [ ] **Step 6: Commit Task 7**
+
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 7 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/store.py game_localizer/hanengine/__init__.py tests/test_hanstore.py
@@ -1661,7 +2060,7 @@ Create `tests/test_hancore.py` covering:
 - a task/route/store project mismatch is rejected;
 - successful execution persists task states, ordered events and artifacts;
 - failed and cancelled execution persist terminal states;
-- handlers cannot bypass HanGuard by emitting an artifact for a blocked operation.
+- a blocked step is rejected before runner construction: its handler is never called and no task event or artifact is emitted or persisted.
 
 The route enforcement test must call:
 
@@ -1673,6 +2072,8 @@ with self.assertRaisesRegex(RouteBlockedError, "extract"):
         steps=(TaskStep("extract", "Extract text", RouteOperation.EXTRACT),),
     )
 ```
+
+For the handler non-invocation test, construct an otherwise valid queued `TaskPlan` in memory with one route-blocked step, install a spy in the `handlers` mapping, snapshot persisted events/artifacts, and call `run_task`. `run_task` must raise `RouteBlockedError` during route validation before constructing `TaskRunner`; assert the spy call count is zero and both persisted collections are unchanged. This foundation does not infer an operation from artifact kind.
 
 - [ ] **Step 2: Run HanCore tests and verify the import failure**
 
@@ -1730,6 +2131,7 @@ Rules:
 
 - Require `route.phase is FINAL` for every operation except a task containing only `DETECT`; a detect-only task may use a provisional route.
 - Require all `TaskStep.operation` values in `route.allowed_operations` before persisting the task or emitting events.
+- `run_task` repeats project, phase, and operation authorization checks on the supplied in-memory task before constructing `TaskRunner`, so callers cannot bypass `create_task` with a manually built plan.
 - Generate UUIDv4 task IDs when absent.
 - Ingest drafts into memory first, detect conflicts, then call one transactional `save_segments`; never partially persist a conflicting batch.
 - Deduplicate by `(project_id, segment_id)` only when `source_fingerprint` is identical.
@@ -1744,6 +2146,8 @@ In `run_task`, construct the runner with a sink that:
 
 Do not catch `KeyboardInterrupt` or `SystemExit`. Convert ordinary unexpected orchestration errors into a failed task event only after route and project-boundary validation has passed.
 
+For item 2, accept only the exact Task 5 payload `event.data == {"artifact": <Artifact.to_dict()>}`. Reconstruct with `Artifact.from_dict(event.data["artifact"])`, validate task/step ownership again, and reject malformed or additional payload keys before any artifact write.
+
 - [ ] **Step 5: Run the HanCore end-to-end tests**
 
 Run:
@@ -1755,6 +2159,14 @@ python -m unittest tests.test_hancore tests.test_hanstore tests.test_hantask_run
 Expected: all headless orchestration, storage and runner tests pass.
 
 - [ ] **Step 6: Commit Task 8**
+
+Immediately before staging, run:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus all tests added through Task 8 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/core.py game_localizer/hanengine/__init__.py tests/test_hancore.py
@@ -1786,6 +2198,7 @@ python -m unittest discover -s tests -v
 ```
 
 - ethics: only process legally owned or explicitly authorized resources; no cracking, decryption, DRM bypass, injection, memory hooks or protocol interception.
+- licensing: `benchmarks/LICENSE` applies CC0-1.0 only to repository-owned synthetic benchmark content; the repository root license remains undecided, and no third-party code or assets are included.
 
 - [ ] **Step 2: Compile all Python modules**
 
@@ -1803,9 +2216,10 @@ Run:
 
 ```powershell
 python tools/generate_benchmark_manifests.py --check
+git check-attr text eol -- benchmarks/manifest.json
 ```
 
-Expected: command exits 0 and `git status --short` remains unchanged.
+Expected: the generator exits 0 and `git status --short` remains unchanged; `git check-attr` reports `text: set` and `eol: lf` for `benchmarks/manifest.json`.
 
 - [ ] **Step 4: Run the complete regression suite**
 
@@ -1815,7 +2229,7 @@ Run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus every new foundation test pass; no existing test is skipped or removed to obtain a green run.
+Expected: the original 99 tests plus every new foundation test pass; no existing or new test is skipped or removed to obtain a green run.
 
 - [ ] **Step 5: Inspect the diff for accidental scope expansion**
 
@@ -1839,15 +2253,25 @@ Expected:
 Manually verify:
 
 - adapter `Operation` contains exactly six contract operations;
-- HanGuard `RouteOperation` is the larger policy set and no implicit enum conversion exists;
+- HanGuard `RouteOperation` is the larger policy set; `adapter_operations_for_route()` is the only explicit six-entry bridge and no implicit enum conversion exists;
+- every non-complete `EvaluationStatus` has a distinct serialized value and decision reason while failing closed to at least H2;
 - every persisted model has matching `to_dict()`/`from_dict()` behavior;
 - every project-owned row rejects a different project ID;
 - provisional routes cannot authorize extraction or write-related work;
 - final H2/H3 routes never authorize build, install or rollback;
 - contract models use `SegmentDraft` for extraction and `Segment` for core/persisted work;
 - event data rejects sensitive keys and never exposes exception objects or tracebacks.
+- artifact events use exactly `data={"artifact": artifact.to_dict()}` and round-trip through `Artifact.from_dict()`.
 
 - [ ] **Step 7: Commit Task 9**
+
+Immediately before staging, rerun:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Expected: the original 99 tests plus every foundation test pass, with no skipped tests.
 
 ```powershell
 git add README.md
@@ -1867,8 +2291,11 @@ The first implementation cycle is complete only when all of the following are tr
 - HanCore blocks every step not authorized by the supplied route;
 - two project databases cannot read or overwrite each other's records;
 - task events are ordered, live-consumable, cancellable, retryable, and free of restricted data;
+- adapter-emitted progress uses the same TaskContext and monotonic task-wide event sequence as runner events;
 - Python compilation succeeds;
 - the original 99 tests and all added tests pass together;
+- no existing or new test is skipped to obtain a green run;
+- benchmark JSON is canonical UTF-8 without BOM, uses LF bytes on every host, `git check-attr` reports `text: set` and `eol: lf`, and `--check` compares bytes without writing;
 - no OCR, Ren'Py writeback, cloud translation, backup/rollback, packaged-game modification or GUI code has entered this cycle.
 
 The next plan may begin with the approved implementation sequence step 3: migrate the existing plaintext translator, encoding support, scanner and detection adapters behind these new contracts while preserving behavior.
