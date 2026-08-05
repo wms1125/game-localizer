@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import threading
+import time
 import unittest
 from datetime import datetime
 
@@ -572,6 +573,262 @@ class ContextValidationTests(unittest.TestCase):
         self.assertNotIn(EventType.WARNING, [event.event_type for event in events])
         self.assertNotIn(EventType.PROGRESS, [event.event_type for event in events])
         self.assertNotIn("secret", json.dumps([event.to_dict() for event in events]))
+
+
+class IndependentReviewRegressionTests(unittest.TestCase):
+    class TwoViewDict(dict):
+        def __init__(self):
+            super().__init__({"safe": 1})
+            self._changed = False
+
+        def items(self):
+            if not self._changed:
+                safe_items = list(dict.items(self))
+                dict.__setitem__(self, "token", "TOP-SECRET")
+                self._changed = True
+                return safe_items
+            return dict.items(self)
+
+    def test_event_constructor_revalidates_the_canonical_json_snapshot(self):
+        with self.assertRaises(ValueError):
+            TaskEvent(
+                task_id="task-1",
+                step_id="extract",
+                sequence=1,
+                event_type=EventType.LOG,
+                timestamp="2026-08-05T12:30:45Z",
+                summary="stateful data",
+                data=self.TwoViewDict(),
+            )
+
+    def test_context_log_rejects_a_stateful_second_sensitive_view(self):
+        events: list[TaskEvent] = []
+
+        def handler(context: TaskContext) -> StepResult:
+            with self.assertRaises(ValueError):
+                context.log("stateful data", self.TwoViewDict())
+            return StepResult()
+
+        plan = make_plan()
+        TaskRunner(events.append).run(plan, {"extract": handler})
+
+        self.assertEqual(plan.state, TaskState.COMPLETED)
+        self.assertNotIn(EventType.LOG, [event.event_type for event in events])
+        self.assertNotIn("TOP-SECRET", json.dumps([event.to_dict() for event in events]))
+
+    def test_queued_sink_mutation_cannot_replace_the_preflight_handler(self):
+        events: list[TaskEvent] = []
+        approved_calls = 0
+        replacement_calls = 0
+
+        def approved(context: TaskContext) -> StepResult:
+            nonlocal approved_calls
+            approved_calls += 1
+            return StepResult()
+
+        def replacement(context: TaskContext) -> StepResult:
+            nonlocal replacement_calls
+            replacement_calls += 1
+            return StepResult()
+
+        handlers = {"extract": approved}
+
+        def sink(event: TaskEvent) -> None:
+            events.append(event)
+            if event.event_type is EventType.QUEUED:
+                handlers["extract"] = replacement
+
+        plan = make_plan()
+        TaskRunner(sink).run(plan, handlers)
+
+        self.assertEqual(plan.state, TaskState.COMPLETED)
+        self.assertEqual(approved_calls, 1)
+        self.assertEqual(replacement_calls, 0)
+        self.assertEqual(
+            [event.event_type for event in events],
+            [EventType.QUEUED, EventType.STARTED, EventType.COMPLETED, EventType.COMPLETED],
+        )
+
+    def test_context_and_artifact_ids_use_plain_exact_strings(self):
+        class DeceptiveString(str):
+            def __eq__(self, other):
+                return True
+
+            def __ne__(self, other):
+                return False
+
+            __hash__ = str.__hash__
+
+        context = TaskContext(
+            DeceptiveString("task-real"),
+            DeceptiveString("step-real"),
+            TaskControl(),
+            lambda *args: None,
+        )
+        self.assertIs(type(context.task_id), str)
+        self.assertIs(type(context.step_id), str)
+
+        events: list[TaskEvent] = []
+
+        def handler(active_context: TaskContext) -> StepResult:
+            artifact = Artifact(
+                artifact_id="artifact-1",
+                task_id=DeceptiveString("task-other"),
+                step_id=DeceptiveString("step-other"),
+                kind=ArtifactKind.REPORT,
+                relative_path="reports/deceptive.json",
+                sha256=None,
+            )
+            active_context.artifact(artifact)
+            return StepResult(artifacts=(artifact,))
+
+        plan = make_plan()
+        TaskRunner(events.append).run(plan, {"extract": handler})
+
+        self.assertEqual(plan.state, TaskState.FAILED)
+        self.assertEqual(plan.steps[0].state, StepState.FAILED)
+        self.assertNotIn(EventType.ARTIFACT, [event.event_type for event in events])
+        self.assertEqual(events[-1].data, {"exception_type": "ValueError"})
+
+    def test_artifact_serialization_does_not_dispatch_to_a_subclass_override(self):
+        class ArtifactWithVirtualTrap(Artifact):
+            def to_dict(self):
+                raise AssertionError("virtual to_dict must not run")
+
+        events: list[TaskEvent] = []
+
+        def handler(context: TaskContext) -> StepResult:
+            artifact = ArtifactWithVirtualTrap(
+                artifact_id="artifact-1",
+                task_id=context.task_id,
+                step_id=context.step_id,
+                kind=ArtifactKind.REPORT,
+                relative_path="reports/trusted.json",
+                sha256=None,
+            )
+            context.artifact(artifact)
+            return StepResult(artifacts=(artifact,))
+
+        plan = make_plan()
+        TaskRunner(events.append).run(plan, {"extract": handler})
+
+        self.assertEqual(plan.state, TaskState.COMPLETED)
+        artifact_event = [
+            event for event in events if event.event_type is EventType.ARTIFACT
+        ][0]
+        self.assertEqual(artifact_event.data["artifact"]["artifact_id"], "artifact-1")
+
+    def test_returned_artifact_provenance_does_not_use_virtual_equality(self):
+        class AlwaysEqualArtifact(Artifact):
+            def __eq__(self, other):
+                return True
+
+        events: list[TaskEvent] = []
+
+        def handler(context: TaskContext) -> StepResult:
+            emitted = make_artifact(context, artifact_id="emitted")
+            context.artifact(emitted)
+            never_emitted = AlwaysEqualArtifact(
+                artifact_id="never-emitted",
+                task_id=context.task_id,
+                step_id=context.step_id,
+                kind=ArtifactKind.REPORT,
+                relative_path="reports/never-emitted.json",
+                sha256=None,
+            )
+            return StepResult(artifacts=(never_emitted,))
+
+        plan = make_plan()
+        TaskRunner(events.append).run(plan, {"extract": handler})
+
+        self.assertEqual(plan.state, TaskState.FAILED)
+        self.assertEqual(plan.steps[0].state, StepState.FAILED)
+        self.assertEqual(events[-1].event_type, EventType.FAILED)
+        self.assertEqual(events[-1].data, {"exception_type": "ValueError"})
+        self.assertFalse(
+            any(
+                event.event_type is EventType.COMPLETED
+                and event.step_id == "extract"
+                for event in events
+            )
+        )
+
+    def test_mutated_step_result_data_fails_inside_the_attempt_boundary(self):
+        mutations = (
+            ("reserved", "token", "TOP-SECRET"),
+            ("non-json", "bad", object()),
+        )
+        for label, key, value in mutations:
+            events: list[TaskEvent] = []
+
+            def handler(context: TaskContext) -> StepResult:
+                result = StepResult(data={"safe": 1})
+                result.data[key] = value
+                return result
+
+            plan = make_plan()
+            with self.subTest(label=label):
+                completed = TaskRunner(events.append).run(plan, {"extract": handler})
+                self.assertIs(completed, plan)
+                self.assertEqual(plan.state, TaskState.FAILED)
+                self.assertEqual(plan.steps[0].state, StepState.FAILED)
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [EventType.QUEUED, EventType.STARTED, EventType.FAILED],
+                )
+                self.assertEqual(events[-1].data, {"exception_type": "ValueError"})
+                serialized = json.dumps([event.to_dict() for event in events])
+                self.assertNotIn("TOP-SECRET", serialized)
+                self.assertNotIn("token", serialized)
+
+    def test_concurrent_context_events_are_delivered_in_strict_sequence(self):
+        class SlowDict(dict):
+            def items(self):
+                time.sleep(0.01)
+                return dict.items(self)
+
+        events: list[TaskEvent] = []
+        worker_count = 8
+
+        def handler(context: TaskContext) -> StepResult:
+            barrier = threading.Barrier(worker_count + 1)
+            errors: list[BaseException] = []
+
+            def emit_log(worker_id: int) -> None:
+                try:
+                    barrier.wait(timeout=1.0)
+                    context.log(
+                        f"worker {worker_id}",
+                        SlowDict({"worker_id": worker_id}),
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            threads = [
+                threading.Thread(target=emit_log, args=(worker_id,))
+                for worker_id in range(worker_count)
+            ]
+            for thread in threads:
+                thread.start()
+            barrier.wait(timeout=1.0)
+            for thread in threads:
+                thread.join(1.0)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(errors, [])
+            return StepResult()
+
+        plan = make_plan()
+        TaskRunner(events.append).run(plan, {"extract": handler})
+
+        self.assertEqual(plan.state, TaskState.COMPLETED)
+        self.assertEqual(
+            [event.sequence for event in events],
+            list(range(1, len(events) + 1)),
+        )
+        self.assertEqual(
+            sum(event.event_type is EventType.LOG for event in events),
+            worker_count,
+        )
 
 
 if __name__ == "__main__":

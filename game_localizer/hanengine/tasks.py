@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from threading import Condition
+from threading import Condition, RLock
 from typing import Callable, TypeVar
 
 from .routing import RouteOperation
@@ -198,7 +198,9 @@ def _copy_json_object(value: object, field_name: str) -> dict[str, JsonValue]:
             sort_keys=True,
             separators=(",", ":"),
         )
-        return json.loads(encoded)
+        canonical = json.loads(encoded)
+        _validate_json_value(canonical)
+        return canonical
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{field_name} must contain only finite, non-sensitive JSON values"
@@ -532,6 +534,27 @@ class StepResult:
         )
 
 
+def _canonical_string(value: object, field_name: str) -> str:
+    checked = _require_string(value, field_name)
+    canonical = _copy_json_object({"value": checked}, field_name)["value"]
+    if type(canonical) is not str:
+        raise TypeError(f"{field_name} must be a string")
+    return canonical
+
+
+def _canonical_artifact_payload(artifact: object) -> dict[str, JsonValue]:
+    if not isinstance(artifact, Artifact):
+        raise TypeError("artifact must be an Artifact")
+    canonical = _copy_json_object(
+        {"artifact": Artifact.to_dict(artifact)},
+        "artifact",
+    )["artifact"]
+    if not isinstance(canonical, dict):
+        raise TypeError("artifact must serialize to a JSON object")
+    trusted = Artifact.from_dict(canonical)
+    return Artifact.to_dict(trusted)
+
+
 class TaskCancelled(RuntimeError):
     pass
 
@@ -583,15 +606,15 @@ class TaskContext:
         control: TaskControl,
         emit_event: ContextEventEmitter,
     ):
-        self._task_id = _require_string(task_id, "task_id")
-        self._step_id = _require_string(step_id, "step_id")
+        self._task_id = _canonical_string(task_id, "task_id")
+        self._step_id = _canonical_string(step_id, "step_id")
         if not isinstance(control, TaskControl):
             raise TypeError("control must be a TaskControl")
         if not callable(emit_event):
             raise TypeError("emit_event must be callable")
         self._control = control
         self._emit_event = emit_event
-        self._emitted_artifacts: list[Artifact] = []
+        self._emitted_artifacts: list[dict[str, JsonValue]] = []
 
     @property
     def task_id(self) -> str:
@@ -648,11 +671,10 @@ class TaskContext:
         )
 
     def artifact(self, artifact: Artifact) -> None:
-        if not isinstance(artifact, Artifact):
-            raise TypeError("artifact must be an Artifact")
-        if artifact.task_id != self._task_id:
+        payload = _canonical_artifact_payload(artifact)
+        if payload["task_id"] != self._task_id:
             raise ValueError("artifact task_id must match the context")
-        if artifact.step_id != self._step_id:
+        if payload["step_id"] != self._step_id:
             raise ValueError("artifact step_id must match the context")
         self._emit_event(
             self._task_id,
@@ -660,9 +682,9 @@ class TaskContext:
             EventType.ARTIFACT,
             "artifact created",
             None,
-            {"artifact": artifact.to_dict()},
+            {"artifact": payload},
         )
-        self._emitted_artifacts.append(Artifact.from_dict(artifact.to_dict()))
+        self._emitted_artifacts.append(payload)
 
     def checkpoint(self) -> None:
         self._control.checkpoint()
@@ -683,9 +705,10 @@ class TaskRunner:
         handlers: Mapping[str, StepHandler],
         control: TaskControl | None = None,
     ) -> TaskPlan:
-        self._validate_invocation(plan, handlers, control)
+        handler_snapshot = self._validate_invocation(plan, handlers, control)
         task_control = TaskControl() if control is None else control
         sequence = 0
+        event_lock = RLock()
 
         def emit_event(
             task_id: str,
@@ -696,20 +719,23 @@ class TaskRunner:
             data: dict[str, JsonValue],
         ) -> TaskEvent:
             nonlocal sequence
-            next_sequence = sequence + 1
-            event = TaskEvent(
-                task_id=task_id,
-                step_id=step_id,
-                sequence=next_sequence,
-                event_type=event_type,
-                timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                summary=summary,
-                progress=progress,
-                data=data,
-            )
-            sequence = next_sequence
-            self._event_sink(event)
-            return event
+            with event_lock:
+                next_sequence = sequence + 1
+                event = TaskEvent(
+                    task_id=task_id,
+                    step_id=step_id,
+                    sequence=next_sequence,
+                    event_type=event_type,
+                    timestamp=datetime.now(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    summary=summary,
+                    progress=progress,
+                    data=data,
+                )
+                sequence = next_sequence
+                self._event_sink(event)
+                return event
 
         emit_event(
             plan.task_id,
@@ -746,14 +772,34 @@ class TaskRunner:
                 step.state = StepState.RUNNING
                 plan.state = TaskState.RUNNING
                 try:
-                    result = handlers[step.step_id](context)
+                    result = handler_snapshot[step_index](context)
                     if not isinstance(result, StepResult):
                         raise TypeError("handler must return a StepResult")
-                    for artifact in result.artifacts:
-                        if artifact not in context._emitted_artifacts:
+                    canonical_artifacts = tuple(
+                        _canonical_artifact_payload(artifact)
+                        for artifact in result.artifacts
+                    )
+                    canonical_data = _copy_json_object(result.data, "data")
+                    for artifact_payload in canonical_artifacts:
+                        if artifact_payload not in context._emitted_artifacts:
                             raise ValueError(
                                 "returned artifacts must be emitted through the context"
                             )
+
+                    unique_artifacts: list[dict[str, JsonValue]] = []
+                    artifact_ids: set[str] = set()
+                    for artifact_payload in canonical_artifacts:
+                        artifact_id = artifact_payload["artifact_id"]
+                        if artifact_id not in artifact_ids:
+                            artifact_ids.add(artifact_id)
+                            unique_artifacts.append(artifact_payload)
+                    completion_data = _copy_json_object(
+                        {
+                            "artifacts": unique_artifacts,
+                            "data": canonical_data,
+                        },
+                        "data",
+                    )
                 except TaskCancelled:
                     return self._cancel(plan, step_index, emit_event)
                 except Exception as exc:
@@ -782,16 +828,6 @@ class TaskRunner:
                     )
                     return plan
 
-                unique_artifacts: list[Artifact] = []
-                artifact_ids: set[str] = set()
-                for artifact in result.artifacts:
-                    if artifact.artifact_id not in artifact_ids:
-                        artifact_ids.add(artifact.artifact_id)
-                        unique_artifacts.append(artifact)
-                completion = StepResult(
-                    artifacts=tuple(unique_artifacts),
-                    data=result.data,
-                )
                 step.state = StepState.COMPLETED
                 emit_event(
                     plan.task_id,
@@ -799,7 +835,7 @@ class TaskRunner:
                     EventType.COMPLETED,
                     "step completed",
                     None,
-                    completion.to_dict(),
+                    completion_data,
                 )
                 break
 
@@ -819,7 +855,7 @@ class TaskRunner:
         plan: TaskPlan,
         handlers: Mapping[str, StepHandler],
         control: TaskControl | None,
-    ) -> None:
+    ) -> tuple[StepHandler, ...]:
         if not isinstance(plan, TaskPlan):
             raise TypeError("plan must be a TaskPlan")
         if plan.state is not TaskState.QUEUED:
@@ -837,11 +873,16 @@ class TaskRunner:
                 raise ValueError("step IDs must be unique")
             step_ids.append(step.step_id)
 
+        handler_snapshot: list[StepHandler] = []
         for step_id in step_ids:
-            if step_id not in handlers:
-                raise ValueError("every step must have a handler")
-            if not callable(handlers[step_id]):
+            try:
+                handler = handlers[step_id]
+            except KeyError as exc:
+                raise ValueError("every step must have a handler") from exc
+            if not callable(handler):
                 raise TypeError("step handlers must be callable")
+            handler_snapshot.append(handler)
+        return tuple(handler_snapshot)
 
     @staticmethod
     def _cancel(
