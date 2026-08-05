@@ -506,6 +506,139 @@ class ComplianceTests(unittest.TestCase):
             self.assertEqual(manifest.read_bytes(), original)
             self.assertEqual(hashlib.sha256(outside.read_bytes()).hexdigest(), outside_before)
 
+    def test_manifest_intermediate_directory_swap_is_rechecked_before_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            compliance_directory = root / "compliance"
+            displaced = root / "compliance-before-swap"
+            outside = base / "outside-compliance"
+            outside.mkdir()
+            manifest = compliance_directory / "provenance.json"
+            outside_manifest = outside / "provenance.json"
+            outside_manifest.write_bytes(manifest.read_bytes())
+            before_root = self.regular_tree_hashes(root)
+            before_outside = self.regular_tree_hashes(outside)
+            real_lstat = os.lstat
+            real_open = os.open
+            real_read = os.read
+            real_close = os.close
+            swapped = False
+            outside_descriptors: set[int] = set()
+            outside_read_count = 0
+
+            def swap_before_target_lstat(path: object):
+                nonlocal swapped
+                if Path(path) == manifest and not swapped:
+                    compliance_directory.rename(displaced)
+                    os.symlink(outside, compliance_directory, target_is_directory=True)
+                    swapped = True
+                return real_lstat(path)
+
+            def record_open(path: object, flags: int, mode: int = 0o777) -> int:
+                file_descriptor = real_open(path, flags, mode)
+                if swapped and Path(path) == manifest:
+                    outside_descriptors.add(file_descriptor)
+                return file_descriptor
+
+            def record_read(file_descriptor: int, size: int) -> bytes:
+                nonlocal outside_read_count
+                if file_descriptor in outside_descriptors:
+                    outside_read_count += 1
+                return real_read(file_descriptor, size)
+
+            def record_close(file_descriptor: int) -> None:
+                outside_descriptors.discard(file_descriptor)
+                real_close(file_descriptor)
+
+            try:
+                with mock.patch("tools.check_compliance.os.lstat", side_effect=swap_before_target_lstat), mock.patch(
+                    "tools.check_compliance.os.open", side_effect=record_open
+                ), mock.patch("tools.check_compliance.os.read", side_effect=record_read), mock.patch(
+                    "tools.check_compliance.os.close", side_effect=record_close
+                ):
+                    report = check_repository(root)
+            finally:
+                if compliance_directory.is_symlink():
+                    compliance_directory.unlink()
+                if displaced.exists():
+                    displaced.rename(compliance_directory)
+
+            self.assertTrue(swapped)
+            self.assertEqual(outside_read_count, 0)
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(self.regular_tree_hashes(outside), before_outside)
+
+    def test_hash_intermediate_directory_swap_is_rechecked_before_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            assets = root / "assets"
+            assets.mkdir()
+            candidate = assets / "candidate.bin"
+            candidate.write_bytes(b"inside synthetic fixture")
+            displaced = root / "assets-before-swap"
+            outside = base / "outside-assets"
+            outside.mkdir()
+            (outside / "candidate.bin").write_bytes(b"outside synthetic fixture")
+            before_root = self.regular_tree_hashes(root)
+            before_outside = self.regular_tree_hashes(outside)
+            real_lstat = os.lstat
+            real_open = os.open
+            real_read = os.read
+            real_close = os.close
+            swapped = False
+            outside_descriptors: set[int] = set()
+            outside_read_count = 0
+
+            def swap_before_target_lstat(path: object):
+                nonlocal swapped
+                if Path(path) == candidate and not swapped:
+                    assets.rename(displaced)
+                    os.symlink(outside, assets, target_is_directory=True)
+                    swapped = True
+                return real_lstat(path)
+
+            def record_open(path: object, flags: int, mode: int = 0o777) -> int:
+                file_descriptor = real_open(path, flags, mode)
+                if swapped and Path(path) == candidate:
+                    outside_descriptors.add(file_descriptor)
+                return file_descriptor
+
+            def record_read(file_descriptor: int, size: int) -> bytes:
+                nonlocal outside_read_count
+                if file_descriptor in outside_descriptors:
+                    outside_read_count += 1
+                return real_read(file_descriptor, size)
+
+            def record_close(file_descriptor: int) -> None:
+                outside_descriptors.discard(file_descriptor)
+                real_close(file_descriptor)
+
+            try:
+                with mock.patch("tools.check_compliance.os.lstat", side_effect=swap_before_target_lstat), mock.patch(
+                    "tools.check_compliance.os.open", side_effect=record_open
+                ), mock.patch("tools.check_compliance.os.read", side_effect=record_read), mock.patch(
+                    "tools.check_compliance.os.close", side_effect=record_close
+                ):
+                    report = check_repository(root)
+            finally:
+                if assets.is_symlink():
+                    assets.unlink()
+                if displaced.exists():
+                    displaced.rename(assets)
+
+            self.assertTrue(swapped)
+            self.assertEqual(outside_read_count, 0)
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(self.regular_tree_hashes(outside), before_outside)
+
     def test_special_file_types_are_rejected_without_hashing(self) -> None:
         for mode in (stat.S_IFIFO, getattr(stat, "S_IFSOCK", stat.S_IFIFO)):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary_directory:

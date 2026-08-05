@@ -159,12 +159,13 @@ def _verified_file_metadata(
     root: Path,
     relative_path: Path | str,
     root_identity: tuple[int, int],
-) -> tuple[Path, os.stat_result]:
-    _validate_root_components(root, root_identity)
+) -> tuple[Path, os.stat_result, tuple[tuple[Path, Path, tuple[int, int]], ...]]:
+    root_metadata = _validate_root_components(root, root_identity)
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts or not relative.parts:
         raise _PathSafetyError("Repository file path is outside the repository.", relative)
     current = root
+    directory_identities = [(root, Path("."), _identity(root_metadata))]
     for index, part in enumerate(relative.parts):
         current /= part
         metadata = os.lstat(current)
@@ -177,9 +178,24 @@ def _verified_file_metadata(
         if index < len(relative.parts) - 1:
             if not stat.S_ISDIR(metadata.st_mode):
                 raise _PathSafetyError("Repository path component is not a directory.", current_relative)
+            directory_identities.append((current, current_relative, _identity(metadata)))
         elif not stat.S_ISREG(metadata.st_mode):
             raise _PathSafetyError("Repository path is not a regular file.", current_relative)
-    return current, metadata
+    return current, metadata, tuple(directory_identities)
+
+
+def _recheck_directory_identities(
+    directory_identities: tuple[tuple[Path, Path, tuple[int, int]], ...],
+) -> None:
+    for path, relative_path, expected_identity in directory_identities:
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+            raise _PathSafetyError(
+                "Repository path is a symbolic link or reparse point.",
+                relative_path,
+            )
+        if not stat.S_ISDIR(metadata.st_mode) or _identity(metadata) != expected_identity:
+            raise _PathSafetyError("Repository directory changed during file verification.", relative_path)
 
 
 def _open_verified_regular_file(
@@ -187,7 +203,12 @@ def _open_verified_regular_file(
     relative_path: Path | str,
     root_identity: tuple[int, int],
 ) -> int:
-    path, expected_metadata = _verified_file_metadata(root, relative_path, root_identity)
+    path, expected_metadata, directory_identities = _verified_file_metadata(
+        root,
+        relative_path,
+        root_identity,
+    )
+    _recheck_directory_identities(directory_identities)
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         file_descriptor = os.open(path, flags)
@@ -214,6 +235,11 @@ def _open_verified_regular_file(
     ):
         os.close(file_descriptor)
         raise _PathSafetyError("Repository file changed before it could be read.", relative_path)
+    try:
+        _recheck_directory_identities(directory_identities)
+    except OSError:
+        os.close(file_descriptor)
+        raise
     return file_descriptor
 
 
