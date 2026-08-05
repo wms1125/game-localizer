@@ -139,6 +139,25 @@ class SbomTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "provenance"):
                 build_sbom(root)
 
+    def test_phase_zero_project_license_pair_is_required_and_propagated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = self.make_root(temporary_directory)
+            self.write_json(
+                root / "compliance" / "provenance.json",
+                {
+                    "contract": "hanengine.provenance/v1",
+                    "project": {**PROJECT, "license_status": "DECIDED", "license_spdx": "MIT"},
+                },
+            )
+            with self.assertRaisesRegex(ValueError, "provenance"):
+                build_sbom(root)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            payload = build_sbom(self.make_root(temporary_directory))
+
+        self.assertEqual(payload["packages"][0]["licenseDeclared"], PROJECT["license_spdx"])
+        self.assertEqual(payload["packages"][0]["licenseConcluded"], PROJECT["license_spdx"])
+
     def test_duplicate_generated_component_ids_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -166,15 +185,26 @@ class SbomTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = self.make_root(temporary_directory)
             command = [sys.executable, str(REPOSITORY_ROOT / "tools" / "generate_sbom.py"), "--root", str(root), "--check"]
-            self.assertEqual(subprocess.run(command, check=False).returncode, 1)
+            missing = subprocess.run(command, check=False, text=True, capture_output=True)
+            self.assertEqual(missing.returncode, 1)
+            self.assertIn("compliance/sbom.spdx.json", missing.stderr)
             write_sbom(root)
             self.assertEqual(subprocess.run(command, check=False).returncode, 0)
 
             snapshot = root / "compliance" / "sbom.spdx.json"
             snapshot.write_bytes(snapshot.read_bytes() + b" ")
             drifted = snapshot.read_bytes()
-            self.assertEqual(subprocess.run(command, check=False).returncode, 1)
+            drift = subprocess.run(command, check=False, text=True, capture_output=True)
+            self.assertEqual(drift.returncode, 1)
+            self.assertIn("compliance/sbom.spdx.json", drift.stderr)
             self.assertEqual(snapshot.read_bytes(), drifted)
+
+    def test_workflow_runs_each_compliance_gate_in_a_separate_step(self) -> None:
+        workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "compliance.yml").read_text(encoding="utf-8")
+
+        self.assertIn("- name: Audit compliance\n        run: python tools/check_compliance.py --json", workflow)
+        self.assertIn("- name: Check SBOM drift\n        run: python tools/generate_sbom.py --check", workflow)
+        self.assertIn("- name: Test compliance\n        run: python -m unittest tests.test_compliance tests.test_sbom -v", workflow)
 
     def test_rendered_bytes_are_utf8_lf_terminated_without_bom_or_crlf(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

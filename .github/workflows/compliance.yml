@@ -12,8 +12,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - shell: powershell
-        run: |
-          python tools/check_compliance.py --json
-          python tools/generate_sbom.py --check
-          python -m unittest tests.test_compliance tests.test_sbom -v
+      - name: Audit compliance
+        run: python tools/check_compliance.py --json
+      - name: Check SBOM drift
+        run: python tools/generate_sbom.py --check
+      - name: Test compliance
+        run: python -m unittest tests.test_compliance tests.test_sbom -v

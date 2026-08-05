@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 
@@ -39,6 +40,8 @@ def _read_project(root: Path) -> dict[str, object]:
     if provenance.get("contract") != _PROVENANCE_CONTRACT or not isinstance(project, dict):
         raise ValueError("invalid provenance")
     if not all(_valid_text(project.get(field)) for field in ("name", "repository", "version", "license_status", "license_spdx")):
+        raise ValueError("invalid provenance")
+    if (project["license_status"], project["license_spdx"]) != ("UNDECIDED", "NOASSERTION"):
         raise ValueError("invalid provenance")
     return project
 
@@ -88,8 +91,8 @@ def build_sbom(root: Path) -> dict[str, object]:
         "copyrightText": "NOASSERTION",
         "downloadLocation": "NOASSERTION",
         "filesAnalyzed": False,
-        "licenseConcluded": "NOASSERTION",
-        "licenseDeclared": "NOASSERTION",
+        "licenseConcluded": project["license_spdx"],
+        "licenseDeclared": project["license_spdx"],
         "name": project["name"],
         "versionInfo": project["version"],
     }]
@@ -160,7 +163,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.check:
-        return 0 if check_sbom(arguments.root) else 1
+        if check_sbom(arguments.root):
+            return 0
+        print("SBOM drift: compliance/sbom.spdx.json", file=sys.stderr)
+        return 1
     write_sbom(arguments.root)
     return 0
 
