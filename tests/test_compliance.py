@@ -236,7 +236,7 @@ class ComplianceTests(unittest.TestCase):
             before_outside = hashlib.sha256(outside.read_bytes()).hexdigest()
             hashed: list[Path] = []
 
-            def record_hash(path: Path) -> str:
+            def record_hash(path: Path, **_: object) -> str:
                 hashed.append(path)
                 return "0" * 64
 
@@ -266,7 +266,7 @@ class ComplianceTests(unittest.TestCase):
 
             with mock.patch(
                 "tools.check_compliance._sha256_file",
-                side_effect=lambda path: hashed.append(path) or "0" * 64,
+                side_effect=lambda path, **_: hashed.append(path) or "0" * 64,
             ):
                 report = check_repository(root)
 
@@ -274,6 +274,283 @@ class ComplianceTests(unittest.TestCase):
             self.assertFalse(any(path == link or link in path.parents for path in hashed))
             self.assertEqual(self.regular_tree_hashes(root), before_root)
             self.assertEqual(self.regular_tree_hashes(outside), before_outside)
+
+    def test_root_symlink_and_mocked_reparse_are_rejected_before_any_file_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            target = base / "target"
+            target.mkdir()
+            self.make_repository(target)
+            root_link = base / "root-link"
+            os.symlink(target, root_link, target_is_directory=True)
+            before = self.regular_tree_hashes(target)
+            real_read_text = Path.read_text
+            read_paths: list[Path] = []
+
+            def record_read_text(path: Path, *args: object, **kwargs: object) -> str:
+                read_paths.append(path)
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", autospec=True, side_effect=record_read_text):
+                symlink_report = check_repository(root_link)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in symlink_report.errors])
+            self.assertEqual(read_paths, [])
+            self.assertEqual(self.regular_tree_hashes(target), before)
+
+            root_metadata = os.lstat(target)
+            mocked_reparse = mock.Mock(
+                st_mode=root_metadata.st_mode,
+                st_dev=root_metadata.st_dev,
+                st_ino=root_metadata.st_ino,
+                st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+            )
+            read_paths.clear()
+            real_lstat = os.lstat
+
+            def reparse_root(path: object):
+                return mocked_reparse if Path(path) == target else real_lstat(path)
+
+            with mock.patch("tools.check_compliance.os.lstat", side_effect=reparse_root), mock.patch.object(
+                Path, "read_text", autospec=True, side_effect=record_read_text
+            ):
+                reparse_report = check_repository(target)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in reparse_report.errors])
+            self.assertEqual(read_paths, [])
+            self.assertEqual(self.regular_tree_hashes(target), before)
+
+    def test_manifest_file_symlink_is_never_read_and_reports_one_unsafe_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            manifest = root / "compliance" / "provenance.json"
+            outside = base / "outside-provenance.json"
+            outside.write_bytes(manifest.read_bytes())
+            manifest.unlink()
+            os.symlink(outside, manifest)
+            before_root = self.regular_tree_hashes(root)
+            before_outside = hashlib.sha256(outside.read_bytes()).hexdigest()
+            real_read_text = Path.read_text
+            read_paths: list[Path] = []
+
+            def record_read_text(path: Path, *args: object, **kwargs: object) -> str:
+                read_paths.append(path)
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", autospec=True, side_effect=record_read_text):
+                report = check_repository(root)
+
+            unsafe = [
+                item for item in report.errors
+                if item.code == "COMPLIANCE_PATH_UNSAFE" and item.path == "compliance/provenance.json"
+            ]
+            self.assertEqual(len(unsafe), 1)
+            self.assertNotIn(manifest, read_paths)
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(hashlib.sha256(outside.read_bytes()).hexdigest(), before_outside)
+
+    def test_intermediate_compliance_directory_symlink_is_rejected_before_manifest_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            outside = base / "outside-compliance"
+            (root / "compliance").rename(outside)
+            os.symlink(outside, root / "compliance", target_is_directory=True)
+            before_root = self.regular_tree_hashes(root)
+            before_outside = self.regular_tree_hashes(outside)
+            real_read_text = Path.read_text
+            read_paths: list[Path] = []
+
+            def record_read_text(path: Path, *args: object, **kwargs: object) -> str:
+                read_paths.append(path)
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", autospec=True, side_effect=record_read_text):
+                report = check_repository(root)
+
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertFalse(any(path == root / "compliance" or root / "compliance" in path.parents for path in read_paths))
+            self.assertEqual(self.regular_tree_hashes(root), before_root)
+            self.assertEqual(self.regular_tree_hashes(outside), before_outside)
+
+    def test_intermediate_compliance_reparse_is_rejected_before_manifest_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            compliance_directory = root / "compliance"
+            metadata = os.lstat(compliance_directory)
+            mocked_reparse = mock.Mock(
+                st_mode=metadata.st_mode,
+                st_dev=metadata.st_dev,
+                st_ino=metadata.st_ino,
+                st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+            )
+            real_lstat = os.lstat
+            real_read_text = Path.read_text
+            read_paths: list[Path] = []
+
+            def reparse_compliance(path: object):
+                return mocked_reparse if Path(path) == compliance_directory else real_lstat(path)
+
+            def record_read_text(path: Path, *args: object, **kwargs: object) -> str:
+                read_paths.append(path)
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch("tools.check_compliance.os.lstat", side_effect=reparse_compliance), mock.patch.object(
+                Path, "read_text", autospec=True, side_effect=record_read_text
+            ):
+                report = check_repository(root)
+
+        unsafe = [item for item in report.errors if item.code == "COMPLIANCE_PATH_UNSAFE" and item.path == "compliance"]
+        self.assertEqual(len(unsafe), 1)
+        self.assertFalse(any(path == compliance_directory or compliance_directory in path.parents for path in read_paths))
+
+    def test_root_identity_change_is_rejected_before_any_repository_file_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            metadata = os.lstat(root)
+            changed_metadata = mock.Mock(
+                st_mode=metadata.st_mode,
+                st_dev=metadata.st_dev,
+                st_ino=metadata.st_ino + 1,
+                st_file_attributes=getattr(metadata, "st_file_attributes", 0),
+            )
+            real_lstat = os.lstat
+            real_read_text = Path.read_text
+            root_checks = 0
+            read_paths: list[Path] = []
+
+            def change_root_identity(path: object):
+                nonlocal root_checks
+                if Path(path) == root:
+                    root_checks += 1
+                    if root_checks > 1:
+                        return changed_metadata
+                return real_lstat(path)
+
+            def record_read_text(path: Path, *args: object, **kwargs: object) -> str:
+                read_paths.append(path)
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch("tools.check_compliance.os.lstat", side_effect=change_root_identity), mock.patch.object(
+                Path, "read_text", autospec=True, side_effect=record_read_text
+            ):
+                report = check_repository(root)
+
+        self.assertIn("Repository directory changed during scan.", [item.message for item in report.errors])
+        self.assertEqual(read_paths, [])
+
+    def test_file_swap_between_lstat_and_open_is_closed_before_any_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            root = base / "root"
+            root.mkdir()
+            self.make_repository(root)
+            manifest = root / "compliance" / "provenance.json"
+            original = manifest.read_bytes()
+            displaced = root / "compliance" / "provenance-original.json"
+            outside = base / "outside.json"
+            outside.write_bytes(original)
+            outside_before = hashlib.sha256(outside.read_bytes()).hexdigest()
+            real_open = os.open
+            real_read = os.read
+            real_close = os.close
+            swapped = False
+            swapped_fd: int | None = None
+            swapped_fd_closed = False
+            outside_read = False
+
+            def swap_on_open(path: object, flags: int, mode: int = 0o777) -> int:
+                nonlocal swapped, swapped_fd
+                if Path(path) == manifest and not swapped:
+                    manifest.rename(displaced)
+                    os.symlink(outside, manifest)
+                    swapped = True
+                    swapped_fd = real_open(outside, flags, mode)
+                    return swapped_fd
+                return real_open(path, flags, mode)
+
+            def record_read(file_descriptor: int, size: int) -> bytes:
+                nonlocal outside_read
+                if file_descriptor == swapped_fd and not swapped_fd_closed:
+                    outside_read = True
+                return real_read(file_descriptor, size)
+
+            def record_close(file_descriptor: int) -> None:
+                nonlocal swapped_fd_closed
+                if file_descriptor == swapped_fd:
+                    swapped_fd_closed = True
+                real_close(file_descriptor)
+
+            try:
+                with mock.patch("tools.check_compliance.os.open", side_effect=swap_on_open), mock.patch(
+                    "tools.check_compliance.os.read", side_effect=record_read
+                ), mock.patch("tools.check_compliance.os.close", side_effect=record_close):
+                    report = check_repository(root)
+            finally:
+                if manifest.is_symlink():
+                    manifest.unlink()
+                if displaced.exists():
+                    displaced.rename(manifest)
+
+            self.assertTrue(swapped)
+            self.assertTrue(swapped_fd_closed)
+            self.assertFalse(outside_read)
+            self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+            self.assertEqual(manifest.read_bytes(), original)
+            self.assertEqual(hashlib.sha256(outside.read_bytes()).hexdigest(), outside_before)
+
+    def test_special_file_types_are_rejected_without_hashing(self) -> None:
+        for mode in (stat.S_IFIFO, getattr(stat, "S_IFSOCK", stat.S_IFIFO)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                self.make_repository(root)
+                entry = mock.MagicMock()
+                entry.name = "special"
+                entry.path = str(root / entry.name)
+                entry.stat.return_value = mock.Mock(
+                    st_mode=mode,
+                    st_dev=1,
+                    st_ino=2,
+                    st_file_attributes=0,
+                )
+                entry.is_dir.return_value = False
+                entry.is_file.return_value = False
+
+                with mock.patch("os.scandir", return_value=self.scandir_context([entry])), mock.patch(
+                    "tools.check_compliance._sha256_file"
+                ) as hash_file:
+                    report = check_repository(root)
+
+                self.assertIn("COMPLIANCE_PATH_UNSAFE", [item.code for item in report.errors])
+                hash_file.assert_not_called()
+
+    def test_verified_manifest_open_error_fails_closed_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.make_repository(root)
+            manifest = root / "compliance" / "provenance.json"
+            real_open = os.open
+
+            def deny_manifest(path: object, flags: int, mode: int = 0o777) -> int:
+                if Path(path) == manifest:
+                    raise PermissionError("denied")
+                return real_open(path, flags, mode)
+
+            with mock.patch("tools.check_compliance.os.open", side_effect=deny_manifest):
+                report = check_repository(root)
+
+        failures = [
+            item for item in report.errors
+            if item.code == "COMPLIANCE_FILE_UNREADABLE" and item.path == "compliance/provenance.json"
+        ]
+        self.assertEqual(len(failures), 1)
 
     def test_windows_reparse_attribute_is_rejected_before_type_checks_or_hashing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -312,7 +589,7 @@ class ComplianceTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0].message, "Repository directory could not be enumerated.")
 
-    def test_directory_lstat_error_fails_closed_deterministically(self) -> None:
+    def test_root_lstat_error_fails_closed_deterministically(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             self.make_repository(root)
@@ -322,7 +599,7 @@ class ComplianceTests(unittest.TestCase):
 
         failures = [item for item in report.errors if item.code == "COMPLIANCE_SCAN_FAILED"]
         self.assertEqual(len(failures), 1)
-        self.assertEqual(failures[0].message, "Repository directory could not be inspected.")
+        self.assertEqual(failures[0].message, "Repository root could not be inspected.")
 
     def test_queued_directory_identity_change_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -396,7 +673,8 @@ class ComplianceTests(unittest.TestCase):
             entry.stat.assert_called_once_with(follow_symlinks=False)
             entry.is_dir.assert_called_once_with(follow_symlinks=False)
             entry.is_file.assert_called_once_with(follow_symlinks=False)
-            hash_file.assert_called_once_with(candidate)
+            hash_file.assert_called_once()
+            self.assertEqual(hash_file.call_args.args[0], candidate)
 
     def test_restricted_reference_material_requires_complete_nonempty_records(self) -> None:
         cases = {

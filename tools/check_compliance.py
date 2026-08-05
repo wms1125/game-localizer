@@ -90,15 +90,193 @@ def _finding(code: str, severity: str, message: str, path: Path | str | None = N
     return ComplianceFinding(code, severity, message, None if path is None else Path(path).as_posix())
 
 
-def _read_manifest(root: Path, relative_path: str, findings: list[ComplianceFinding]) -> dict[str, object] | None:
-    path = root / relative_path
-    if not path.is_file():
-        findings.append(_finding("COMPLIANCE_FILE_MISSING", "ERROR", "Required compliance file is missing.", relative_path))
+class _PathSafetyError(OSError):
+    def __init__(self, message: str, relative_path: Path | str) -> None:
+        super().__init__(message)
+        self.finding_message = message
+        self.relative_path = Path(relative_path)
+
+
+def _append_once(findings: list[ComplianceFinding], finding: ComplianceFinding) -> None:
+    if finding not in findings:
+        findings.append(finding)
+
+
+def _path_key(path: Path | str) -> str:
+    return Path(path).as_posix().casefold()
+
+
+def _absolute_components(path: Path) -> tuple[Path, ...]:
+    current = Path(path.anchor)
+    components = [current]
+    for part in path.parts[1:]:
+        current /= part
+        components.append(current)
+    return tuple(components)
+
+
+def _validate_root_components(root: Path, expected_identity: tuple[int, int] | None = None) -> os.stat_result:
+    root_metadata: os.stat_result | None = None
+    for component in _absolute_components(root):
+        metadata = os.lstat(component)
+        relative_path: Path | str = Path(".") if component == root else component
+        if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+            raise _PathSafetyError(
+                "Repository path is a symbolic link or reparse point.",
+                relative_path,
+            )
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise _PathSafetyError("Repository root path is not a directory.", relative_path)
+        if component == root:
+            root_metadata = metadata
+    if root_metadata is None:
+        raise _PathSafetyError("Repository root path is not a directory.", Path("."))
+    if expected_identity is not None and _identity(root_metadata) != expected_identity:
+        raise _PathSafetyError("Repository directory changed during scan.", Path("."))
+    return root_metadata
+
+
+def _preflight_root(root: Path, findings: list[ComplianceFinding]) -> tuple[Path, tuple[int, int]] | None:
+    try:
+        absolute_root = root.absolute()
+        metadata = _validate_root_components(absolute_root)
+    except (OSError, RuntimeError) as exc:
+        if isinstance(exc, _PathSafetyError):
+            _append_once(
+                findings,
+                _finding("COMPLIANCE_PATH_UNSAFE", "ERROR", exc.finding_message, exc.relative_path),
+            )
+        else:
+            _append_once(
+                findings,
+                _finding("COMPLIANCE_SCAN_FAILED", "ERROR", "Repository root could not be inspected.", Path(".")),
+            )
+        return None
+    return absolute_root, _identity(metadata)
+
+
+def _verified_file_metadata(
+    root: Path,
+    relative_path: Path | str,
+    root_identity: tuple[int, int],
+) -> tuple[Path, os.stat_result]:
+    _validate_root_components(root, root_identity)
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise _PathSafetyError("Repository file path is outside the repository.", relative)
+    current = root
+    for index, part in enumerate(relative.parts):
+        current /= part
+        metadata = os.lstat(current)
+        current_relative = Path(*relative.parts[: index + 1])
+        if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
+            raise _PathSafetyError(
+                "Repository path is a symbolic link or reparse point.",
+                current_relative,
+            )
+        if index < len(relative.parts) - 1:
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise _PathSafetyError("Repository path component is not a directory.", current_relative)
+        elif not stat.S_ISREG(metadata.st_mode):
+            raise _PathSafetyError("Repository path is not a regular file.", current_relative)
+    return current, metadata
+
+
+def _open_verified_regular_file(
+    root: Path,
+    relative_path: Path | str,
+    root_identity: tuple[int, int],
+) -> int:
+    path, expected_metadata = _verified_file_metadata(root, relative_path, root_identity)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        file_descriptor = os.open(path, flags)
+    except OSError as exc:
+        try:
+            current_metadata = os.lstat(path)
+        except OSError:
+            raise exc
+        if stat.S_ISLNK(current_metadata.st_mode) or _has_reparse_attribute(current_metadata):
+            raise _PathSafetyError(
+                "Repository path is a symbolic link or reparse point.",
+                relative_path,
+            ) from exc
+        raise
+    try:
+        opened_metadata = os.fstat(file_descriptor)
+    except OSError:
+        os.close(file_descriptor)
+        raise
+    if (
+        not stat.S_ISREG(opened_metadata.st_mode)
+        or _has_reparse_attribute(opened_metadata)
+        or _identity(opened_metadata) != _identity(expected_metadata)
+    ):
+        os.close(file_descriptor)
+        raise _PathSafetyError("Repository file changed before it could be read.", relative_path)
+    return file_descriptor
+
+
+def _read_verified_bytes(
+    root: Path,
+    relative_path: Path | str,
+    root_identity: tuple[int, int],
+) -> bytes:
+    file_descriptor = _open_verified_regular_file(root, relative_path, root_identity)
+    chunks: list[bytes] = []
+    try:
+        while chunk := os.read(file_descriptor, 1024 * 1024):
+            chunks.append(chunk)
+    finally:
+        os.close(file_descriptor)
+    return b"".join(chunks)
+
+
+def _record_verified_error(
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+    relative_path: Path | str,
+    exc: OSError,
+) -> None:
+    blocked_paths.add(_path_key(relative_path))
+    if isinstance(exc, _PathSafetyError):
+        _append_once(
+            findings,
+            _finding("COMPLIANCE_PATH_UNSAFE", "ERROR", exc.finding_message, exc.relative_path),
+        )
+    else:
+        _append_once(
+            findings,
+            _finding("COMPLIANCE_FILE_UNREADABLE", "ERROR", "Compliance file could not be read.", relative_path),
+        )
+
+
+def _read_manifest(
+    root: Path,
+    relative_path: str,
+    root_identity: tuple[int, int],
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+) -> dict[str, object] | None:
+    try:
+        raw = _read_verified_bytes(root, relative_path, root_identity)
+    except FileNotFoundError:
+        blocked_paths.add(_path_key(relative_path))
+        _append_once(
+            findings,
+            _finding("COMPLIANCE_FILE_MISSING", "ERROR", "Required compliance file is missing.", relative_path),
+        )
+        return None
+    except OSError as exc:
+        _record_verified_error(findings, blocked_paths, relative_path, exc)
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        findings.append(_finding("COMPLIANCE_JSON_INVALID", "ERROR", "Compliance JSON is invalid.", relative_path))
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        _append_once(
+            findings,
+            _finding("COMPLIANCE_JSON_INVALID", "ERROR", "Compliance JSON is invalid.", relative_path),
+        )
         return None
     if not isinstance(data, dict):
         findings.append(_finding("COMPLIANCE_MANIFEST_INVALID", "ERROR", "Compliance manifest root must be an object.", relative_path))
@@ -128,10 +306,16 @@ def _valid_implementation_source(source: object) -> bool:
     )
 
 
-def _validate_provenance(root: Path, has_license: bool, findings: list[ComplianceFinding]) -> frozenset[str]:
+def _validate_provenance(
+    root: Path,
+    has_license: bool,
+    root_identity: tuple[int, int],
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+) -> frozenset[str]:
     relative_path = "compliance/provenance.json"
     restricted_hashes = {RESTRICTED_REFERENCE["sha256"].casefold()}
-    manifest = _read_manifest(root, relative_path, findings)
+    manifest = _read_manifest(root, relative_path, root_identity, findings, blocked_paths)
     if manifest is None:
         return frozenset(restricted_hashes)
     if manifest.get("contract") != PROVENANCE_CONTRACT:
@@ -209,9 +393,14 @@ def _valid_component(component: object) -> bool:
     return isinstance(component["redistributed"], bool) and bool(_SHA256_PATTERN.fullmatch(component["sha256"]))
 
 
-def _validate_components(root: Path, findings: list[ComplianceFinding]) -> None:
+def _validate_components(
+    root: Path,
+    root_identity: tuple[int, int],
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+) -> None:
     relative_path = "compliance/third_party_components.json"
-    manifest = _read_manifest(root, relative_path, findings)
+    manifest = _read_manifest(root, relative_path, root_identity, findings, blocked_paths)
     if manifest is None:
         return
     if manifest.get("contract") != THIRD_PARTY_CONTRACT:
@@ -232,17 +421,42 @@ def _validate_components(root: Path, findings: list[ComplianceFinding]) -> None:
             )
 
 
-def _validate_required_documents(root: Path, findings: list[ComplianceFinding]) -> None:
+def _validate_required_documents(
+    root: Path,
+    root_identity: tuple[int, int],
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+) -> None:
     for relative_path in ("PROVENANCE.md", "THIRD_PARTY_NOTICES.md", "docs/compliance/CLEAN_ROOM_POLICY.md"):
-        if not (root / relative_path).is_file():
-            findings.append(_finding("COMPLIANCE_FILE_MISSING", "ERROR", "Required compliance file is missing.", relative_path))
+        try:
+            _read_verified_bytes(root, relative_path, root_identity)
+        except FileNotFoundError:
+            blocked_paths.add(_path_key(relative_path))
+            _append_once(
+                findings,
+                _finding("COMPLIANCE_FILE_MISSING", "ERROR", "Required compliance file is missing.", relative_path),
+            )
+        except OSError as exc:
+            _record_verified_error(findings, blocked_paths, relative_path, exc)
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_file(
+    path: Path,
+    *,
+    root: Path,
+    root_identity: tuple[int, int],
+) -> str:
+    try:
+        relative_path = path.relative_to(root)
+    except ValueError as exc:
+        raise _PathSafetyError("Repository file path is outside the repository.", path) from exc
+    file_descriptor = _open_verified_regular_file(root, relative_path, root_identity)
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+    try:
+        while chunk := os.read(file_descriptor, 1024 * 1024):
             digest.update(chunk)
+    finally:
+        os.close(file_descriptor)
     return digest.hexdigest()
 
 
@@ -263,7 +477,8 @@ def _directory_metadata(
     try:
         metadata = os.lstat(path)
     except OSError:
-        findings.append(
+        _append_once(
+            findings,
             _finding(
                 "COMPLIANCE_SCAN_FAILED",
                 "ERROR",
@@ -273,7 +488,8 @@ def _directory_metadata(
         )
         return None
     if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
-        findings.append(
+        _append_once(
+            findings,
             _finding(
                 "COMPLIANCE_PATH_UNSAFE",
                 "ERROR",
@@ -285,7 +501,8 @@ def _directory_metadata(
     if not stat.S_ISDIR(metadata.st_mode) or (
         expected_identity is not None and _identity(metadata) != expected_identity
     ):
-        findings.append(
+        _append_once(
+            findings,
             _finding(
                 "COMPLIANCE_PATH_UNSAFE",
                 "ERROR",
@@ -297,15 +514,34 @@ def _directory_metadata(
     return metadata
 
 
+def _detect_root_license(
+    root: Path,
+    root_identity: tuple[int, int],
+    findings: list[ComplianceFinding],
+    blocked_paths: set[str],
+) -> bool:
+    has_license = False
+    for relative_path in LICENSE_NAMES:
+        try:
+            file_descriptor = _open_verified_regular_file(root, relative_path, root_identity)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _record_verified_error(findings, blocked_paths, relative_path, exc)
+        else:
+            os.close(file_descriptor)
+            has_license = True
+    return has_license
+
+
 def _scan_restricted_material(
     root: Path,
+    root_identity: tuple[int, int],
     restricted_hashes: frozenset[str],
+    blocked_paths: set[str],
     findings: list[ComplianceFinding],
 ) -> None:
-    root_metadata = _directory_metadata(root, Path("."), None, findings)
-    if root_metadata is None:
-        return
-    pending = [(root, Path("."), _identity(root_metadata))]
+    pending = [(root, Path("."), root_identity)]
     while pending:
         current, current_relative, expected_identity = pending.pop()
         if _directory_metadata(current, current_relative, expected_identity, findings) is None:
@@ -314,7 +550,8 @@ def _scan_restricted_material(
             with os.scandir(current) as iterator:
                 entries = sorted(iterator, key=lambda item: item.name.casefold())
         except OSError:
-            findings.append(
+            _append_once(
+                findings,
                 _finding(
                     "COMPLIANCE_SCAN_FAILED",
                     "ERROR",
@@ -333,7 +570,8 @@ def _scan_restricted_material(
             try:
                 metadata = entry.stat(follow_symlinks=False)
             except OSError:
-                findings.append(
+                _append_once(
+                    findings,
                     _finding(
                         "COMPLIANCE_SCAN_FAILED",
                         "ERROR",
@@ -343,7 +581,8 @@ def _scan_restricted_material(
                 )
                 continue
             if stat.S_ISLNK(metadata.st_mode) or _has_reparse_attribute(metadata):
-                findings.append(
+                _append_once(
+                    findings,
                     _finding(
                         "COMPLIANCE_PATH_UNSAFE",
                         "ERROR",
@@ -356,7 +595,8 @@ def _scan_restricted_material(
                 is_directory = entry.is_dir(follow_symlinks=False)
                 is_file = entry.is_file(follow_symlinks=False)
             except OSError:
-                findings.append(
+                _append_once(
+                    findings,
                     _finding(
                         "COMPLIANCE_SCAN_FAILED",
                         "ERROR",
@@ -365,8 +605,13 @@ def _scan_restricted_material(
                     )
                 )
                 continue
-            if is_directory != stat.S_ISDIR(metadata.st_mode) or is_file != stat.S_ISREG(metadata.st_mode):
-                findings.append(
+            metadata_is_directory = stat.S_ISDIR(metadata.st_mode)
+            metadata_is_file = stat.S_ISREG(metadata.st_mode)
+            if (
+                not metadata_is_directory and not metadata_is_file
+            ) or is_directory != metadata_is_directory or is_file != metadata_is_file:
+                _append_once(
+                    findings,
                     _finding(
                         "COMPLIANCE_PATH_UNSAFE",
                         "ERROR",
@@ -381,12 +626,27 @@ def _scan_restricted_material(
                 if directory_metadata is not None:
                     pending.append((path, relative_path, _identity(directory_metadata)))
                 continue
+            if _path_key(relative_path) in blocked_paths:
+                continue
             restricted_by_path = bool(FORBIDDEN_PATH_SEGMENTS.intersection(casefolded_parts))
             restricted_by_name = entry.name.casefold() in RESTRICTED_ARCHIVE_NAMES
             try:
-                restricted_by_hash = _sha256_file(path).casefold() in restricted_hashes
+                restricted_by_hash = _sha256_file(
+                    path,
+                    root=root,
+                    root_identity=root_identity,
+                ).casefold() in restricted_hashes
+            except _PathSafetyError as exc:
+                blocked_paths.add(_path_key(relative_path))
+                _append_once(
+                    findings,
+                    _finding("COMPLIANCE_PATH_UNSAFE", "ERROR", exc.finding_message, exc.relative_path),
+                )
+                continue
             except OSError:
-                findings.append(
+                blocked_paths.add(_path_key(relative_path))
+                _append_once(
+                    findings,
                     _finding(
                         "COMPLIANCE_FILE_UNREADABLE",
                         "ERROR",
@@ -396,7 +656,8 @@ def _scan_restricted_material(
                 )
                 continue
             if restricted_by_path or restricted_by_name or restricted_by_hash:
-                findings.append(
+                _append_once(
+                    findings,
                     _finding(
                         "RESTRICTED_MATERIAL_TRACKED",
                         "ERROR",
@@ -410,13 +671,40 @@ def check_repository(root: Path, *, release: bool = False) -> ComplianceReport:
     """Check a repository without changing any file or directory beneath it."""
     root = Path(root)
     findings: list[ComplianceFinding] = []
-    has_license = any((root / name).is_file() for name in LICENSE_NAMES)
-    _validate_required_documents(root, findings)
-    restricted_hashes = _validate_provenance(root, has_license, findings)
-    _validate_components(root, findings)
-    _scan_restricted_material(root, restricted_hashes, findings)
+    root_guard = _preflight_root(root, findings)
+    if root_guard is None:
+        if release:
+            _append_once(
+                findings,
+                _finding(
+                    "PROJECT_LICENSE_REQUIRED",
+                    "ERROR",
+                    "A versioned project-license decision is required for release.",
+                ),
+            )
+        return ComplianceReport(tuple(findings))
+    root, root_identity = root_guard
+    blocked_paths: set[str] = set()
+    has_license = _detect_root_license(root, root_identity, findings, blocked_paths)
+    _validate_required_documents(root, root_identity, findings, blocked_paths)
+    restricted_hashes = _validate_provenance(
+        root,
+        has_license,
+        root_identity,
+        findings,
+        blocked_paths,
+    )
+    _validate_components(root, root_identity, findings, blocked_paths)
+    _scan_restricted_material(
+        root,
+        root_identity,
+        restricted_hashes,
+        blocked_paths,
+        findings,
+    )
     if release:
-        findings.append(
+        _append_once(
+            findings,
             _finding(
                 "PROJECT_LICENSE_REQUIRED",
                 "ERROR",
@@ -424,7 +712,10 @@ def check_repository(root: Path, *, release: bool = False) -> ComplianceReport:
             )
         )
     elif not has_license:
-        findings.append(_finding("PROJECT_LICENSE_UNDECIDED", "WARNING", "Root project license remains undecided."))
+        _append_once(
+            findings,
+            _finding("PROJECT_LICENSE_UNDECIDED", "WARNING", "Root project license remains undecided."),
+        )
     return ComplianceReport(tuple(findings))
 
 
