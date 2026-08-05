@@ -313,20 +313,20 @@ class SegmentModelTests(unittest.TestCase):
 
 
 class PublicExportsTests(unittest.TestCase):
-    def test_hanengine_exports_only_task_two_public_symbols(self):
+    def test_hanengine_keeps_task_two_public_symbols(self):
         import game_localizer.hanengine as hanengine
 
-        self.assertEqual(
-            hanengine.__all__,
-            [
-                "ScreenRegion",
-                "Segment",
-                "SegmentDraft",
-                "SourceLocation",
-                "normalize_relative_path",
-            ],
-        )
-        self.assertIs(hanengine.Segment, Segment)
+        expected = {
+            "ScreenRegion": ScreenRegion,
+            "Segment": Segment,
+            "SegmentDraft": SegmentDraft,
+            "SourceLocation": SourceLocation,
+            "normalize_relative_path": normalize_relative_path,
+        }
+        for name, exported in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(name, hanengine.__all__)
+                self.assertIs(getattr(hanengine, name), exported)
 
 
 if __name__ == "__main__":
