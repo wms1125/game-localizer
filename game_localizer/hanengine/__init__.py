@@ -17,9 +17,24 @@ from .routing import (
     RuleMatch,
     SignalType,
 )
+from .tasks import (
+    Artifact,
+    ArtifactKind,
+    EventType,
+    StepResult,
+    StepState,
+    TaskEvent,
+    TaskPlan,
+    TaskProgress,
+    TaskState,
+    TaskStep,
+)
 
 __all__ = [
+    "Artifact",
+    "ArtifactKind",
     "EvaluationStatus",
+    "EventType",
     "HanGuard",
     "HanGuardRule",
     "RiskLevel",
@@ -33,5 +48,12 @@ __all__ = [
     "SegmentDraft",
     "SignalType",
     "SourceLocation",
+    "StepResult",
+    "StepState",
+    "TaskEvent",
+    "TaskPlan",
+    "TaskProgress",
+    "TaskState",
+    "TaskStep",
     "normalize_relative_path",
 ]
