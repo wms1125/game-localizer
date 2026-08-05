@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 完成 HanEngine 首个实施周期：先锁定基准资产清单、HanGuard 风险样本与适配器契约测试骨架，再建立无 GUI 的 `HanCore`、`Segment`、`RoutePlan`、`HanTask` 和 `HanStore`，同时保证现有 99 项测试不退化。
+**Goal:** 完成 HanEngine 首个实施周期：先锁定基准资产清单、HanGuard 风险样本与适配器契约测试骨架，再建立无 GUI 的 `HanCore`、`Segment`、`RoutePlan`、`HanTask` 和 `HanStore`，同时保证 Phase 0 后冻结的 146 项基线测试（含原有 99 项应用测试）不退化。
 
 **Architecture:** 在现有 `game_localizer` 包旁新增独立的 `game_localizer.hanengine` 基础层。适配器契约继续位于 `game_localizer.adapters`，但不改动当前只读检测适配器；`HanGuard` 先以纯函数式规则评估生成路线，`HanTask` 以同步可协作取消的运行器产生结构化事件，`HanStore` 以全局索引数据库加每项目独立 SQLite 数据库持久化，`HanCore` 只负责校验项目边界、规范化文本段、执行路线授权和编排任务。
 
@@ -86,7 +86,7 @@
 - `tests.adapter_contract_v1.AdapterV1ContractMixin` 要求子类实现 `make_adapter()` 和 `make_detection_request()`；本任务只建立可复用测试骨架，不实现具体适配器。
 - `tests.adapter_contract_v1.AdapterV1ContractMixin` 还要求 `make_unmatched_detection_request()`；匹配与未匹配请求必须走无条件、互不替代的断言路径。
 
-- [ ] **Step 0: Verify the original regression baseline**
+- [ ] **Step 0: Freeze the post-Phase 0 regression baseline**
 
 Run:
 
@@ -94,7 +94,7 @@ Run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: exactly the original 99 tests run, all pass, and the summary contains no skipped tests. Record this count as the immutable regression baseline for every later task.
+Expected: exactly 146 tests run and pass with no skipped tests: the original 99 application tests, 37 compliance tests, and 10 SBOM tests. Record this post-Phase 0 count as the immutable regression baseline for every later task; the original 99 application tests remain individually protected from regression.
 
 - [ ] **Step 1: Write failing benchmark manifest tests**
 
@@ -422,7 +422,7 @@ Immediately before staging, run the complete regression gate:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all Task 1 tests pass, and no existing or new test is skipped.
+Expected: the frozen 146-test post-Phase 0 baseline plus all Task 1 tests pass, and no existing or new test is skipped.
 
 ```powershell
 git add .gitattributes benchmarks/README.md benchmarks/LICENSE benchmarks/*.json tools/generate_benchmark_manifests.py tests/test_benchmark_manifests.py tests/adapter_contract_v1.py
@@ -649,7 +649,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 2 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 2 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine tests/test_hanengine_segments.py
@@ -1014,7 +1014,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 3 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 3 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/routing.py game_localizer/hanengine/__init__.py tests/test_hanguard_routing.py
@@ -1201,7 +1201,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 4 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 4 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/tasks.py game_localizer/hanengine/__init__.py tests/test_hantask_models.py
@@ -1377,7 +1377,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 5 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 5 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/tasks.py game_localizer/hanengine/__init__.py tests/test_hantask_runner.py
@@ -1804,7 +1804,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 6 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 6 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/adapters/contract.py tests/test_adapter_contract.py docs/superpowers/specs/2026-08-05-hanengine-adapter-contract.md
@@ -2026,7 +2026,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 7 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 7 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/store.py game_localizer/hanengine/__init__.py tests/test_hanstore.py
@@ -2166,7 +2166,7 @@ Immediately before staging, run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus all tests added through Task 8 pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus all tests added through Task 8 pass, with no skipped tests.
 
 ```powershell
 git add game_localizer/hanengine/core.py game_localizer/hanengine/__init__.py tests/test_hancore.py
@@ -2229,7 +2229,7 @@ Run:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus every new foundation test pass; no existing or new test is skipped or removed to obtain a green run.
+Expected: the frozen 146-test post-Phase 0 baseline plus every new foundation test pass; no existing or new test is skipped or removed to obtain a green run.
 
 - [ ] **Step 5: Inspect the diff for accidental scope expansion**
 
@@ -2271,7 +2271,7 @@ Immediately before staging, rerun:
 python -m unittest discover -s tests -v
 ```
 
-Expected: the original 99 tests plus every foundation test pass, with no skipped tests.
+Expected: the frozen 146-test post-Phase 0 baseline plus every foundation test pass, with no skipped tests.
 
 ```powershell
 git add README.md
@@ -2293,7 +2293,7 @@ The first implementation cycle is complete only when all of the following are tr
 - task events are ordered, live-consumable, cancellable, retryable, and free of restricted data;
 - adapter-emitted progress uses the same TaskContext and monotonic task-wide event sequence as runner events;
 - Python compilation succeeds;
-- the original 99 tests and all added tests pass together;
+- the frozen 146-test post-Phase 0 baseline and all added foundation tests pass together, and the original 99 application tests within that baseline do not regress;
 - no existing or new test is skipped to obtain a green run;
 - benchmark JSON is canonical UTF-8 without BOM, uses LF bytes on every host, `git check-attr` reports `text: set` and `eol: lf`, and `--check` compares bytes without writing;
 - no OCR, Ren'Py writeback, cloud translation, backup/rollback, packaged-game modification or GUI code has entered this cycle.
