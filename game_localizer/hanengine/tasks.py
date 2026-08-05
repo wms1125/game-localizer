@@ -4,9 +4,10 @@ import json
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import TypeVar
+from threading import Condition
+from typing import Callable, TypeVar
 
 from .routing import RouteOperation
 from .segments import JsonValue, normalize_relative_path
@@ -531,15 +532,365 @@ class StepResult:
         )
 
 
+class TaskCancelled(RuntimeError):
+    pass
+
+
+class TaskControl:
+    def __init__(self) -> None:
+        self._condition = Condition()
+        self._paused = False
+        self._cancelled = False
+
+    def pause(self) -> None:
+        with self._condition:
+            self._paused = True
+
+    def resume(self) -> None:
+        with self._condition:
+            self._paused = False
+            self._condition.notify_all()
+
+    def cancel(self) -> None:
+        with self._condition:
+            self._cancelled = True
+            self._condition.notify_all()
+
+    def is_cancelled(self) -> bool:
+        with self._condition:
+            return self._cancelled
+
+    def checkpoint(self) -> None:
+        with self._condition:
+            while self._paused and not self._cancelled:
+                self._condition.wait()
+            if self._cancelled:
+                raise TaskCancelled("task cancelled")
+
+
+EventSink = Callable[[TaskEvent], None]
+ContextEventEmitter = Callable[
+    [str, str, EventType, str, TaskProgress | None, dict[str, JsonValue]],
+    TaskEvent,
+]
+
+
+class TaskContext:
+    def __init__(
+        self,
+        task_id: str,
+        step_id: str,
+        control: TaskControl,
+        emit_event: ContextEventEmitter,
+    ):
+        self._task_id = _require_string(task_id, "task_id")
+        self._step_id = _require_string(step_id, "step_id")
+        if not isinstance(control, TaskControl):
+            raise TypeError("control must be a TaskControl")
+        if not callable(emit_event):
+            raise TypeError("emit_event must be callable")
+        self._control = control
+        self._emit_event = emit_event
+        self._emitted_artifacts: list[Artifact] = []
+
+    @property
+    def task_id(self) -> str:
+        return self._task_id
+
+    @property
+    def step_id(self) -> str:
+        return self._step_id
+
+    def progress(
+        self,
+        completed: int,
+        total: int | None,
+        *,
+        current_item: str | None = None,
+        data: dict[str, JsonValue] | None = None,
+    ) -> None:
+        progress = TaskProgress(completed, total, current_item)
+        self._emit_event(
+            self._task_id,
+            self._step_id,
+            EventType.PROGRESS,
+            "step progress",
+            progress,
+            {} if data is None else data,
+        )
+
+    def log(
+        self,
+        summary: str,
+        data: dict[str, JsonValue] | None = None,
+    ) -> None:
+        self._emit_event(
+            self._task_id,
+            self._step_id,
+            EventType.LOG,
+            summary,
+            None,
+            {} if data is None else data,
+        )
+
+    def warning(
+        self,
+        summary: str,
+        data: dict[str, JsonValue] | None = None,
+    ) -> None:
+        self._emit_event(
+            self._task_id,
+            self._step_id,
+            EventType.WARNING,
+            summary,
+            None,
+            {} if data is None else data,
+        )
+
+    def artifact(self, artifact: Artifact) -> None:
+        if not isinstance(artifact, Artifact):
+            raise TypeError("artifact must be an Artifact")
+        if artifact.task_id != self._task_id:
+            raise ValueError("artifact task_id must match the context")
+        if artifact.step_id != self._step_id:
+            raise ValueError("artifact step_id must match the context")
+        self._emit_event(
+            self._task_id,
+            self._step_id,
+            EventType.ARTIFACT,
+            "artifact created",
+            None,
+            {"artifact": artifact.to_dict()},
+        )
+        self._emitted_artifacts.append(Artifact.from_dict(artifact.to_dict()))
+
+    def checkpoint(self) -> None:
+        self._control.checkpoint()
+
+
+StepHandler = Callable[[TaskContext], StepResult]
+
+
+class TaskRunner:
+    def __init__(self, event_sink: EventSink):
+        if not callable(event_sink):
+            raise TypeError("event_sink must be callable")
+        self._event_sink = event_sink
+
+    def run(
+        self,
+        plan: TaskPlan,
+        handlers: Mapping[str, StepHandler],
+        control: TaskControl | None = None,
+    ) -> TaskPlan:
+        self._validate_invocation(plan, handlers, control)
+        task_control = TaskControl() if control is None else control
+        sequence = 0
+
+        def emit_event(
+            task_id: str,
+            step_id: str | None,
+            event_type: EventType,
+            summary: str,
+            progress: TaskProgress | None,
+            data: dict[str, JsonValue],
+        ) -> TaskEvent:
+            nonlocal sequence
+            next_sequence = sequence + 1
+            event = TaskEvent(
+                task_id=task_id,
+                step_id=step_id,
+                sequence=next_sequence,
+                event_type=event_type,
+                timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                summary=summary,
+                progress=progress,
+                data=data,
+            )
+            sequence = next_sequence
+            self._event_sink(event)
+            return event
+
+        emit_event(
+            plan.task_id,
+            None,
+            EventType.QUEUED,
+            "task queued",
+            None,
+            {},
+        )
+        plan.state = TaskState.RUNNING
+        emit_event(
+            plan.task_id,
+            None,
+            EventType.STARTED,
+            "task started",
+            None,
+            {},
+        )
+
+        for step_index, step in enumerate(plan.steps):
+            context = TaskContext(
+                plan.task_id,
+                step.step_id,
+                task_control,
+                emit_event,
+            )
+            while True:
+                try:
+                    task_control.checkpoint()
+                except TaskCancelled:
+                    return self._cancel(plan, step_index, emit_event)
+
+                step.attempt += 1
+                step.state = StepState.RUNNING
+                plan.state = TaskState.RUNNING
+                try:
+                    result = handlers[step.step_id](context)
+                    if not isinstance(result, StepResult):
+                        raise TypeError("handler must return a StepResult")
+                    for artifact in result.artifacts:
+                        if artifact not in context._emitted_artifacts:
+                            raise ValueError(
+                                "returned artifacts must be emitted through the context"
+                            )
+                except TaskCancelled:
+                    return self._cancel(plan, step_index, emit_event)
+                except Exception as exc:
+                    failure_data = {"exception_type": type(exc).__name__}
+                    if step.attempt <= step.max_retries:
+                        step.state = StepState.RETRYING
+                        plan.state = TaskState.RETRYING
+                        emit_event(
+                            plan.task_id,
+                            step.step_id,
+                            EventType.RETRYING,
+                            "step failed",
+                            None,
+                            failure_data,
+                        )
+                        continue
+                    step.state = StepState.FAILED
+                    plan.state = TaskState.FAILED
+                    emit_event(
+                        plan.task_id,
+                        step.step_id,
+                        EventType.FAILED,
+                        "step failed",
+                        None,
+                        failure_data,
+                    )
+                    return plan
+
+                unique_artifacts: list[Artifact] = []
+                artifact_ids: set[str] = set()
+                for artifact in result.artifacts:
+                    if artifact.artifact_id not in artifact_ids:
+                        artifact_ids.add(artifact.artifact_id)
+                        unique_artifacts.append(artifact)
+                completion = StepResult(
+                    artifacts=tuple(unique_artifacts),
+                    data=result.data,
+                )
+                step.state = StepState.COMPLETED
+                emit_event(
+                    plan.task_id,
+                    step.step_id,
+                    EventType.COMPLETED,
+                    "step completed",
+                    None,
+                    completion.to_dict(),
+                )
+                break
+
+        plan.state = TaskState.COMPLETED
+        emit_event(
+            plan.task_id,
+            None,
+            EventType.COMPLETED,
+            "task completed",
+            None,
+            {},
+        )
+        return plan
+
+    def _validate_invocation(
+        self,
+        plan: TaskPlan,
+        handlers: Mapping[str, StepHandler],
+        control: TaskControl | None,
+    ) -> None:
+        if not isinstance(plan, TaskPlan):
+            raise TypeError("plan must be a TaskPlan")
+        if plan.state is not TaskState.QUEUED:
+            raise ValueError("plan must be queued")
+        if not isinstance(handlers, Mapping):
+            raise TypeError("handlers must be a mapping")
+        if control is not None and not isinstance(control, TaskControl):
+            raise TypeError("control must be a TaskControl or None")
+
+        step_ids: list[str] = []
+        for step in plan.steps:
+            if not isinstance(step.step_id, str) or not step.step_id:
+                raise ValueError("step IDs must not be empty")
+            if step.step_id in step_ids:
+                raise ValueError("step IDs must be unique")
+            step_ids.append(step.step_id)
+
+        for step_id in step_ids:
+            if step_id not in handlers:
+                raise ValueError("every step must have a handler")
+            if not callable(handlers[step_id]):
+                raise TypeError("step handlers must be callable")
+
+    @staticmethod
+    def _cancel(
+        plan: TaskPlan,
+        active_index: int,
+        emit_event: Callable[
+            [
+                str,
+                str | None,
+                EventType,
+                str,
+                TaskProgress | None,
+                dict[str, JsonValue],
+            ],
+            TaskEvent,
+        ],
+    ) -> TaskPlan:
+        plan.steps[active_index].state = StepState.CANCELLED
+        for step in plan.steps[active_index + 1 :]:
+            if step.state is StepState.QUEUED:
+                step.state = StepState.CANCELLED
+        plan.state = TaskState.CANCELLED
+        emit_event(
+            plan.task_id,
+            None,
+            EventType.CANCELLED,
+            "task cancelled",
+            None,
+            {},
+        )
+        return plan
+
+
 __all__ = [
     "Artifact",
     "ArtifactKind",
+    "ContextEventEmitter",
+    "EventSink",
     "EventType",
+    "StepHandler",
     "StepResult",
     "StepState",
+    "TaskCancelled",
+    "TaskContext",
+    "TaskControl",
     "TaskEvent",
     "TaskPlan",
     "TaskProgress",
+    "TaskRunner",
     "TaskState",
     "TaskStep",
 ]
