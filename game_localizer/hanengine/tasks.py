@@ -160,6 +160,8 @@ def _typed_tuple(value: object, item_type: type, field_name: str) -> tuple:
 
 
 def _validate_json_value(value: object) -> None:
+    if callable(value):
+        raise ValueError("callable values are not permitted")
     if value is None or isinstance(value, (bool, int, str)):
         return
     if isinstance(value, float):
@@ -172,10 +174,12 @@ def _validate_json_value(value: object) -> None:
         return
     if isinstance(value, dict):
         for key, item in value.items():
+            if callable(key):
+                raise ValueError("callable JSON object keys are not permitted")
             if not isinstance(key, str):
                 raise ValueError("JSON object keys must be strings")
-            if key.casefold() in _RESERVED_KEYS:
-                raise ValueError(f"reserved key is not permitted: {key}")
+            if str.casefold(key) in _RESERVED_KEYS:
+                raise ValueError("reserved key is not permitted")
             _validate_json_value(item)
         return
     raise ValueError("value is not a JSON value")

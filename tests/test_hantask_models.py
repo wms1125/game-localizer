@@ -351,6 +351,85 @@ class JsonPayloadTests(unittest.TestCase):
                     with self.assertRaises((TypeError, ValueError)):
                         builder(payload)
 
+    def test_payloads_reject_callable_json_subclasses_during_construction(self):
+        class CallableInt(int):
+            def __call__(self):
+                return int(self)
+
+        class CallableStr(str):
+            def __call__(self):
+                return str(self)
+
+        class CallableList(list):
+            def __call__(self):
+                return list(self)
+
+        class CallableDict(dict):
+            def __call__(self):
+                return dict(self)
+
+        invalid_payloads = (
+            CallableDict({"ok": 1}),
+            {"nested": CallableInt(7)},
+            {"nested": CallableStr("value")},
+            {"nested": CallableList([1])},
+            {"nested": CallableDict({"ok": 1})},
+            {CallableStr("label"): "value"},
+        )
+        builders = (
+            lambda value: make_event(data=value),
+            lambda value: make_artifact(metadata=value),
+            lambda value: StepResult(data=value),
+        )
+        for payload in invalid_payloads:
+            for builder in builders:
+                with self.subTest(payload=payload, builder=builder):
+                    with self.assertRaises(ValueError):
+                        builder(payload)
+
+    def test_payloads_do_not_trust_overridden_string_casefold(self):
+        class MisleadingKey(str):
+            def casefold(self):
+                return "harmless"
+
+        key = MisleadingKey("ToKeN")
+        self.assertFalse(callable(key))
+        for builder in (
+            lambda value: make_event(data=value),
+            lambda value: make_artifact(metadata=value),
+            lambda value: StepResult(data=value),
+        ):
+            with self.subTest(builder=builder), self.assertRaises(ValueError):
+                builder({key: "sensitive"})
+
+    def test_payloads_preserve_safe_non_callable_json_subclasses(self):
+        class SafeInt(int):
+            pass
+
+        class SafeStr(str):
+            pass
+
+        class SafeList(list):
+            pass
+
+        class SafeDict(dict):
+            pass
+
+        payload = SafeDict(
+            {SafeStr("label"): SafeList([SafeInt(7), SafeStr("value")])}
+        )
+        for model in (
+            make_event(data=payload),
+            make_artifact(metadata=payload),
+            StepResult(data=payload),
+        ):
+            stored = model.data if hasattr(model, "data") else model.metadata
+            self.assertEqual(stored, {"label": [7, "value"]})
+            self.assertIs(type(next(iter(stored))), str)
+            self.assertIs(type(stored["label"]), list)
+            self.assertIs(type(stored["label"][0]), int)
+            self.assertIs(type(stored["label"][1]), str)
+
 
 class StepResultTests(unittest.TestCase):
     def test_step_result_round_trips_and_copies_ordered_artifacts(self):
