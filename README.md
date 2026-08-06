@@ -34,6 +34,21 @@ Phase 1 **仅扫描文件名和目录结构**，用于识别 Ren'Py、RPG Maker 
 
 原有的单文件翻译命令仍然可用，例如 `python cli.py game.json dictionary.json`；它们仅面向前述受支持的明文资源，且同样只应处理你拥有合法权利或已获授权修改的内容。
 
+## HanEngine 基础（Foundation）
+
+HanEngine 是当前版本的内部基础层，不改变现有单文件翻译器的使用方式。此周期已实现：固定基准清单、Adapter v1 类型与契约测试、两阶段 HanGuard 路由、无头 HanTask 事件与运行器、项目隔离的 SQLite 存储，以及 HanCore 的路由强制和任务事件/产物持久化。
+
+此周期尚未实现：Ren'Py 提取与回写、OCR/原位置视觉替换、云端翻译、TTS、封包游戏修改、备份/回滚，以及新的双模式 GUI。任何命令都不承诺修改封包游戏。
+
+可运行以下发布门禁：
+
+```powershell
+python tools/generate_benchmark_manifests.py --check
+python -m unittest discover -s tests -v
+```
+
+只处理你合法拥有或已获明确授权的资源；本项目不提供破解、解密、DRM 绕过、注入、内存钩子或协议拦截能力。`benchmarks/LICENSE` 的 CC0-1.0 仅适用于仓库自有的合成基准内容；仓库根许可证仍为未决状态，且不包含第三方代码或资产。
+
 ## 翻译字典
 
 字典必须是 UTF-8 编码的 JSON 对象：键是原文，值是简体中文译文。例如：
