@@ -36,16 +36,27 @@ from .tasks import (
     TaskState,
     TaskStep,
 )
+from .store import (
+    Checkpoint,
+    HanStore,
+    ProjectRecord,
+    ProjectStore,
+    default_data_root,
+)
 
 __all__ = [
     "Artifact",
     "ArtifactKind",
+    "Checkpoint",
     "ContextEventEmitter",
     "EvaluationStatus",
     "EventSink",
     "EventType",
     "HanGuard",
     "HanGuardRule",
+    "HanStore",
+    "ProjectRecord",
+    "ProjectStore",
     "RiskLevel",
     "RiskSignal",
     "RouteOperation",
@@ -69,5 +80,6 @@ __all__ = [
     "TaskRunner",
     "TaskState",
     "TaskStep",
+    "default_data_root",
     "normalize_relative_path",
 ]
