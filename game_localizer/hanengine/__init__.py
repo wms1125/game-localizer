@@ -43,6 +43,7 @@ from .store import (
     ProjectStore,
     default_data_root,
 )
+from .core import HanCore, RouteBlockedError, SegmentConflictError
 
 __all__ = [
     "Artifact",
@@ -54,9 +55,11 @@ __all__ = [
     "EventType",
     "HanGuard",
     "HanGuardRule",
+    "HanCore",
     "HanStore",
     "ProjectRecord",
     "ProjectStore",
+    "RouteBlockedError",
     "RiskLevel",
     "RiskSignal",
     "RouteOperation",
@@ -80,6 +83,7 @@ __all__ = [
     "TaskRunner",
     "TaskState",
     "TaskStep",
+    "SegmentConflictError",
     "default_data_root",
     "normalize_relative_path",
 ]

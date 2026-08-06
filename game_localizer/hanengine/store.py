@@ -230,10 +230,16 @@ def _initialize_project(connection: sqlite3.Connection, record: ProjectRecord) -
         connection.execute("INSERT INTO schema_info(version) VALUES (?)", (_SCHEMA_VERSION,))
     elif row[0] != _SCHEMA_VERSION:
         raise RuntimeError(f"unsupported project schema version: {row[0]}")
-    connection.execute(
-        "INSERT OR REPLACE INTO project_meta(project_id,name,created_at) VALUES (?,?,?)",
-        (record.project_id, record.name, record.created_at),
-    )
+    meta = connection.execute(
+        "SELECT project_id,name,created_at FROM project_meta LIMIT 1"
+    ).fetchone()
+    if meta is not None and tuple(meta) != (record.project_id, record.name, record.created_at):
+        raise ValueError("project database identity does not match the project index")
+    if meta is None:
+        connection.execute(
+            "INSERT INTO project_meta(project_id,name,created_at) VALUES (?,?,?)",
+            (record.project_id, record.name, record.created_at),
+        )
     connection.commit()
 
 
@@ -260,6 +266,8 @@ class HanStore:
     ) -> ProjectRecord:
         project_id = str(uuid.uuid4()) if project_id is None else _require_project_id(project_id)
         name = _require_text(name, "name")
+        if source_root is not None and not isinstance(source_root, Path):
+            raise TypeError("source_root must be a Path or None")
         source = None if source_root is None else str(source_root.resolve(strict=False))
         created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         record = ProjectRecord(project_id, name, source, created_at)
@@ -327,8 +335,13 @@ class ProjectStore:
         self._path = path.resolve(strict=False)
         self._record = record
         self._connection = sqlite3.connect(self._path)
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        _initialize_project(self._connection, record)
+        try:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            _initialize_project(self._connection, record)
+        except Exception:
+            self._connection.close()
+            self._connection = None
+            raise
 
     @property
     def project_id(self) -> str:
