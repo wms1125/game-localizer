@@ -39,15 +39,149 @@ from .tasks import (
 from .store import (
     Checkpoint,
     HanStore,
+    ProjectBusyError,
+    ProjectLease,
+    ProjectLockRecord,
     ProjectRecord,
     ProjectStore,
+    TaskRetrySpec,
+    TaskStatus,
     default_data_root,
 )
 from .core import HanCore, RouteBlockedError, SegmentConflictError
+from .backup import BackupEntry, BackupManifest, BackupManager
+from .packaging import (
+    PackageApplyResult,
+    PackageBuildResult,
+    UnsafePackageError,
+    ZipPackageModifier,
+)
+from .renpy import (
+    RenPyBuildResult,
+    RenPyCatalog,
+    RenPyExtractor,
+    RenPySegment,
+    RenPyValidationError,
+    RenPyWriter,
+    renpy_language_identifier,
+    renpy_project_files,
+    validate_renpy_translation_text,
+)
+from .translation import (
+    CloudTranslationProvider,
+    DictionaryTranslationProvider,
+    HttpResponse,
+    TranslationNotFoundError,
+    TranslationProvider,
+    TranslationProviderError,
+    TranslationRequest,
+    TranslationResult,
+    TranslationRouter,
+)
+from .pipeline import (
+    HanPipelineV1,
+    PipelineTranslationError,
+    PipelineTranslationFailed,
+    PipelineTranslationOutcome,
+)
+from .tts import CloudTtsProvider, TtsProviderError, TtsRequest, TtsResult, WindowsSapiTts
+from .visual import (
+    OcrBox,
+    OcrFrame,
+    OverlayText,
+    PillowScreenCapture,
+    PytesseractOcrProvider,
+    TkOverlayWindow,
+    VisualReplacementEngine,
+    VisualReplacementSession,
+)
+from .auth import (
+    AUTH_SCHEMA_VERSION,
+    AuthError,
+    AuthSession,
+    AuthUser,
+    PASSWORD_ITERATIONS,
+    SESSION_TTL,
+    UserStore,
+)
+from .multiengine import (
+    GodotExtractor,
+    LocalizationCatalog,
+    LocalizationEntry,
+    MultiEngineBuildResult,
+    MultiEngineError,
+    MultiEngineExtractor,
+    MultiEngineWriter,
+    RpgMakerExtractor,
+    UnityExtractor,
+    UnrealExtractor,
+    extract_placeholders,
+    validate_resource_syntax,
+)
+
+_ADAPTER_RUNTIME_EXPORTS = frozenset(
+    {
+        "AdapterAmbiguityError",
+        "AdapterNotDetectedError",
+        "AdapterRegistryV1",
+        "AdapterRequest",
+        "AdapterRequestFactory",
+        "AdapterResult",
+        "AdapterRuntimeError",
+        "AdapterRuntimeV1",
+        "AdapterSelection",
+        "AdapterTaskExecution",
+        "AdapterTaskFailedError",
+    }
+)
+_VALIDATION_EXPORTS = frozenset(
+    {
+        "OfficialValidatorConfig",
+        "ProjectValidationError",
+        "ProjectValidationRecord",
+        "ProjectValidationRequest",
+        "ProjectValidationRunner",
+        "VALIDATION_SCHEMA_VERSION",
+        "renpy_sdk_validator",
+        "run_official_validator",
+        "tree_sha256",
+        "validate_font_coverage",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _ADAPTER_RUNTIME_EXPORTS:
+        from . import adapter_runtime
+
+        value = getattr(adapter_runtime, name)
+        globals()[name] = value
+        return value
+    if name in _VALIDATION_EXPORTS:
+        from . import validation
+
+        value = getattr(validation, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "Artifact",
     "ArtifactKind",
+    "AdapterAmbiguityError",
+    "AdapterNotDetectedError",
+    "AdapterRegistryV1",
+    "AdapterRequest",
+    "AdapterRequestFactory",
+    "AdapterResult",
+    "AdapterRuntimeError",
+    "AdapterRuntimeV1",
+    "AdapterSelection",
+    "AdapterTaskExecution",
+    "AdapterTaskFailedError",
+    "BackupEntry",
+    "BackupManifest",
+    "BackupManager",
     "Checkpoint",
     "ContextEventEmitter",
     "EvaluationStatus",
@@ -56,9 +190,17 @@ __all__ = [
     "HanGuard",
     "HanGuardRule",
     "HanCore",
+    "HanPipelineV1",
     "HanStore",
+    "ProjectBusyError",
+    "ProjectLease",
+    "ProjectLockRecord",
     "ProjectRecord",
     "ProjectStore",
+    "TaskRetrySpec",
+    "TaskStatus",
+    "PackageApplyResult",
+    "PackageBuildResult",
     "RouteBlockedError",
     "RiskLevel",
     "RiskSignal",
@@ -84,6 +226,71 @@ __all__ = [
     "TaskState",
     "TaskStep",
     "SegmentConflictError",
+    "RenPyBuildResult",
+    "RenPyCatalog",
+    "RenPyExtractor",
+    "RenPySegment",
+    "RenPyValidationError",
+    "RenPyWriter",
+    "renpy_language_identifier",
+    "renpy_project_files",
+    "validate_renpy_translation_text",
+    "CloudTranslationProvider",
+    "DictionaryTranslationProvider",
+    "HttpResponse",
+    "TranslationProviderError",
+    "TranslationNotFoundError",
+    "TranslationProvider",
+    "TranslationRequest",
+    "TranslationResult",
+    "TranslationRouter",
+    "PipelineTranslationError",
+    "PipelineTranslationFailed",
+    "PipelineTranslationOutcome",
+    "CloudTtsProvider",
+    "TtsProviderError",
+    "TtsRequest",
+    "TtsResult",
+    "WindowsSapiTts",
+    "OcrBox",
+    "OcrFrame",
+    "OverlayText",
+    "PillowScreenCapture",
+    "PytesseractOcrProvider",
+    "TkOverlayWindow",
+    "VisualReplacementEngine",
+    "VisualReplacementSession",
+    "AUTH_SCHEMA_VERSION",
+    "AuthError",
+    "AuthSession",
+    "AuthUser",
+    "PASSWORD_ITERATIONS",
+    "SESSION_TTL",
+    "UserStore",
+    "OfficialValidatorConfig",
+    "ProjectValidationError",
+    "ProjectValidationRecord",
+    "ProjectValidationRequest",
+    "ProjectValidationRunner",
+    "VALIDATION_SCHEMA_VERSION",
+    "renpy_sdk_validator",
+    "run_official_validator",
+    "tree_sha256",
+    "validate_font_coverage",
+    "UnsafePackageError",
+    "ZipPackageModifier",
     "default_data_root",
     "normalize_relative_path",
+    "GodotExtractor",
+    "LocalizationCatalog",
+    "LocalizationEntry",
+    "MultiEngineBuildResult",
+    "MultiEngineError",
+    "MultiEngineExtractor",
+    "MultiEngineWriter",
+    "RpgMakerExtractor",
+    "UnityExtractor",
+    "UnrealExtractor",
+    "extract_placeholders",
+    "validate_resource_syntax",
 ]

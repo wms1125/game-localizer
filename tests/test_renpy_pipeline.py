@@ -1,0 +1,115 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from game_localizer.hanengine.renpy import (
+    RenPyCatalog,
+    RenPyExtractor,
+    RenPyValidationError,
+    RenPyWriter,
+    renpy_language_identifier,
+    validate_renpy_translation_text,
+)
+
+
+SCRIPT = '''# comments are not translatable
+define narrator = Character("Narrator")
+label start:
+    e "Hello, [name]! {b}Welcome{/b}."
+    scene bg room
+    menu:
+        "Start game":
+            jump begin
+    $ python_value = "do not extract"
+    "A narration line."
+    play music "audio/theme.ogg"
+'''
+
+
+class RenPyPipelineTests(unittest.TestCase):
+    def make_project(self):
+        directory = tempfile.TemporaryDirectory()
+        root = Path(directory.name)
+        (root / "game").mkdir()
+        (root / "game" / "script.rpy").write_text(SCRIPT, encoding="utf-8")
+        return directory, root
+
+    def test_extracts_dialogue_menu_and_narration_but_skips_code_and_assets(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+        texts = {entry.source_text for entry in catalog.entries}
+        self.assertEqual(
+            texts,
+            {"Hello, [name]! {b}Welcome{/b}.", "Start game", "A narration line."},
+        )
+        self.assertEqual(len(catalog.entries), 3)
+        self.assertTrue(all(entry.source_hash for entry in catalog.entries))
+        self.assertEqual(
+            [entry.segment_id for entry in catalog.entries],
+            [entry.segment_id for entry in RenPyExtractor().extract(root).entries],
+        )
+
+    def test_catalog_json_is_canonical_and_translation_preserves_placeholders(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+        translated = catalog.translate(
+            {
+                "Hello, [name]! {b}Welcome{/b}.": "你好，[name]！{b}欢迎{/b}。",
+                "Start game": "开始游戏",
+                "A narration line.": "一行旁白。",
+            }
+        )
+        payload = translated.to_dict()
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.assertEqual(RenPyCatalog.from_dict(json.loads(encoded)), translated)
+        with self.assertRaisesRegex(RenPyValidationError, "placeholder"):
+            catalog.translate({"Hello, [name]! {b}Welcome{/b}.": "你好！"})
+
+    def test_writer_generates_tl_output_without_modifying_source(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        source_before = (root / "game" / "script.rpy").read_bytes()
+        catalog = RenPyExtractor().extract(root, language="zh_cn").translate(
+            {"Hello, [name]! {b}Welcome{/b}.": "你好，[name]！{b}欢迎{/b}。", "Start game": "开始游戏", "A narration line.": "一行旁白。"}
+        )
+        output = root / "localized-output"
+        result = RenPyWriter().build(catalog, output, source_root=root)
+        self.assertTrue(result.path.is_file())
+        self.assertEqual((root / "game" / "script.rpy").read_bytes(), source_before)
+        rendered = result.path.read_text(encoding="utf-8")
+        self.assertIn("translate zh_cn", rendered)
+        self.assertIn("你好", rendered)
+        self.assertNotIn("$ python_value", rendered)
+        self.assertEqual(validate_renpy_translation_text(rendered), 3)
+
+    def test_language_identifier_is_safe_and_generated_syntax_fails_closed(self):
+        self.assertEqual(renpy_language_identifier("zh-CN"), "zh_cn")
+        self.assertEqual(renpy_language_identifier("123"), "lang_123")
+        with self.assertRaisesRegex(RenPyValidationError, "statement"):
+            validate_renpy_translation_text(
+                'translate zh_cn strings:\n    new "missing old"\n'
+            )
+
+    def test_writer_rejects_stale_source_and_in_place_output_by_default(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        catalog = RenPyExtractor().extract(root).translate({"A narration line.": "旁白"})
+        (root / "game" / "script.rpy").write_text(SCRIPT + "\n# changed\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "changed"):
+            RenPyWriter().build(catalog, root / "localized-output", source_root=root)
+        fresh = RenPyExtractor().extract(root).translate({"A narration line.": "旁白"})
+        with self.assertRaisesRegex(ValueError, "source root"):
+            RenPyWriter().build(fresh, root, source_root=root)
+
+
+if __name__ == "__main__":
+    unittest.main()

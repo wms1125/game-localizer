@@ -122,6 +122,15 @@ _OPERATION_CAPABILITY = {
     Operation.ROLLBACK: AdapterCapability.ROLLBACK,
 }
 
+_CAPABILITY_TO_ROUTE_OPERATION = {
+    AdapterCapability.DETECT: RouteOperation.DETECT,
+    AdapterCapability.EXTRACT: RouteOperation.EXTRACT,
+    AdapterCapability.VALIDATE: RouteOperation.VALIDATE,
+    AdapterCapability.BUILD: RouteOperation.BUILD,
+    AdapterCapability.VERIFY: RouteOperation.VERIFY,
+    AdapterCapability.ROLLBACK: RouteOperation.ROLLBACK,
+}
+
 _MATURITY_CAPABILITIES = {
     AdapterMaturity.DETECT_ONLY: frozenset({AdapterCapability.DETECT}),
     AdapterMaturity.EXTRACT_READY: frozenset(
@@ -147,6 +156,19 @@ def adapter_operations_for_route(route: RoutePlan) -> frozenset[Operation]:
         _ROUTE_TO_ADAPTER_OPERATION[item]
         for item in route.allowed_operations
         if item in _ROUTE_TO_ADAPTER_OPERATION
+    )
+
+
+def route_operations_for_capabilities(
+    capabilities: Iterable[AdapterCapability],
+) -> frozenset[RouteOperation]:
+    capability_items = _enum_frozenset(
+        capabilities,
+        AdapterCapability,
+        "capabilities",
+    )
+    return frozenset(
+        _CAPABILITY_TO_ROUTE_OPERATION[item] for item in capability_items
     )
 
 
@@ -853,4 +875,5 @@ __all__ = [
     "VerifyRequest",
     "VerifyResult",
     "adapter_operations_for_route",
+    "route_operations_for_capabilities",
 ]

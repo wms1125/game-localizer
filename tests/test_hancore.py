@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -282,6 +284,51 @@ class TaskExecutionTests(HanCoreTestCase):
         )
         self.assertIs(cancelled_result.state, TaskState.CANCELLED)
         self.assertEqual(self.project_db.get_task(cancelled.task_id), cancelled_result)
+
+    def test_running_task_observes_cancel_request_from_another_connection(self):
+        task = self.core.create_task(
+            kind="detect",
+            route=make_route(),
+            task_id="task-cross-process-cancel",
+            steps=(TaskStep("detect", "Detect", RouteOperation.DETECT),),
+        )
+        started = threading.Event()
+        results = []
+
+        def worker() -> None:
+            with self.store.open_project(PROJECT_ID) as worker_store:
+                worker_core = HanCore(worker_store)
+                restored = worker_store.get_task(task.task_id)
+
+                def wait_for_cancel(context):
+                    started.set()
+                    while True:
+                        context.checkpoint()
+                        time.sleep(0.01)
+
+                results.append(
+                    worker_core.run_task(
+                        restored,
+                        route=make_route(),
+                        handlers={"detect": wait_for_cancel},
+                    )
+                )
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        self.assertTrue(started.wait(timeout=2))
+
+        requested_at = self.project_db.request_task_cancel(task.task_id)
+        thread.join(timeout=3)
+
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(requested_at.endswith("Z"))
+        self.assertEqual(len(results), 1)
+        self.assertIs(results[0].state, TaskState.CANCELLED)
+        self.assertIs(
+            self.project_db.get_task(task.task_id).state,
+            TaskState.CANCELLED,
+        )
 
 
 if __name__ == "__main__":

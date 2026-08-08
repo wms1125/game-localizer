@@ -10,6 +10,7 @@ from .segments import Segment, SegmentDraft
 from .store import ProjectStore
 from .tasks import (
     Artifact,
+    EventSink,
     EventType,
     StepHandler,
     TaskControl,
@@ -71,12 +72,16 @@ class HanCore:
             pending[segment.segment_id] = segment
 
         persisted = {item.segment_id: item for item in self.store.list_segments()}
+        replacements: dict[str, Segment] = {}
         for segment_id, segment in pending.items():
             existing = persisted.get(segment_id)
             if existing is not None and existing.source_fingerprint != segment.source_fingerprint:
                 raise SegmentConflictError(f"segment conflict for {segment_id}")
             if existing is not None:
-                pending[segment_id] = existing
+                if existing.context_fingerprint == segment.context_fingerprint:
+                    pending[segment_id] = existing
+                else:
+                    replacements[segment_id] = segment
         new_segments = tuple(
             pending[item.segment_id]
             for item in draft_items
@@ -88,6 +93,8 @@ class HanCore:
         to_save = tuple(item for key, item in unique.items() if key not in persisted)
         if to_save:
             self.store.save_segments(to_save)
+        if replacements:
+            self.store.replace_segments(replacements.values())
         return tuple(pending.values())
 
     @staticmethod
@@ -140,13 +147,20 @@ class HanCore:
         route: RoutePlan,
         handlers: Mapping[str, StepHandler],
         control: TaskControl | None = None,
+        event_listener: EventSink | None = None,
     ) -> TaskPlan:
         task = _require_task(task)
         route = _require_route(route)
+        if event_listener is not None and not callable(event_listener):
+            raise TypeError("event_listener must be callable or None")
         self._validate_authorization(task, route, self.store.project_id)
         self.store.save_route(route)
         if self.store.get_task(task.task_id) is None:
             self.store.save_task(task)
+        active_control = TaskControl() if control is None else control
+        active_control.add_cancellation_check(
+            lambda: self.store.is_task_cancel_requested(task.task_id)
+        )
 
         def sink(event: TaskEvent) -> None:
             self.store.append_event(event)
@@ -163,9 +177,14 @@ class HanCore:
                 or event.step_id is not None
             ):
                 self.store.save_task(task)
+            if event_listener is not None:
+                try:
+                    event_listener(event)
+                except Exception:
+                    pass
 
         try:
-            result = TaskRunner(sink).run(task, handlers, control)
+            result = TaskRunner(sink).run(task, handlers, active_control)
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:

@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -19,15 +20,19 @@ from game_localizer.hanengine import (
     Segment,
     SegmentDraft,
     SourceLocation,
+    StepState,
     TaskEvent,
     TaskPlan,
+    TaskProgress,
     TaskState,
     TaskStep,
 )
 from game_localizer.hanengine.store import (
     Checkpoint,
     HanStore,
+    ProjectBusyError,
     ProjectRecord,
+    TaskRetrySpec,
     default_data_root,
 )
 
@@ -155,7 +160,7 @@ class StoreModelTests(unittest.TestCase):
 
 
 class HanStoreTests(unittest.TestCase):
-    def test_config_and_project_databases_have_schema_v1_and_foreign_keys(self):
+    def test_config_v1_and_project_v2_databases_enable_foreign_keys(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             store = HanStore(root)
@@ -180,8 +185,138 @@ class HanStoreTests(unittest.TestCase):
                     project_db.connection.execute(
                         "SELECT version FROM schema_info"
                     ).fetchone(),
-                    (1,),
+                    (2,),
                 )
+
+    def test_project_schema_v1_is_migrated_without_losing_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = HanStore(Path(directory))
+            project = store.create_project("Migrated", project_id=FIRST_PROJECT)
+            task = make_task(project.project_id)
+            with store.open_project(project.project_id) as project_db:
+                project_db.save_task(task)
+                with project_db.connection:
+                    project_db.connection.execute(
+                        "DROP TABLE task_retry_specs"
+                    )
+                    project_db.connection.execute(
+                        "DROP TABLE task_cancel_requests"
+                    )
+                    project_db.connection.execute("DROP TABLE project_locks")
+                    project_db.connection.execute(
+                        "UPDATE schema_info SET version=1"
+                    )
+
+            with store.open_project(project.project_id) as migrated:
+                self.assertEqual(
+                    migrated.connection.execute(
+                        "SELECT version FROM schema_info"
+                    ).fetchone(),
+                    (2,),
+                )
+                self.assertEqual(migrated.get_task(task.task_id), task)
+                tables = {
+                    row[0]
+                    for row in migrated.connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                self.assertTrue(
+                    {
+                        "task_retry_specs",
+                        "task_cancel_requests",
+                        "project_locks",
+                    }
+                    <= tables
+                )
+
+    def test_task_status_summarizes_progress_failure_checkpoint_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = HanStore(Path(directory))
+            project = store.create_project("Status", project_id=FIRST_PROJECT)
+            task = make_task(project.project_id, task_id="task-status")
+            task.state = TaskState.FAILED
+            task.steps[0].state = StepState.FAILED
+            retry = TaskRetrySpec.create(
+                "engine",
+                ("build", "rpg_maker_mv", "C:/Games/Demo"),
+            )
+            checkpoint = Checkpoint(
+                checkpoint_id="checkpoint-status",
+                task_id=task.task_id,
+                step_id="detect",
+                sequence=2,
+                payload={"cursor": 3},
+            )
+            events = (
+                TaskEvent(
+                    task_id=task.task_id,
+                    step_id=None,
+                    sequence=1,
+                    event_type=EventType.QUEUED,
+                    timestamp="2026-08-06T00:00:00Z",
+                    summary="queued",
+                ),
+                TaskEvent(
+                    task_id=task.task_id,
+                    step_id="detect",
+                    sequence=2,
+                    event_type=EventType.PROGRESS,
+                    timestamp="2026-08-06T00:00:01Z",
+                    summary="progress",
+                    progress=TaskProgress(3, 10, "data/System.json"),
+                ),
+                TaskEvent(
+                    task_id=task.task_id,
+                    step_id=None,
+                    sequence=3,
+                    event_type=EventType.FAILED,
+                    timestamp="2026-08-06T00:00:02Z",
+                    summary="translation failed",
+                    data={"exception_type": "TimeoutError"},
+                ),
+            )
+            with store.open_project(project.project_id) as project_db:
+                project_db.save_task(task)
+                for event in events:
+                    project_db.append_event(event)
+                project_db.save_checkpoint(checkpoint)
+                project_db.save_task_retry_spec(task.task_id, retry)
+
+            statuses = store.list_task_statuses()
+            found = store.find_task_status(task.task_id)
+
+            self.assertEqual(statuses, (found,))
+            self.assertEqual(found.stage, "detect")
+            self.assertEqual(found.progress, TaskProgress(3, 10, "data/System.json"))
+            self.assertEqual(
+                found.failure_reason,
+                "translation failed (TimeoutError)",
+            )
+            self.assertEqual(found.latest_checkpoint, checkpoint)
+            self.assertEqual(found.retry_spec, retry)
+            self.assertEqual(found.engine_id, "rpg_maker_mv")
+
+    def test_project_lock_is_mutually_exclusive_across_connections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = HanStore(Path(directory))
+            project = store.create_project("Locked", project_id=FIRST_PROJECT)
+            with (
+                store.open_project(project.project_id) as first,
+                store.open_project(project.project_id) as second,
+            ):
+                lease = first.acquire_project_lock(ttl_seconds=2)
+                try:
+                    with self.assertRaises(ProjectBusyError):
+                        second.acquire_project_lock(ttl_seconds=2)
+                    self.assertIsNotNone(second.active_project_lock("structured-workflow"))
+                finally:
+                    lease.close()
+
+                with second.acquire_project_lock(ttl_seconds=2):
+                    self.assertIsNotNone(
+                        first.active_project_lock("structured-workflow")
+                    )
 
     def test_two_projects_isolate_equal_segment_ids(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -272,6 +407,50 @@ class HanStoreTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     project_db.append_event(duplicate)
                 self.assertEqual(project_db.list_events(task.task_id), (original,))
+
+    def test_segment_and_checkpoint_are_saved_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = HanStore(Path(directory))
+            project = store.create_project("Atomic", project_id=FIRST_PROJECT)
+            task = make_task(project.project_id)
+            original = make_segment(project.project_id)
+            first = replace(
+                original,
+                target_text="First",
+                translation_source="dictionary:exact",
+            )
+            checkpoint = Checkpoint(
+                checkpoint_id="checkpoint-atomic",
+                task_id=task.task_id,
+                step_id="detect",
+                sequence=1,
+                payload={"segment_id": original.segment_id},
+            )
+            with store.open_project(project.project_id) as project_db:
+                project_db.save_task(task)
+                project_db.save_segments((original,))
+                project_db.save_segment_checkpoint(first, checkpoint)
+                self.assertEqual(
+                    project_db.get_segment(original.segment_id).target_text,
+                    "First",
+                )
+
+                second = replace(
+                    original,
+                    target_text="Second",
+                    translation_source="cloud:test",
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    project_db.save_segment_checkpoint(second, checkpoint)
+
+                self.assertEqual(
+                    project_db.get_segment(original.segment_id).target_text,
+                    "First",
+                )
+                self.assertEqual(
+                    project_db.list_checkpoints(task.task_id),
+                    (checkpoint,),
+                )
 
     def test_failed_segment_batch_rolls_back_every_insert(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -560,10 +560,21 @@ class TaskCancelled(RuntimeError):
 
 
 class TaskControl:
-    def __init__(self) -> None:
+    def __init__(self, cancellation_check: Callable[[], bool] | None = None) -> None:
+        if cancellation_check is not None and not callable(cancellation_check):
+            raise TypeError("cancellation_check must be callable or None")
         self._condition = Condition()
         self._paused = False
         self._cancelled = False
+        self._cancellation_checks: list[Callable[[], bool]] = []
+        if cancellation_check is not None:
+            self._cancellation_checks.append(cancellation_check)
+
+    def add_cancellation_check(self, cancellation_check: Callable[[], bool]) -> None:
+        if not callable(cancellation_check):
+            raise TypeError("cancellation_check must be callable")
+        with self._condition:
+            self._cancellation_checks.append(cancellation_check)
 
     def pause(self) -> None:
         with self._condition:
@@ -584,11 +595,23 @@ class TaskControl:
             return self._cancelled
 
     def checkpoint(self) -> None:
-        with self._condition:
-            while self._paused and not self._cancelled:
-                self._condition.wait()
-            if self._cancelled:
-                raise TaskCancelled("task cancelled")
+        while True:
+            with self._condition:
+                checks = tuple(self._cancellation_checks)
+            for check in checks:
+                try:
+                    requested = check()
+                except Exception:
+                    requested = False
+                if requested:
+                    self.cancel()
+                    break
+            with self._condition:
+                if self._cancelled:
+                    raise TaskCancelled("task cancelled")
+                if not self._paused:
+                    return
+                self._condition.wait(timeout=0.25)
 
 
 EventSink = Callable[[TaskEvent], None]
