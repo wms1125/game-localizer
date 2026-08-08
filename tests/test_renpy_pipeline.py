@@ -37,6 +37,12 @@ SCREEN_SCRIPT = '''screen sample:
     add "gui/frame.png"
 '''
 
+WRAPPED_SCREEN_SCRIPT = '''screen wrapped:
+    text _("Wrapped title") style "caption"
+    textbutton _("Begin") action Start()
+    label _("Screen label")
+'''
+
 
 class RenPyPipelineTests(unittest.TestCase):
     def make_project(self):
@@ -104,6 +110,49 @@ class RenPyPipelineTests(unittest.TestCase):
         )
         self.assertEqual(len(catalog.entries), 5)
         self.assertEqual(len({entry.segment_id for entry in catalog.entries}), 5)
+
+    def test_wrapped_screen_text_is_extracted_as_strings(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "screen.rpy").write_text(
+            WRAPPED_SCREEN_SCRIPT,
+            encoding="utf-8",
+        )
+        (root / "game" / "wrapped-dialogue.rpy").write_text(
+            'label wrapped:\n    e _("Wrapped dialogue")\n',
+            encoding="utf-8",
+        )
+
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+        screen_entries = [
+            entry for entry in catalog.entries if entry.relative_path == "game/screen.rpy"
+        ]
+
+        self.assertEqual(
+            [entry.source_text for entry in screen_entries],
+            ["Wrapped title", "Begin", "Screen label"],
+        )
+        self.assertTrue(all(entry.kind == "narration" for entry in screen_entries))
+        dialogue = next(
+            entry for entry in catalog.entries if entry.source_text == "Wrapped dialogue"
+        )
+        self.assertEqual((dialogue.kind, dialogue.speaker), ("dialogue", "e"))
+        translated = catalog.translate(
+            {
+                "Wrapped title": "包装标题",
+                "Begin": "开始",
+                "Screen label": "屏幕标签",
+            }
+        )
+        result = RenPyWriter().build(
+            translated,
+            root / "localized-output",
+            source_root=root,
+        )
+        rendered = result.path.read_text(encoding="utf-8")
+        self.assertIn("translate zh_cn strings:", rendered)
+        self.assertIn('old "Wrapped title"', rendered)
+        self.assertNotIn("hanengine_renpy", rendered)
 
     def test_writer_generates_tl_output_without_modifying_source(self):
         temporary, root = self.make_project()

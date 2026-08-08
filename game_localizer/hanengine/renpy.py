@@ -395,6 +395,19 @@ def _extract_line(line: str) -> tuple[str, str | None, str] | None:
         return None
     before = tokens[:string_index]
     after = tokens[string_index + 1 :]
+    wrapped = (
+        len(before) >= 2
+        and before[-2].type == tokenize.NAME
+        and before[-2].string == "_"
+        and before[-1].type == tokenize.OP
+        and before[-1].string == "("
+        and bool(after)
+        and after[0].type == tokenize.OP
+        and after[0].string == ")"
+    )
+    if wrapped:
+        before = before[:-2]
+        after = after[1:]
     prefix_names = [token.string for token in before if token.type == tokenize.NAME]
     if any(token.type not in {tokenize.NAME, tokenize.OP} for token in before):
         return None
@@ -402,7 +415,7 @@ def _extract_line(line: str) -> tuple[str, str | None, str] | None:
         not prefix_names or prefix_names[0] not in _SCREEN_TEXT_STATEMENTS
     ):
         return None
-    if prefix_names and prefix_names[0] in _COMMANDS:
+    if prefix_names and prefix_names[0] in _COMMANDS and prefix_names[0] not in _SCREEN_TEXT_STATEMENTS:
         return None
     if any(name in _SCREEN_NON_TEXT_NAMES for name in prefix_names):
         return None
@@ -416,8 +429,17 @@ def _extract_line(line: str) -> tuple[str, str | None, str] | None:
         return None
     if any(token.type == tokenize.OP and token.string not in {"-", "+"} for token in before):
         return None
-    kind = "menu" if any(token.type == tokenize.OP and token.string in {"-", "+"} for token in before) else ("dialogue" if prefix_names else "narration")
-    speaker = prefix_names[-1] if prefix_names else None
+    is_screen_text = bool(prefix_names and prefix_names[0] in _SCREEN_TEXT_STATEMENTS)
+    kind = (
+        "narration"
+        if is_screen_text
+        else (
+            "menu"
+            if any(token.type == tokenize.OP and token.string in {"-", "+"} for token in before)
+            else ("dialogue" if prefix_names else "narration")
+        )
+    )
+    speaker = None if is_screen_text else (prefix_names[-1] if prefix_names else None)
     return kind, speaker, source
 
 
