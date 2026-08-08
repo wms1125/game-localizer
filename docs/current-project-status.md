@@ -144,6 +144,7 @@ python cli.py project validate renpy <project> `
 - 本次真实验证使用机械测试字典，仍需真实译文、术语表、人工审校和长文本布局回归。
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
+- 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：228/228 段完成，内部验证通过，Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；`SourceHanSansLite.ttf` + `DejaVuSans.ttf` 联合字体覆盖通过。该记录当前为 `build_ready`，因为运行时冒烟仍未执行。
 - 本次代码验证中除外部合规发布扫描外的 407 个 Python 测试均通过；`tools/check_compliance.py --json --release` 在当前环境超时，合规扫描结果仍未完成。
 
 ### 桌面端和发布
@@ -159,7 +160,7 @@ python cli.py project validate renpy <project> `
 1. [已完成] 增加目标语言激活策略：候选首次运行默认中文，保留原生语言切换和偏好持久化语义，并将激活文件纳入验证清单。
 2. [进行中] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、有效 `menu:` 一级选项、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数语法及运行时拼接仍需补齐。
 3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。官方文档未发现独立通用的 Ren'Py 复数翻译语法，暂不虚构支持。
-4. [进行中] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。下一步使用经登记和人工确认的中文候选，完成主菜单、对白、分支、存档和设置页面的截图回归。
+4. [进行中] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。已完成一个官方样例中文候选的 `build_ready` 验证，下一步执行真实运行时启动和主菜单、对白、分支、存档、设置页面的截图回归。
 5. 增加长文本、字体回退、文本框溢出和原文回退测试。
 
 ### P1.2：统一“原生渲染替换”能力
