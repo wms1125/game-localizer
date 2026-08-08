@@ -1,0 +1,17 @@
+{
+  "entries": [
+    {
+      "line": 2,
+      "kind": "dialogue",
+      "speaker": "e",
+      "source_text": "Found {#inventory}: {color=#f00}[inventory[0]['name']!q]{/color}",
+      "placeholders": [
+        "{#inventory}",
+        "{color=#f00}",
+        "[inventory[0]['name']!q]",
+        "{/color}"
+      ],
+      "text_context": "inventory"
+    }
+  ]
+}

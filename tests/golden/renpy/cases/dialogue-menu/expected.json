@@ -1,0 +1,36 @@
+{
+  "entries": [
+    {
+      "line": 2,
+      "kind": "dialogue",
+      "speaker": "e",
+      "source_text": "Hello, [player_name]!",
+      "placeholders": ["[player_name]"],
+      "text_context": null
+    },
+    {
+      "line": 3,
+      "kind": "narration",
+      "speaker": null,
+      "source_text": "Narration",
+      "placeholders": [],
+      "text_context": null
+    },
+    {
+      "line": 5,
+      "kind": "menu",
+      "speaker": null,
+      "source_text": "Start",
+      "placeholders": [],
+      "text_context": null
+    },
+    {
+      "line": 7,
+      "kind": "menu",
+      "speaker": null,
+      "source_text": "Quit",
+      "placeholders": [],
+      "text_context": null
+    }
+  ]
+}

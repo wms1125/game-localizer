@@ -464,6 +464,10 @@ def _extract_line(line: str) -> tuple[str, str | None, str] | None:
     return kind, speaker, source
 
 
+def _indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
 class RenPyExtractor:
     def extract(self, project_root: Path, *, language: str = "zh_cn") -> RenPyCatalog:
         if not isinstance(project_root, Path):
@@ -474,11 +478,21 @@ class RenPyExtractor:
         duplicate_counts: dict[str, int] = {}
         for path in files:
             relative = path.relative_to(root).as_posix()
+            menu_indent: int | None = None
             for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                indentation = _indent_width(line)
+                if stripped == "menu:":
+                    menu_indent = indentation
+                    continue
+                if menu_indent is not None and stripped and indentation <= menu_indent:
+                    menu_indent = None
                 parsed = _extract_line(line)
                 if parsed is None:
                     continue
                 kind, speaker, source = parsed
+                if menu_indent is not None and speaker is None and indentation > menu_indent:
+                    kind = "menu"
                 identity = f"{relative}\0{kind}\0{speaker or ''}\0{source}".encode("utf-8")
                 base_segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
                 occurrence = duplicate_counts.get(base_segment_id, 0)
