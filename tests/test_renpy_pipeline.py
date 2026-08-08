@@ -9,6 +9,7 @@ from game_localizer.hanengine.renpy import (
     RenPyValidationError,
     RenPyWriter,
     renpy_language_identifier,
+    validate_renpy_language_activation_text,
     validate_renpy_translation_text,
 )
 
@@ -24,6 +25,16 @@ label start:
     $ python_value = "do not extract"
     "A narration line."
     play music "audio/theme.ogg"
+'''
+
+
+SCREEN_SCRIPT = '''screen sample:
+    style_prefix "sample"
+    variant "small"
+    text "Screen title"
+    text "Screen title" style "caption"
+    text who id "who"
+    add "gui/frame.png"
 '''
 
 
@@ -74,6 +85,26 @@ class RenPyPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(RenPyValidationError, "placeholder"):
             catalog.translate({"Hello, [name]! {b}Welcome{/b}.": "你好！"})
 
+    def test_screen_properties_are_not_treated_as_duplicate_dialogue(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "screen.rpy").write_text(SCREEN_SCRIPT, encoding="utf-8")
+
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+
+        self.assertCountEqual(
+            [entry.source_text for entry in catalog.entries],
+            [
+                "Hello, [name]! {b}Welcome{/b}.",
+                "Start game",
+                "A narration line.",
+                "Screen title",
+                "Screen title",
+            ],
+        )
+        self.assertEqual(len(catalog.entries), 5)
+        self.assertEqual(len({entry.segment_id for entry in catalog.entries}), 5)
+
     def test_writer_generates_tl_output_without_modifying_source(self):
         temporary, root = self.make_project()
         self.addCleanup(temporary.cleanup)
@@ -90,6 +121,36 @@ class RenPyPipelineTests(unittest.TestCase):
         self.assertIn("你好", rendered)
         self.assertNotIn("$ python_value", rendered)
         self.assertEqual(validate_renpy_translation_text(rendered), 3)
+        activation = result.activation_path.read_text(encoding="utf-8")
+        self.assertEqual(
+            validate_renpy_language_activation_text(
+                activation,
+                expected_language="zh-CN",
+            ),
+            "zh_cn",
+        )
+        self.assertIn('define config.default_language = "zh_cn"', activation)
+        self.assertNotIn("config.language =", activation)
+
+    def test_writer_deduplicates_repeated_source_text(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "script.rpy").write_text(
+            SCRIPT + '\n    "A narration line."\n', encoding="utf-8"
+        )
+        catalog = RenPyExtractor().extract(root).translate(
+            {
+                "Hello, [name]! {b}Welcome{/b}.": "中[name] {b}Welcome{/b}.",
+                "Start game": "中Start game",
+                "A narration line.": "中A narration line.",
+            }
+        )
+
+        result = RenPyWriter().build(catalog, root / "localized-output", source_root=root)
+        rendered = result.path.read_text(encoding="utf-8")
+
+        self.assertEqual(rendered.count('old "A narration line."'), 1)
+        self.assertEqual(validate_renpy_translation_text(rendered), 3)
 
     def test_language_identifier_is_safe_and_generated_syntax_fails_closed(self):
         self.assertEqual(renpy_language_identifier("zh-CN"), "zh_cn")
@@ -97,6 +158,10 @@ class RenPyPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(RenPyValidationError, "statement"):
             validate_renpy_translation_text(
                 'translate zh_cn strings:\n    new "missing old"\n'
+            )
+        with self.assertRaisesRegex(RenPyValidationError, "activation statement"):
+            validate_renpy_language_activation_text(
+                'define config.language = "zh_cn"\n'
             )
 
     def test_writer_rejects_stale_source_and_in_place_output_by_default(self):
@@ -109,6 +174,20 @@ class RenPyPipelineTests(unittest.TestCase):
         fresh = RenPyExtractor().extract(root).translate({"A narration line.": "旁白"})
         with self.assertRaisesRegex(ValueError, "source root"):
             RenPyWriter().build(fresh, root, source_root=root)
+
+    def test_writer_refuses_reserved_activation_path_in_source(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "hanengine_language.rpy").write_text(
+            'define config.default_language = "ja"\n',
+            encoding="utf-8",
+        )
+        catalog = RenPyExtractor().extract(root).translate(
+            {"A narration line.": "旁白"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            RenPyWriter().build(catalog, root / "localized-output", source_root=root)
 
 
 if __name__ == "__main__":

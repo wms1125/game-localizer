@@ -26,7 +26,9 @@ from game_localizer.hanengine.renpy import (
     RenPySegment,
     RenPyValidationError,
     RenPyWriter,
+    renpy_language_identifier,
     renpy_project_files,
+    validate_renpy_language_activation_text,
     validate_renpy_translation_text,
 )
 from game_localizer.hanengine.tasks import TaskCancelled
@@ -1052,11 +1054,17 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     temporary,
                     source_root=request.source_root,
                 )
-                relative = written.path.relative_to(temporary).as_posix()
-                change_kind = (
-                    "modified"
-                    if (request.source_root / Path(*relative.split("/"))).is_file()
-                    else "added"
+                relative_paths = tuple(
+                    path.relative_to(temporary).as_posix()
+                    for path in (written.path, written.activation_path)
+                )
+                change_kinds = tuple(
+                    (
+                        "modified"
+                        if (request.source_root / Path(*relative.split("/"))).is_file()
+                        else "added"
+                    )
+                    for relative in relative_paths
                 )
                 if existing_empty:
                     output.rmdir()
@@ -1068,30 +1076,39 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     output.mkdir()
                 raise
 
-            manifest = (
+            manifest = tuple(
                 BuildManifestEntry(
                     relative_path=relative,
                     change_kind=change_kind,
                     sha256=_sha256_file(output / Path(*relative.split("/"))),
-                ),
+                )
+                for relative, change_kind in zip(relative_paths, change_kinds)
             )
             request.context.progress(
                 written.entries_written,
                 len(catalog.entries),
-                current_item=relative,
+                current_item=relative_paths[0],
             )
             request.context.log(
                 "Ren'Py localization candidate built",
                 {
                     "engine_id": self.engine_id,
-                    "files": 1,
+                    "files": len(relative_paths),
                     "segments": written.entries_written,
                 },
             )
             return BuildResult(
-                generated_files=(relative,),
-                added_files=((relative,) if change_kind == "added" else ()),
-                modified_files=((relative,) if change_kind == "modified" else ()),
+                generated_files=relative_paths,
+                added_files=tuple(
+                    relative
+                    for relative, change_kind in zip(relative_paths, change_kinds)
+                    if change_kind == "added"
+                ),
+                modified_files=tuple(
+                    relative
+                    for relative, change_kind in zip(relative_paths, change_kinds)
+                    if change_kind == "modified"
+                ),
                 deleted_files=(),
                 manifest=manifest,
                 artifacts=(),
@@ -1099,7 +1116,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 warnings=(
                     "Ren'Py SDK compilation and runtime smoke testing were not performed",
                 ),
-                statistics={"files": 1, "segments": written.entries_written},
+                statistics={"files": len(relative_paths), "segments": written.entries_written},
             )
         except TaskCancelled as exc:
             return self._error(
@@ -1184,6 +1201,35 @@ class RenPyAdapterV1(StructuredAdapterV1):
             encoding_passed = True
             syntax_passed = True
 
+            language = renpy_language_identifier(self.target_language)
+            translation_path = f"game/tl/{language}/hanengine_translations.rpy"
+            activation_path = "game/hanengine_language.rpy"
+            expected_paths = {translation_path, activation_path}
+            manifest_paths = [entry.relative_path for entry in request.manifest]
+            manifest_complete = (
+                len(manifest_paths) == len(expected_paths)
+                and set(manifest_paths) == expected_paths
+            )
+            checks.append(
+                VerificationCheck(
+                    "renpy_generated_manifest",
+                    manifest_complete,
+                    (
+                        "Manifest contains the translation and language activation files"
+                        if manifest_complete
+                        else "Manifest does not contain exactly the required Ren'Py generated files"
+                    ),
+                )
+            )
+            if not manifest_complete:
+                issues.append(
+                    self._issue(
+                        "renpy_generated_manifest_incomplete",
+                        "The candidate manifest must contain one translation file and one language activation file",
+                        suggested_action="Discard and rebuild the candidate",
+                    )
+                )
+
             if not request.manifest:
                 checks.append(
                     VerificationCheck("manifest_nonempty", False, "The build manifest is empty")
@@ -1198,21 +1244,15 @@ class RenPyAdapterV1(StructuredAdapterV1):
 
             for index, entry in enumerate(request.manifest, 1):
                 request.context.checkpoint()
-                relative = Path(*entry.relative_path.split("/"))
-                expected_location = (
-                    len(relative.parts) >= 4
-                    and relative.parts[0] == "game"
-                    and relative.parts[1] == "tl"
-                    and relative.name == "hanengine_translations.rpy"
-                )
+                expected_location = entry.relative_path in expected_paths
                 checks.append(
                     VerificationCheck(
                         f"renpy_output_path:{entry.relative_path}",
                         expected_location,
                         (
-                            "Translation file is in the Ren'Py tl directory"
+                            "Generated file is in its expected Ren'Py location"
                             if expected_location
-                            else "Translation file is outside the expected Ren'Py tl directory"
+                            else "Generated file is outside the expected Ren'Py locations"
                         ),
                     )
                 )
@@ -1231,7 +1271,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     issues.append(
                         self._issue(
                             "renpy_candidate_file_invalid",
-                            "A Ren'Py candidate file is missing or outside the expected output directory",
+                            "A Ren'Py candidate file is missing or outside the expected output locations",
                             suggested_action="Discard and rebuild the candidate in a clean output directory",
                         )
                     )
@@ -1252,7 +1292,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     issues.append(
                         self._issue(
                             "candidate_hash_mismatch",
-                            "The Ren'Py translation file hash differs from the build manifest",
+                            "A generated Ren'Py file hash differs from the build manifest",
                             suggested_action="Discard and rebuild the candidate",
                         )
                     )
@@ -1274,7 +1314,13 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 parsed = False
                 if decoded:
                     try:
-                        validate_renpy_translation_text(text)
+                        if entry.relative_path == translation_path:
+                            validate_renpy_translation_text(text)
+                        else:
+                            validate_renpy_language_activation_text(
+                                text,
+                                expected_language=language,
+                            )
                         parsed = True
                     except RenPyValidationError:
                         syntax_passed = False
@@ -1284,14 +1330,14 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     VerificationCheck(
                         f"renpy_syntax:{entry.relative_path}",
                         parsed,
-                        "Generated Ren'Py translation structure is valid" if parsed else "Generated Ren'Py translation structure is invalid",
+                        "Generated Ren'Py structure is valid" if parsed else "Generated Ren'Py structure is invalid",
                     )
                 )
                 if not decoded or not parsed:
                     issues.append(
                         self._issue(
                             "renpy_translation_syntax_invalid",
-                            "The generated Ren'Py translation file failed UTF-8 or structure validation",
+                            "A generated Ren'Py file failed UTF-8 or structure validation",
                             suggested_action="Discard and rebuild the candidate",
                         )
                     )

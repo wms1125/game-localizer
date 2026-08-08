@@ -194,7 +194,7 @@ class EngineSampleAcceptanceTests(unittest.TestCase):
             rendered = generated.read_text(encoding="utf-8")
             self.assertIn("你好，[player_name]！", rendered)
             self.assertIn("欢迎来到教程。", rendered)
-            self.assertIn("Verified 1 files", stdout.getvalue())
+            self.assertIn("Verified 2 files", stdout.getvalue())
 
 
 if __name__ == "__main__":

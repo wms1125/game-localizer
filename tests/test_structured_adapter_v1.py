@@ -457,11 +457,19 @@ class StructuredPipelineTests(unittest.TestCase):
         self.assertEqual(snapshot_tree(source), before)
         self.assertEqual(
             built.generated_files,
-            ("game/tl/zh_cn/hanengine_translations.rpy",),
+            (
+                "game/tl/zh_cn/hanengine_translations.rpy",
+                "game/hanengine_language.rpy",
+            ),
         )
         self.assertEqual((output / "game" / "script.rpy").read_bytes(), source_script.read_bytes())
         generated = output / "game" / "tl" / "zh_cn" / "hanengine_translations.rpy"
         self.assertIn("你好", generated.read_text(encoding="utf-8"))
+        activation = output / "game" / "hanengine_language.rpy"
+        self.assertIn(
+            'define config.default_language = "zh_cn"',
+            activation.read_text(encoding="utf-8"),
+        )
 
         verified = adapter.verify(
             VerifyRequest(
@@ -476,6 +484,18 @@ class StructuredPipelineTests(unittest.TestCase):
         self.assertTrue(verified.passed)
         self.assertTrue(verified.syntax_passed)
         self.assertIsNone(verified.smoke_test_passed)
+
+        incomplete = adapter.verify(
+            VerifyRequest(
+                extracted.source_tree_fingerprint,
+                output,
+                built.manifest[:1],
+                "full",
+                make_context("verify-incomplete"),
+            )
+        )
+        self.assertIsInstance(incomplete, VerifyResult)
+        self.assertFalse(incomplete.passed)
 
 
 if __name__ == "__main__":

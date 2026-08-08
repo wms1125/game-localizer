@@ -171,6 +171,34 @@ class ProjectValidationTests(unittest.TestCase):
             self.assertEqual(failed["exit_code"], 7)
             self.assertNotIn("private-project-output", json.dumps(passed))
 
+    def test_official_validator_runs_on_shadow_and_reports_mutations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            output.mkdir()
+            before = tree_sha256(output)
+            validator_script = root / "mutating.py"
+            validator_script.write_text(
+                "from pathlib import Path\n"
+                "import sys\n"
+                "Path(sys.argv[1], 'validator-output.txt').write_text('generated')\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+
+            result = run_official_validator(
+                OfficialValidatorConfig(
+                    Path(sys.executable),
+                    (str(validator_script), "{output}"),
+                ),
+                output,
+            )
+
+            self.assertEqual(result["status"], "passed")
+            self.assertFalse(result["validator_tree_preserved"])
+            self.assertEqual(result["validator_modified_paths"], ["validator-output.txt"])
+            self.assertEqual(tree_sha256(output), before)
+
     def test_renpy_sdk_configuration_uses_launcher_project_compile_contract(self):
         config = renpy_sdk_validator(Path(sys.executable), timeout_seconds=45)
 

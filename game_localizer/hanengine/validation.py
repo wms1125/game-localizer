@@ -4,8 +4,10 @@ import hashlib
 import json
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -200,6 +202,15 @@ def tree_sha256(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _tree_file_hashes(root: Path) -> dict[str, str]:
+    resolved = root.expanduser().resolve(strict=True)
+    return {
+        path.relative_to(resolved).as_posix(): _sha256_file(path)
+        for path in resolved.rglob("*")
+        if path.is_file()
+    }
+
+
 def _adapter_payload(metadata: AdapterMetadata) -> dict[str, object]:
     return {
         "adapter_id": metadata.adapter_id,
@@ -332,19 +343,31 @@ def run_official_validator(
 ) -> dict[str, object]:
     if config is None:
         return {"status": "not_configured"}
-    arguments = tuple(
-        str(output_root) if argument == _OUTPUT_PLACEHOLDER else argument
-        for argument in config.arguments
-    )
     try:
-        completed = subprocess.run(
-            [str(config.command), *arguments],
-            cwd=output_root,
-            capture_output=True,
-            check=False,
-            timeout=config.timeout_seconds,
-            text=False,
-        )
+        with tempfile.TemporaryDirectory(
+            prefix="hanengine-validator-", dir=output_root.parent
+        ) as temporary:
+            shadow_root = Path(temporary) / "candidate"
+            shutil.copytree(output_root, shadow_root)
+            before = _tree_file_hashes(shadow_root)
+            arguments = tuple(
+                str(shadow_root) if argument == _OUTPUT_PLACEHOLDER else argument
+                for argument in config.arguments
+            )
+            completed = subprocess.run(
+                [str(config.command), *arguments],
+                cwd=shadow_root,
+                capture_output=True,
+                check=False,
+                timeout=config.timeout_seconds,
+                text=False,
+            )
+            after = _tree_file_hashes(shadow_root)
+            modified_paths = sorted(
+                path
+                for path in set(before) | set(after)
+                if before.get(path) != after.get(path)
+            )
     except subprocess.TimeoutExpired:
         return {
             "status": "failed",
@@ -364,6 +387,8 @@ def run_official_validator(
         "kind": config.kind,
         "tool": config.command.name,
         "exit_code": completed.returncode,
+        "validator_tree_preserved": not modified_paths,
+        "validator_modified_paths": modified_paths,
     }
 
 

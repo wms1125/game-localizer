@@ -51,9 +51,47 @@ _COMMANDS = frozenset(
         "new",
     }
 )
+# These screen-language properties carry identifiers, styles, or asset paths,
+# not user-facing text. A text statement without one of these properties is
+# still extracted so screen labels remain localizable.
+_SCREEN_NON_TEXT_NAMES = frozenset(
+    {
+        "add",
+        "action",
+        "activate_sound",
+        "alternate",
+        "at",
+        "background",
+        "color",
+        "hover_sound",
+        "font",
+        "foreground",
+        "id",
+        "insensitive",
+        "key",
+        "layout",
+        "mouse",
+        "scrollbars",
+        "selected",
+        "selected_hover",
+        "selected_idle",
+        "sound",
+        "size_group",
+        "style",
+        "style_prefix",
+        "thumb",
+        "unselected",
+        "variant",
+        "xalign",
+        "yalign",
+    }
+)
+_SCREEN_TEXT_STATEMENTS = frozenset({"label", "text", "textbutton"})
 _PLACEHOLDER_RE = re.compile(r"\[[^\]\n]+\]|\{[^{}\n]+\}")
 _ID_RE = re.compile(r"[^A-Za-z0-9_]+")
 _LANGUAGE_ID_RE = re.compile(r"[^A-Za-z0-9_]+")
+_LANGUAGE_ACTIVATION_PATH = PurePosixPath("game/hanengine_language.rpy")
+_LANGUAGE_ACTIVATION_RE = re.compile(r"^define config\.default_language = (.+)$")
 _TRANSLATE_HEADER_RE = re.compile(
     r"^translate ([A-Za-z_][A-Za-z0-9_]*) "
     r"(strings|[A-Za-z_][A-Za-z0-9_]*):$"
@@ -225,7 +263,9 @@ def renpy_project_files(root: Path) -> tuple[Path, ...]:
         sorted(
             path
             for path in game.rglob("*.rpy")
-            if path.is_file() and "tl" not in path.relative_to(root).parts
+            if path.is_file()
+            and "tl" not in path.relative_to(root).parts
+            and path.relative_to(root).as_posix() != _LANGUAGE_ACTIVATION_PATH.as_posix()
         )
     )
 
@@ -291,6 +331,43 @@ def validate_renpy_translation_text(text: str) -> int:
     return total_pairs
 
 
+def validate_renpy_language_activation_text(
+    text: str,
+    *,
+    expected_language: str | None = None,
+) -> str:
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    declarations: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        declaration = _LANGUAGE_ACTIVATION_RE.fullmatch(line)
+        if declaration is None:
+            raise RenPyValidationError(
+                f"invalid language activation statement at line {line_number}"
+            )
+        try:
+            language = ast.literal_eval(declaration.group(1))
+        except (SyntaxError, ValueError) as exc:
+            raise RenPyValidationError(
+                f"invalid language identifier at line {line_number}"
+            ) from exc
+        if not isinstance(language, str) or language != renpy_language_identifier(language):
+            raise RenPyValidationError(
+                f"invalid language identifier at line {line_number}"
+            )
+        declarations.append(language)
+    if len(declarations) != 1:
+        raise RenPyValidationError(
+            "language activation file must contain one default language declaration"
+        )
+    language = declarations[0]
+    if expected_language is not None and language != renpy_language_identifier(expected_language):
+        raise RenPyValidationError("language activation target does not match the catalog")
+    return language
+
+
 def _project_fingerprint(root: Path, files: Iterable[Path]) -> str:
     digest = hashlib.sha256()
     for path in files:
@@ -318,12 +395,16 @@ def _extract_line(line: str) -> tuple[str, str | None, str] | None:
         return None
     before = tokens[:string_index]
     after = tokens[string_index + 1 :]
+    prefix_names = [token.string for token in before if token.type == tokenize.NAME]
     if any(token.type not in {tokenize.NAME, tokenize.OP} for token in before):
         return None
-    if any(token.string not in {";", ":"} for token in after):
+    if any(token.string not in {";", ":"} for token in after) and (
+        not prefix_names or prefix_names[0] not in _SCREEN_TEXT_STATEMENTS
+    ):
         return None
-    prefix_names = [token.string for token in before if token.type == tokenize.NAME]
     if prefix_names and prefix_names[0] in _COMMANDS:
+        return None
+    if any(name in _SCREEN_NON_TEXT_NAMES for name in prefix_names):
         return None
     if any(name in {"old", "new"} for name in prefix_names):
         return None
@@ -347,6 +428,7 @@ class RenPyExtractor:
         root = project_root.resolve(strict=True)
         files = renpy_project_files(root)
         entries: list[RenPySegment] = []
+        duplicate_counts: dict[str, int] = {}
         for path in files:
             relative = path.relative_to(root).as_posix()
             for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -355,7 +437,14 @@ class RenPyExtractor:
                     continue
                 kind, speaker, source = parsed
                 identity = f"{relative}\0{kind}\0{speaker or ''}\0{source}".encode("utf-8")
-                segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
+                base_segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
+                occurrence = duplicate_counts.get(base_segment_id, 0)
+                duplicate_counts[base_segment_id] = occurrence + 1
+                if occurrence:
+                    identity += f"\0{occurrence}".encode("ascii")
+                    segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
+                else:
+                    segment_id = base_segment_id
                 entries.append(
                     RenPySegment(
                         segment_id=segment_id,
@@ -375,6 +464,8 @@ class RenPyExtractor:
 class RenPyBuildResult:
     path: Path
     sha256: str
+    activation_path: Path
+    activation_sha256: str
     entries_written: int
 
 
@@ -397,6 +488,11 @@ class RenPyWriter:
             source = source_root.resolve(strict=True)
             if output == source:
                 raise ValueError("output root must be separate from source root")
+            source_activation = source / Path(*_LANGUAGE_ACTIVATION_PATH.parts)
+            if source_activation.exists():
+                raise ValueError(
+                    "source project already contains the reserved HanEngine language activation path"
+                )
             current = RenPyExtractor().extract(source, language=catalog.language)
             if current.project_fingerprint != catalog.project_fingerprint:
                 raise ValueError("source project changed since extraction")
@@ -409,8 +505,18 @@ class RenPyWriter:
         path = output / "game" / "tl" / language / "hanengine_translations.rpy"
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = ["# Generated by HanEngine; source project remains unchanged.", ""]
-        dialogue = [item for item in translated if item.kind == "dialogue"]
-        strings = [item for item in translated if item.kind != "dialogue"]
+        # Ren'Py indexes string translations by the old text globally. Repeating
+        # an old value in separate blocks causes a runtime duplicate-translation
+        # error, so retain the first translated occurrence deterministically.
+        unique_translated: list[RenPySegment] = []
+        seen_sources: set[str] = set()
+        for item in translated:
+            if item.source_text in seen_sources:
+                continue
+            seen_sources.add(item.source_text)
+            unique_translated.append(item)
+        dialogue = [item for item in unique_translated if item.kind == "dialogue"]
+        strings = [item for item in unique_translated if item.kind != "dialogue"]
         for item in dialogue:
             block_id = "hanengine_" + _ID_RE.sub("_", item.segment_id)
             lines.extend(
@@ -430,7 +536,27 @@ class RenPyWriter:
         validate_renpy_translation_text(rendered)
         path.write_text(rendered, encoding="utf-8", newline="\n")
         content = path.read_bytes()
-        return RenPyBuildResult(path, hashlib.sha256(content).hexdigest(), len(translated))
+        activation_path = output / Path(*_LANGUAGE_ACTIVATION_PATH.parts)
+        activation_lines = [
+            "# Generated by HanEngine; source project remains unchanged.",
+            "# Later Language(...) choices are persisted by Ren'Py preferences.",
+            f"define config.default_language = {_quote(language)}",
+            "",
+        ]
+        activation_text = "\n".join(activation_lines)
+        validate_renpy_language_activation_text(
+            activation_text,
+            expected_language=language,
+        )
+        activation_path.write_text(activation_text, encoding="utf-8", newline="\n")
+        activation_content = activation_path.read_bytes()
+        return RenPyBuildResult(
+            path,
+            hashlib.sha256(content).hexdigest(),
+            activation_path,
+            hashlib.sha256(activation_content).hexdigest(),
+            len(translated),
+        )
 
 
 __all__ = [
@@ -442,5 +568,6 @@ __all__ = [
     "RenPyWriter",
     "renpy_language_identifier",
     "renpy_project_files",
+    "validate_renpy_language_activation_text",
     "validate_renpy_translation_text",
 ]
