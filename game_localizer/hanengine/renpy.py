@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import tokenize
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -91,7 +92,23 @@ _SCREEN_TEXT_STATEMENTS = frozenset({"label", "text", "textbutton"})
 _ID_RE = re.compile(r"[^A-Za-z0-9_]+")
 _LANGUAGE_ID_RE = re.compile(r"[^A-Za-z0-9_]+")
 _LANGUAGE_ACTIVATION_PATH = PurePosixPath("game/hanengine_language.rpy")
+_FONT_CONFIG_PATH = PurePosixPath("game/hanengine_fonts.rpy")
+_FONT_DIRECTORY = PurePosixPath("game/hanengine_fonts")
 _LANGUAGE_ACTIVATION_RE = re.compile(r"^define config\.default_language = (.+)$")
+_FONT_CONFIG_HEADER_RE = re.compile(
+    r"^translate ([A-Za-z_][A-Za-z0-9_]*) python:$"
+)
+_FONT_GROUP_INIT = "    _hanengine_font_group = FontGroup()"
+_FONT_GROUP_ADD_RE = re.compile(
+    r'^    _hanengine_font_group\.add\("([A-Za-z0-9._/-]+)", '
+    r"(None|0x[0-9a-f]+), (None|0x[0-9a-f]+)\)$"
+)
+_FONT_GROUP_ASSIGNMENT = (
+    "    gui.system_font = gui.main_font = gui.text_font = "
+    "gui.name_text_font = gui.interface_text_font = "
+    "gui.button_text_font = gui.choice_button_text_font = "
+    "_hanengine_font_group"
+)
 _TRANSLATE_HEADER_RE = re.compile(
     r"^translate ([A-Za-z_][A-Za-z0-9_]*) "
     r"(strings|[A-Za-z_][A-Za-z0-9_]*):$"
@@ -286,7 +303,11 @@ def renpy_project_files(root: Path) -> tuple[Path, ...]:
             for path in game.rglob("*.rpy")
             if path.is_file()
             and "tl" not in path.relative_to(root).parts
-            and path.relative_to(root).as_posix() != _LANGUAGE_ACTIVATION_PATH.as_posix()
+            and path.relative_to(root).as_posix()
+            not in {
+                _LANGUAGE_ACTIVATION_PATH.as_posix(),
+                _FONT_CONFIG_PATH.as_posix(),
+            }
         )
     )
 
@@ -386,6 +407,73 @@ def validate_renpy_language_activation_text(
     language = declarations[0]
     if expected_language is not None and language != renpy_language_identifier(expected_language):
         raise RenPyValidationError("language activation target does not match the catalog")
+    return language
+
+
+def _font_unicode_coverage(path: Path) -> set[int]:
+    try:
+        from fontTools.ttLib import TTFont
+    except ImportError as exc:
+        raise ValueError("fontTools is required when shipping Ren'Py fonts") from exc
+    try:
+        font = TTFont(str(path), lazy=True)
+    except (OSError, ValueError, KeyError) as exc:
+        raise ValueError(f"font could not be read: {path.name}") from exc
+    try:
+        coverage: set[int] = set()
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                coverage.update(table.cmap)
+        return coverage
+    except (KeyError, AttributeError) as exc:
+        raise ValueError(f"font has no Unicode cmap: {path.name}") from exc
+    finally:
+        font.close()
+
+
+def _codepoint_ranges(codepoints: Iterable[int]) -> tuple[tuple[int, int], ...]:
+    ordered = sorted(set(codepoints))
+    ranges: list[tuple[int, int]] = []
+    start: int | None = None
+    previous: int | None = None
+    for codepoint in ordered:
+        if start is None:
+            start = previous = codepoint
+        elif codepoint == previous + 1:
+            previous = codepoint
+        else:
+            ranges.append((start, previous))
+            start = previous = codepoint
+    if start is not None and previous is not None:
+        ranges.append((start, previous))
+    return tuple(ranges)
+
+
+def validate_renpy_font_config_text(
+    text: str,
+    *,
+    expected_language: str | None = None,
+) -> str:
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if len(lines) < 4:
+        raise RenPyValidationError("font configuration is incomplete")
+    header = _FONT_CONFIG_HEADER_RE.fullmatch(lines[0])
+    if header is None:
+        raise RenPyValidationError("invalid font configuration header")
+    language = header.group(1)
+    if language != renpy_language_identifier(language):
+        raise RenPyValidationError("invalid font configuration language")
+    if expected_language is not None and language != renpy_language_identifier(expected_language):
+        raise RenPyValidationError("font configuration target does not match the catalog")
+    if lines[1] != _FONT_GROUP_INIT or lines[-1] != _FONT_GROUP_ASSIGNMENT:
+        raise RenPyValidationError("font configuration has invalid FontGroup statements")
+    additions = lines[2:-1]
+    if not additions or any(_FONT_GROUP_ADD_RE.fullmatch(line) is None for line in additions):
+        raise RenPyValidationError("font configuration has invalid font ranges")
+    if not any(line.endswith(", None, None)") for line in additions):
+        raise RenPyValidationError("font configuration has no fallback font")
     return language
 
 
@@ -524,6 +612,7 @@ class RenPyBuildResult:
     activation_path: Path
     activation_sha256: str
     entries_written: int
+    generated_paths: tuple[Path, ...] = ()
 
 
 def _quote(value: str) -> str:
@@ -537,6 +626,7 @@ class RenPyWriter:
         output_root: Path,
         *,
         source_root: Path | None = None,
+        font_paths: Iterable[Path] = (),
     ) -> RenPyBuildResult:
         if not isinstance(catalog, RenPyCatalog):
             raise TypeError("catalog must be a RenPyCatalog")
@@ -549,6 +639,12 @@ class RenPyWriter:
             if source_activation.exists():
                 raise ValueError(
                     "source project already contains the reserved HanEngine language activation path"
+                )
+            source_font_config = source / Path(*_FONT_CONFIG_PATH.parts)
+            source_font_directory = source / Path(*_FONT_DIRECTORY.parts)
+            if source_font_config.exists() or source_font_directory.exists():
+                raise ValueError(
+                    "source project already contains the reserved HanEngine font paths"
                 )
             current = RenPyExtractor().extract(source, language=catalog.language)
             if current.project_fingerprint != catalog.project_fingerprint:
@@ -607,13 +703,106 @@ class RenPyWriter:
         )
         activation_path.write_text(activation_text, encoding="utf-8", newline="\n")
         activation_content = activation_path.read_bytes()
+        copied_fonts, font_config_path = self._write_fonts(
+            output,
+            language,
+            translated,
+            font_paths,
+        )
+        generated_paths = (path, activation_path)
+        if font_config_path is not None:
+            generated_paths += (font_config_path,)
+        generated_paths += copied_fonts
         return RenPyBuildResult(
             path,
             hashlib.sha256(content).hexdigest(),
             activation_path,
             hashlib.sha256(activation_content).hexdigest(),
             len(translated),
+            generated_paths,
         )
+
+    @staticmethod
+    def _write_fonts(
+        output: Path,
+        language: str,
+        translated: Iterable[RenPySegment],
+        font_paths: Iterable[Path],
+    ) -> tuple[tuple[Path, ...], Path | None]:
+        paths = tuple(font_paths)
+        if not paths:
+            return (), None
+        resolved_paths: list[Path] = []
+        names: set[str] = set()
+        for path in paths:
+            if not isinstance(path, Path):
+                raise TypeError("font_paths must contain Path values")
+            candidate = path.expanduser()
+            if candidate.is_symlink():
+                raise ValueError("font must not be a symbolic link")
+            resolved = candidate.resolve(strict=True)
+            if (
+                not resolved.is_file()
+                or resolved.suffix.casefold() not in {".ttf", ".otf"}
+            ):
+                raise ValueError("font must be an existing non-symlink .ttf or .otf file")
+            name = re.sub(r"[^A-Za-z0-9._-]+", "_", resolved.name)
+            if not name or name in {".", ".."}:
+                raise ValueError("font filename cannot be sanitized safely")
+            folded = name.casefold()
+            if folded in names:
+                raise ValueError("font filenames collide after sanitization")
+            names.add(folded)
+            resolved_paths.append(resolved)
+
+        required = {
+            ord(character)
+            for item in translated
+            for character in (item.target_text or "")
+            if not character.isspace() and ord(character) >= 0x20
+        }
+        coverage = tuple(_font_unicode_coverage(path) for path in resolved_paths)
+        missing = sorted(
+            codepoint
+            for codepoint in required
+            if not any(codepoint in table for table in coverage)
+        )
+        if missing:
+            preview = ", ".join(f"U+{codepoint:04X}" for codepoint in missing[:8])
+            raise ValueError(f"configured fonts do not cover translated text: {preview}")
+
+        font_directory = output / Path(*_FONT_DIRECTORY.parts)
+        font_directory.mkdir(parents=True, exist_ok=True)
+        copied: list[Path] = []
+        references: list[str] = []
+        for resolved in resolved_paths:
+            destination = font_directory / re.sub(r"[^A-Za-z0-9._-]+", "_", resolved.name)
+            shutil.copy2(resolved, destination)
+            copied.append(destination)
+            references.append(f"{_FONT_DIRECTORY.name}/{destination.name}")
+
+        assigned: set[int] = set()
+        config_lines = [
+            "# Generated by HanEngine; source project remains unchanged.",
+            f"translate {language} python:",
+            _FONT_GROUP_INIT,
+        ]
+        for reference, table in zip(references, coverage):
+            available = (required & table) - assigned
+            ranges = _codepoint_ranges(available)
+            assigned.update(available)
+            for start, end in ranges:
+                config_lines.append(
+                    f"    _hanengine_font_group.add({_quote(reference)}, {hex(start)}, {hex(end)})"
+                )
+        fallback = references[-1]
+        config_lines.append(f"    _hanengine_font_group.add({_quote(fallback)}, None, None)")
+        config_lines.extend([_FONT_GROUP_ASSIGNMENT, ""])
+        config_text = "\n".join(config_lines)
+        validate_renpy_font_config_text(config_text, expected_language=language)
+        font_config_path = output / Path(*_FONT_CONFIG_PATH.parts)
+        font_config_path.write_text(config_text, encoding="utf-8", newline="\n")
+        return tuple(copied), font_config_path
 
 
 __all__ = [
@@ -627,5 +816,6 @@ __all__ = [
     "renpy_project_files",
     "validate_renpy_placeholders",
     "validate_renpy_language_activation_text",
+    "validate_renpy_font_config_text",
     "validate_renpy_translation_text",
 ]

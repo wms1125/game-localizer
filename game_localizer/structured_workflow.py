@@ -36,6 +36,7 @@ from game_localizer.hanengine.multiengine import (
     LocalizationCatalog,
     LocalizationEntry,
 )
+from game_localizer.hanengine.segments import JsonValue
 from game_localizer.hanengine.pipeline import (
     HanPipelineV1,
     PipelineTranslationOutcome,
@@ -333,20 +334,25 @@ class StructuredWorkflowSession:
         self,
         catalog: LocalizationCatalog,
         output_root: Path,
+        *,
+        output_options: dict[str, JsonValue] | None = None,
     ) -> StructuredBuildOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
         if not isinstance(output_root, Path):
             raise TypeError("output_root must be a Path")
+        if output_options is not None and not isinstance(output_options, dict):
+            raise TypeError("output_options must be a dictionary or None")
         if self.project_store is None:
             raise RuntimeError("workflow session is closed")
         with self.project_store.acquire_project_lock():
-            return self._build_unlocked(catalog, output_root)
+            return self._build_unlocked(catalog, output_root, output_options or {})
 
     def _build_unlocked(
         self,
         catalog: LocalizationCatalog,
         output_root: Path,
+        output_options: dict[str, JsonValue],
     ) -> StructuredBuildOutcome:
         selection = self.detect()
         adapter = self.runtime.registry.get(selection.adapter_id)
@@ -381,7 +387,7 @@ class StructuredWorkflowSession:
                 staging_root=staging_root,
                 validated_segments=translated,
                 source_tree_fingerprint=catalog.project_fingerprint,
-                output_options={},
+                output_options=output_options,
                 context=context,
             ),
         )

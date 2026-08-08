@@ -468,7 +468,16 @@ class ProjectValidationRunner:
                 adapter = workflow.runtime.registry.get(selection.adapter_id)
                 extracted = workflow.extract()
                 translated = workflow.translate(extracted.catalog, dictionary)
-                built = workflow.build(translated.catalog, request.output_root)
+                output_options: dict[str, object] = {}
+                if request.engine_id == "renpy" and request.font_paths:
+                    output_options["renpy_font_paths"] = [
+                        str(path) for path in request.font_paths
+                    ]
+                built = workflow.build(
+                    translated.catalog,
+                    request.output_root,
+                    output_options=output_options,
+                )
 
             build_result = built.build_result
             verify_result = built.verify_result

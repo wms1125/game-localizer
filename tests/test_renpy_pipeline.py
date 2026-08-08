@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from game_localizer.hanengine.renpy import (
     RenPyCatalog,
@@ -9,6 +10,7 @@ from game_localizer.hanengine.renpy import (
     RenPyValidationError,
     RenPyWriter,
     renpy_language_identifier,
+    validate_renpy_font_config_text,
     validate_renpy_language_activation_text,
     validate_renpy_translation_text,
 )
@@ -257,6 +259,53 @@ class RenPyPipelineTests(unittest.TestCase):
 
         self.assertEqual(rendered.count('old "A narration line."'), 1)
         self.assertEqual(validate_renpy_translation_text(rendered), 3)
+
+    def test_writer_ships_fonts_and_generates_runtime_fallback_config(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        primary = root / "Source Han Sans.ttf"
+        fallback = root / "fallback.ttf"
+        primary.write_bytes(b"primary font")
+        fallback.write_bytes(b"fallback font")
+        catalog = RenPyExtractor().extract(root).translate(
+            {
+                "Hello, [name]! {b}Welcome{/b}.": "你好，[name]！{b}欢迎{/b}。",
+                "Start game": "开始游戏",
+                "A narration line.": "Р旁白",
+            }
+        )
+        coverage = [
+            set(map(ord, "你好欢迎开始游戏旁白。！，”"))
+            | set(range(0x20, 0x7F)),
+            set(map(ord, "Р")),
+        ]
+        with patch(
+            "game_localizer.hanengine.renpy._font_unicode_coverage",
+            side_effect=coverage,
+        ):
+            result = RenPyWriter().build(
+                catalog,
+                root / "localized-output",
+                source_root=root,
+                font_paths=(primary, fallback),
+            )
+
+        output = root / "localized-output"
+        shipped = output / "game" / "hanengine_fonts"
+        self.assertEqual(
+            sorted(path.name for path in shipped.iterdir()),
+            ["Source_Han_Sans.ttf", "fallback.ttf"],
+        )
+        config = output / "game" / "hanengine_fonts.rpy"
+        config_text = config.read_text(encoding="utf-8")
+        self.assertIn('"hanengine_fonts/Source_Han_Sans.ttf"', config_text)
+        self.assertIn('"hanengine_fonts/fallback.ttf"', config_text)
+        self.assertEqual(
+            validate_renpy_font_config_text(config_text, expected_language="zh-CN"),
+            "zh_cn",
+        )
+        self.assertIn(config, result.generated_paths)
+        self.assertIn(shipped / "Source_Han_Sans.ttf", result.generated_paths)
 
     def test_language_identifier_is_safe_and_generated_syntax_fails_closed(self):
         self.assertEqual(renpy_language_identifier("zh-CN"), "zh_cn")

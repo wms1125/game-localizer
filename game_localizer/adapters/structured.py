@@ -33,6 +33,7 @@ from game_localizer.hanengine.renpy import (
     RenPyWriter,
     renpy_language_identifier,
     renpy_project_files,
+    validate_renpy_font_config_text,
     validate_renpy_placeholders,
     validate_renpy_language_activation_text,
     validate_renpy_translation_text,
@@ -1089,14 +1090,20 @@ class RenPyAdapterV1(StructuredAdapterV1):
             removed_placeholder = False
             try:
                 _copy_project_tree(request.source_root, temporary, request.context)
+                configured_fonts = request.output_options.get("renpy_font_paths", [])
+                if not isinstance(configured_fonts, list) or any(
+                    not isinstance(path, str) or not path for path in configured_fonts
+                ):
+                    raise ValueError("renpy_font_paths must be a list of non-empty strings")
                 written = RenPyWriter().build(
                     catalog,
                     temporary,
                     source_root=request.source_root,
+                    font_paths=tuple(Path(path) for path in configured_fonts),
                 )
                 relative_paths = tuple(
                     path.relative_to(temporary).as_posix()
-                    for path in (written.path, written.activation_path)
+                    for path in written.generated_paths
                 )
                 change_kinds = tuple(
                     (
@@ -1245,8 +1252,17 @@ class RenPyAdapterV1(StructuredAdapterV1):
             language = renpy_language_identifier(self.target_language)
             translation_path = f"game/tl/{language}/hanengine_translations.rpy"
             activation_path = "game/hanengine_language.rpy"
-            expected_paths = {translation_path, activation_path}
             manifest_paths = [entry.relative_path for entry in request.manifest]
+            font_paths = sorted(
+                path
+                for path in manifest_paths
+                if path.startswith("game/hanengine_fonts/")
+                and Path(path).suffix.casefold() in {".ttf", ".otf"}
+            )
+            font_config_path = "game/hanengine_fonts.rpy"
+            expected_paths = {translation_path, activation_path, *font_paths}
+            if font_paths:
+                expected_paths.add(font_config_path)
             manifest_complete = (
                 len(manifest_paths) == len(expected_paths)
                 and set(manifest_paths) == expected_paths
@@ -1256,9 +1272,9 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     "renpy_generated_manifest",
                     manifest_complete,
                     (
-                        "Manifest contains the translation and language activation files"
+                        "Manifest contains the translation, language activation, and configured font files"
                         if manifest_complete
-                        else "Manifest does not contain exactly the required Ren'Py generated files"
+                        else "Manifest does not contain exactly the required Ren'Py generated and font files"
                     ),
                 )
             )
@@ -1266,7 +1282,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 issues.append(
                     self._issue(
                         "renpy_generated_manifest_incomplete",
-                        "The candidate manifest must contain one translation file and one language activation file",
+                        "The candidate manifest must contain the translation, language activation, and configured font files",
                         suggested_action="Discard and rebuild the candidate",
                     )
                 )
@@ -1338,6 +1354,29 @@ class RenPyAdapterV1(StructuredAdapterV1):
                         )
                     )
 
+                if entry.relative_path in font_paths:
+                    supported = path.suffix.casefold() in {".ttf", ".otf"}
+                    checks.append(
+                        VerificationCheck(
+                            f"font_binary:{entry.relative_path}",
+                            supported,
+                            "Shipped font has a supported extension"
+                            if supported
+                            else "Shipped font has an unsupported extension",
+                        )
+                    )
+                    if not supported:
+                        syntax_passed = False
+                        issues.append(
+                            self._issue(
+                                "renpy_font_file_invalid",
+                                "A shipped Ren'Py font does not have a supported font extension",
+                                suggested_action="Discard and rebuild the candidate with .ttf or .otf fonts",
+                            )
+                        )
+                    request.context.progress(index, len(request.manifest), current_item=entry.relative_path)
+                    continue
+
                 try:
                     text = path.read_bytes().decode("utf-8-sig")
                     decoded = True
@@ -1357,6 +1396,11 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     try:
                         if entry.relative_path == translation_path:
                             validate_renpy_translation_text(text)
+                        elif entry.relative_path == font_config_path:
+                            validate_renpy_font_config_text(
+                                text,
+                                expected_language=language,
+                            )
                         else:
                             validate_renpy_language_activation_text(
                                 text,

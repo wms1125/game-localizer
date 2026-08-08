@@ -130,6 +130,10 @@ class ProjectValidationTests(unittest.TestCase):
                     "required_codepoints": [],
                     "missing_codepoints": [],
                 },
+            ), patch(
+                "game_localizer.hanengine.renpy._font_unicode_coverage",
+                return_value=set(range(0x20, 0x7F))
+                | set(map(ord, "请选择目的地。你好！开始游戏欢迎来到教程。\uff0c")),
             ):
                 record = ProjectValidationRunner().run(request)
 
