@@ -31,7 +31,7 @@
 - Create `examples/dictionary.json`: editable translation template.
 - Create `examples/game.json`: offline end-to-end sample resource.
 - Create `README.md`: scope, dictionary preparation, commands, outputs, limitations, and ethics.
-- Modify `.gitignore`: ignore Python caches and generated example outputs.
+- Modify `.gitignore`: retain `.worktrees/` and ignore Python caches and generated example outputs.
 
 ---
 
@@ -254,6 +254,12 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(result.replacement_count, 1)
         self.assertEqual(result.matches[0].location, "TXT 第 1 行")
         self.assertEqual(result.untranslated, {"Options": ""})
+
+    def test_plaintext_partial_match_exports_the_complete_original_line(self):
+        result = transform_plaintext("Open New Game\n", {"New Game": "新游戏"})
+        self.assertEqual(result.content, "Open 新游戏\n")
+        self.assertEqual(result.untranslated, {"Open New Game": ""})
+        self.assertEqual(result.unmatched[0].original, "Open New Game")
 ```
 
 - [ ] **Step 2: Run transformation tests and verify RED**
@@ -361,10 +367,12 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
     output_lines: list[str] = []
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         location = f"{label} 第 {line_number} 行"
+        matched_spans: list[tuple[int, int]] = []
 
         def replace(match: re.Match[str]) -> str:
             original = match.group(0)
             translated = dictionary[original]
+            matched_spans.append(match.span())
             result.matched_keys.add(original)
             result.replacement_count += 1
             result.matches.append(MatchPreview(location, original, translated))
@@ -375,11 +383,16 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
         translated_line = pattern.sub(replace, line) if pattern else line
         output_lines.append(translated_line)
-        candidate = translated_line.strip()
-        if candidate not in dictionary.values() and is_translation_candidate(candidate):
-            if not result.matches or result.matches[-1].location != location or re.search(r"[A-Za-z\u3040-\u30ff]", candidate):
-                result.untranslated.setdefault(candidate, "")
-                result.unmatched.append(UnmatchedPreview(location, candidate))
+        original_candidate = line.strip()
+        remaining_parts: list[str] = []
+        cursor = 0
+        for start, end in matched_spans:
+            remaining_parts.append(line[cursor:start])
+            cursor = end
+        remaining_parts.append(line[cursor:])
+        if is_translation_candidate("".join(remaining_parts)):
+            result.untranslated.setdefault(original_candidate, "")
+            result.unmatched.append(UnmatchedPreview(location, original_candidate))
     result.content = "".join(output_lines)
     return result
 ```
@@ -388,7 +401,7 @@ def transform_plaintext(text: str, dictionary: dict[str, str], label: str = "TXT
 
 Run: `python -m unittest tests.test_translator -v`
 
-Expected: 6 tests pass.
+Expected: 7 tests pass.
 
 - [ ] **Step 6: Commit format-aware transformations**
 
@@ -409,12 +422,16 @@ git commit -m "feat: transform json csv and text resources"
 - Consumes: Task 1 dictionary loader and Task 2 transformers.
 - Produces: `default_output_paths(resource_path: str | Path) -> tuple[Path, Path]`.
 - Produces: `atomic_write_text(path: Path, content: str) -> None`.
+- Produces: `atomic_write_many(outputs: dict[Path, str]) -> None`, which stages and commits all outputs as one rollback-capable transaction.
 - Produces: `process_resource(resource_path, dictionary_path, output_path=None, untranslated_path=None) -> ProcessingResult`.
 
 - [ ] **Step 1: Add failing filesystem integration tests**
 
 ```python
-from translator import default_output_paths, process_resource
+import os
+from unittest.mock import patch
+
+from translator import atomic_write_many, atomic_write_text, default_output_paths, process_resource
 
 
 class ProcessingTests(unittest.TestCase):
@@ -451,6 +468,50 @@ class ProcessingTests(unittest.TestCase):
             with self.assertRaisesRegex(TranslationError, "不支持"):
                 process_resource(resource, dictionary)
             self.assertFalse((root / "game.zh.exe").exists())
+
+    def test_process_resource_rejects_colliding_output_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resource = root / "game.txt"
+            dictionary = root / "dictionary.json"
+            shared_output = root / "same.json"
+            resource.write_text("New Game", encoding="utf-8")
+            dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
+            with self.assertRaisesRegex(TranslationError, "输出路径不能相同"):
+                process_resource(resource, dictionary, shared_output, shared_output)
+
+    def test_atomic_write_cleans_temporary_file_when_fsync_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory, "output.txt")
+            target.write_text("old", encoding="utf-8")
+            with patch("translator.os.fsync", side_effect=OSError("disk full")):
+                with self.assertRaisesRegex(TranslationError, "disk full"):
+                    atomic_write_text(target, "new")
+            self.assertEqual(target.read_text(encoding="utf-8"), "old")
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_atomic_write_many_rolls_back_when_second_commit_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            translated = root / "game.zh.txt"
+            untranslated = root / "game.untranslated.json"
+            translated.write_text("old translated", encoding="utf-8")
+            untranslated.write_text("old todo", encoding="utf-8")
+            real_replace = os.replace
+            replace_calls = 0
+
+            def fail_second_commit(source, destination):
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 4:
+                    raise OSError("second commit failed")
+                return real_replace(source, destination)
+
+            with patch("translator.os.replace", side_effect=fail_second_commit):
+                with self.assertRaisesRegex(TranslationError, "second commit failed"):
+                    atomic_write_many({translated: "new translated", untranslated: "new todo"})
+            self.assertEqual(translated.read_text(encoding="utf-8"), "old translated")
+            self.assertEqual(untranslated.read_text(encoding="utf-8"), "old todo")
 ```
 
 - [ ] **Step 2: Run processing tests and verify RED**
@@ -475,27 +536,77 @@ def default_output_paths(resource_path: str | Path) -> tuple[Path, Path]:
 
 
 def atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_name: str | None = None
+    atomic_write_many({path: content})
+
+
+def _cleanup_file(path: Path, errors: list[str]) -> None:
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary_name = handle.name
-        os.replace(temporary_name, path)
+        path.unlink(missing_ok=True)
     except OSError as exc:
-        if temporary_name:
-            Path(temporary_name).unlink(missing_ok=True)
-        raise TranslationError(f"无法写入输出文件 {path}: {exc}") from exc
+        errors.append(f"清理 {path} 失败: {exc}")
+
+
+def atomic_write_many(outputs: dict[Path, str]) -> None:
+    ordered_outputs = [(Path(path), content) for path, content in outputs.items()]
+    resolved = [path.resolve() for path, _ in ordered_outputs]
+    if len(set(resolved)) != len(resolved):
+        raise TranslationError("输出路径不能相同")
+
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    backup_placeholders: list[Path] = []
+    committed: set[Path] = set()
+    cleanup_errors: list[str] = []
+    try:
+        for path, content in ordered_outputs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                staged[path] = temporary
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+        for path, _ in ordered_outputs:
+            if path.exists():
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=path.parent, prefix=f".{path.name}.", suffix=".bak", delete=False
+                ) as handle:
+                    backup = Path(handle.name)
+                backup_placeholders.append(backup)
+                os.replace(path, backup)
+                backups[path] = backup
+
+        for path, _ in ordered_outputs:
+            os.replace(staged[path], path)
+            staged.pop(path)
+            committed.add(path)
+    except OSError as exc:
+        for path, _ in reversed(ordered_outputs):
+            if path in backups:
+                try:
+                    os.replace(backups[path], path)
+                except OSError as rollback_exc:
+                    cleanup_errors.append(f"恢复 {path} 失败: {rollback_exc}")
+            elif path in committed:
+                _cleanup_file(path, cleanup_errors)
+        for temporary in staged.values():
+            _cleanup_file(temporary, cleanup_errors)
+        for backup in backup_placeholders:
+            _cleanup_file(backup, cleanup_errors)
+        details = f"；{'；'.join(cleanup_errors)}" if cleanup_errors else ""
+        raise TranslationError(f"无法以事务方式写入输出文件: {exc}{details}") from exc
+    else:
+        for backup in backup_placeholders:
+            _cleanup_file(backup, cleanup_errors)
 
 
 def process_resource(
@@ -513,6 +624,8 @@ def process_resource(
     default_output, default_untranslated = default_output_paths(resource)
     output = Path(output_path) if output_path else default_output
     untranslated_output = Path(untranslated_path) if untranslated_path else default_untranslated
+    if output.resolve() == untranslated_output.resolve():
+        raise TranslationError("输出路径不能相同")
     if output.resolve() == resource.resolve() or untranslated_output.resolve() == resource.resolve():
         raise TranslationError("输出路径不能覆盖源文件")
 
@@ -529,10 +642,11 @@ def process_resource(
     else:
         transformed = transform_plaintext(text, dictionary, suffix.removeprefix(".").upper())
 
-    atomic_write_text(output, transformed.content)
-    atomic_write_text(
-        untranslated_output,
-        json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
+    atomic_write_many(
+        {
+            output: transformed.content,
+            untranslated_output: json.dumps(transformed.untranslated, ensure_ascii=False, indent=2) + "\n",
+        }
     )
     return ProcessingResult(
         input_encoding=input_encoding,
@@ -552,7 +666,7 @@ def process_resource(
 
 Run: `python -m unittest tests.test_translator -v`
 
-Expected: 9 tests pass and no temporary files remain.
+Expected: 13 tests pass and no temporary or backup files remain.
 
 - [ ] **Step 5: Commit the safe processing pipeline**
 
@@ -948,9 +1062,10 @@ Also document the `{原文: 中文}` dictionary format, supported extensions and
 
 - [ ] **Step 3: Add generated-output ignores**
 
-`.gitignore`:
+Append the following entries to the existing `.gitignore`, retaining its `.worktrees/` entry:
 
 ```gitignore
+.worktrees/
 __pycache__/
 *.py[cod]
 examples/*.zh.json

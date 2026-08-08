@@ -1,0 +1,1327 @@
+{
+  "contract": "hanengine.benchmark/v1",
+  "static_cases": [
+    {
+      "case_id": "static-001",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-002",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-003",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-004",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-005",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-006",
+      "resolution": "1280x720",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-007",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-008",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-009",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-010",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-011",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-012",
+      "resolution": "1280x720",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-013",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-014",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-015",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-016",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-017",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-018",
+      "resolution": "1280x720",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-019",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-020",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-021",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-022",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-023",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-024",
+      "resolution": "1280x720",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-025",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-026",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-027",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-028",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-029",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-030",
+      "resolution": "1280x720",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-031",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-032",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-033",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-034",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-035",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-036",
+      "resolution": "1920x1080",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-037",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-038",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-039",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-040",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-041",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-042",
+      "resolution": "1920x1080",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-043",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-044",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-045",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-046",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-047",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-048",
+      "resolution": "1920x1080",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-049",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-050",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-051",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-052",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-053",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-054",
+      "resolution": "1920x1080",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-055",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-056",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-057",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-058",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-059",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-060",
+      "resolution": "1920x1080",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-061",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-062",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-063",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-064",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-065",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-066",
+      "resolution": "2560x1440",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-067",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-068",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-069",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-070",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-071",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-072",
+      "resolution": "2560x1440",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-073",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-074",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-075",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-076",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-077",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-078",
+      "resolution": "2560x1440",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-079",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-080",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-081",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-082",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-083",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-084",
+      "resolution": "2560x1440",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-085",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-086",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-087",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-088",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-089",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-090",
+      "resolution": "2560x1440",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-091",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-092",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-093",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-094",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-095",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-096",
+      "resolution": "3840x2160",
+      "background": "solid",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-097",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-098",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-099",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-100",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-101",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-102",
+      "resolution": "3840x2160",
+      "background": "translucent",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-103",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-104",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-105",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-106",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-107",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-108",
+      "resolution": "3840x2160",
+      "background": "textured",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-109",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-110",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-111",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-112",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-113",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-114",
+      "resolution": "3840x2160",
+      "background": "static_scene",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-115",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "sans_serif",
+      "source_language": "ja"
+    },
+    {
+      "case_id": "static-116",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "single_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-117",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-118",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "multi_line",
+      "font_rotation": "serif_sans",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-119",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "sans_serif",
+      "source_language": "en"
+    },
+    {
+      "case_id": "static-120",
+      "resolution": "3840x2160",
+      "background": "low_contrast",
+      "layout": "menu",
+      "font_rotation": "serif_sans",
+      "source_language": "ja"
+    }
+  ],
+  "dynamic_cases": [
+    {
+      "case_id": "dynamic-001",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-002",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-003",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-004",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-005",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-006",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-007",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-008",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-009",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-010",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-011",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-012",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-013",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-014",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-015",
+      "kind": "typewriter",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-016",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-017",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-018",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-019",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-020",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-021",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-022",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-023",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-024",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-025",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-026",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-027",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-028",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-029",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-030",
+      "kind": "fade_slide",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-031",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-032",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-033",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-034",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-035",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-036",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-037",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-038",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-039",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-040",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-041",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-042",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-043",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-044",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-045",
+      "kind": "animated_background",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-046",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-047",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-048",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-049",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-050",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-051",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-052",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-053",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-054",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-055",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "ja"
+    },
+    {
+      "case_id": "dynamic-056",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-057",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-058",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-059",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "en"
+    },
+    {
+      "case_id": "dynamic-060",
+      "kind": "camera_motion",
+      "frame_count": 30,
+      "source_language": "ja"
+    }
+  ]
+}
