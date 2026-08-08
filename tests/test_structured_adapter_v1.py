@@ -497,6 +497,62 @@ class StructuredPipelineTests(unittest.TestCase):
         self.assertIsInstance(incomplete, VerifyResult)
         self.assertFalse(incomplete.passed)
 
+    def test_renpy_validation_preserves_nested_interpolation_and_tag_order(self):
+        source = self.root / "renpy-placeholders"
+        game = source / "game"
+        game.mkdir(parents=True)
+        (game / "script.rpy").write_text(
+            'label start:\n    e "Stats: {color=#f00}[inventory[0][\'name\']!q]{/color}"\n',
+            encoding="utf-8",
+        )
+        adapter = RenPyAdapterV1()
+        working = self.root / "renpy-placeholders-working"
+        working.mkdir()
+        extracted = adapter.extract(
+            ExtractRequest(source, working, (), (), "project-renpy-placeholders", make_context("extract"))
+        )
+        self.assertIsInstance(extracted, ExtractResult)
+        originals = tuple(
+            Segment.from_draft("project-renpy-placeholders", "zh-CN", draft)
+            for draft in extracted.segments
+        )
+        self.assertEqual(
+            originals[0].placeholders,
+            ("{color=#f00}", "[inventory[0]['name']!q]", "{/color}"),
+        )
+
+        def validate(target_text: str) -> ValidationResult:
+            result = adapter.validate(
+                ValidationRequest(
+                    extracted.source_tree_fingerprint,
+                    originals,
+                    (
+                        replace(
+                            originals[0],
+                            target_text=target_text,
+                            translation_source="test",
+                        ),
+                    ),
+                    "utf-8",
+                    {},
+                    make_context("validate"),
+                )
+            )
+            self.assertIsInstance(result, ValidationResult)
+            return result
+
+        self.assertTrue(
+            validate("统计：{color=#f00}[inventory[0]['name']!q]{/color}").valid
+        )
+        for invalid in (
+            "统计：{color=#f00}[inventory[1]['name']!q]{/color}",
+            "统计：{/color}[inventory[0]['name']!q]{color=#f00}",
+        ):
+            with self.subTest(invalid=invalid):
+                result = validate(invalid)
+                self.assertFalse(result.valid)
+                self.assertIn("placeholder_mismatch", {issue.code for issue in result.issues})
+
 
 if __name__ == "__main__":
     unittest.main()

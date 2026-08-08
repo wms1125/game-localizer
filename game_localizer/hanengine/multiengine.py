@@ -18,9 +18,7 @@ from pathlib import Path
 from .segments import JsonValue, normalize_relative_path
 
 
-_PLACEHOLDER_RE = re.compile(
-    r"\{[^{}\r\n]+\}|\[[^\]\r\n]+\]|%(?:\d+\$)?[A-Za-z]|\$\{[^}\r\n]+\}"
-)
+_PERCENT_PLACEHOLDER_RE = re.compile(r"%(?:\d+\$)?[A-Za-z]")
 _RPG_TEXT_KEYS = frozenset(
     {
         "name",
@@ -56,7 +54,58 @@ def _require_text(value: object, name: str, *, allow_empty: bool = False) -> str
 
 def extract_placeholders(value: str) -> tuple[str, ...]:
     _require_text(value, "value", allow_empty=True)
-    return tuple(_PLACEHOLDER_RE.findall(value))
+    tokens: list[str] = []
+    index = 0
+    while index < len(value):
+        if value.startswith("${", index):
+            balanced = _balanced_placeholder(value, index + 1)
+            if balanced is not None:
+                token, index = balanced
+                tokens.append("$" + token)
+                continue
+        if value[index] in "[{":
+            balanced = _balanced_placeholder(value, index)
+            if balanced is not None:
+                token, index = balanced
+                tokens.append(token)
+                continue
+        match = _PERCENT_PLACEHOLDER_RE.match(value, index)
+        if match is not None:
+            tokens.append(match.group(0))
+            index = match.end()
+            continue
+        index += 1
+    return tuple(tokens)
+
+
+def _balanced_placeholder(value: str, start: int) -> tuple[str, int] | None:
+    opener = value[start]
+    if opener not in "[{":
+        return None
+    closer = "]" if opener == "[" else "}"
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    index = start + 1
+    while index < len(value):
+        character = value[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif opener == "[" and character in {"'", '"'}:
+            quote = character
+        elif character == opener:
+            depth += 1
+        elif character == closer:
+            depth -= 1
+            if depth == 0:
+                return value[start : index + 1], index + 1
+        index += 1
+    return None
 
 
 def _validate_placeholders(source: str, target: str) -> None:

@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
+from .multiengine import extract_placeholders as _extract_generic_placeholders
 from .segments import JsonValue
 
 
@@ -248,43 +249,19 @@ def _validate_placeholders(source: str, target: str) -> None:
         raise RenPyValidationError("rich text tags changed during translation")
 
 
+def validate_renpy_placeholders(source: str, target: str) -> None:
+    """Validate Ren'Py interpolation expressions and rich text tags."""
+    _string(source, "source", allow_empty=True)
+    _string(target, "target", allow_empty=True)
+    _validate_placeholders(source, target)
+
+
 def _extract_placeholders(text: str) -> tuple[str, ...]:
-    tokens: list[str] = []
-    index = 0
-    while index < len(text):
-        opener = text[index]
-        if opener not in "[{":
-            index += 1
-            continue
-        closer = "]" if opener == "[" else "}"
-        start = index
-        depth = 1
-        quote: str | None = None
-        escaped = False
-        index += 1
-        while index < len(text):
-            character = text[index]
-            if quote is not None:
-                if escaped:
-                    escaped = False
-                elif character == "\\":
-                    escaped = True
-                elif character == quote:
-                    quote = None
-            elif character in {"'", '"'} and opener == "[":
-                quote = character
-            elif character == opener:
-                depth += 1
-            elif character == closer:
-                depth -= 1
-                if depth == 0:
-                    tokens.append(text[start : index + 1])
-                    index += 1
-                    break
-            index += 1
-        else:
-            index = start + 1
-    return tuple(tokens)
+    return tuple(
+        token
+        for token in _extract_generic_placeholders(text)
+        if token.startswith("[") or token.startswith("{")
+    )
 
 
 def renpy_language_identifier(language: str) -> str:

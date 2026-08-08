@@ -28,6 +28,7 @@ from game_localizer.hanengine.renpy import (
     RenPyWriter,
     renpy_language_identifier,
     renpy_project_files,
+    validate_renpy_placeholders,
     validate_renpy_language_activation_text,
     validate_renpy_translation_text,
 )
@@ -386,6 +387,15 @@ class StructuredAdapterV1:
             suggested_action=suggested_action,
         )
 
+    def _translation_preserves_placeholders(self, source: str, target: str) -> bool:
+        if self.engine_id == "renpy":
+            try:
+                validate_renpy_placeholders(source, target)
+            except RenPyValidationError:
+                return False
+            return True
+        return Counter(extract_placeholders(source)) == Counter(extract_placeholders(target))
+
     def validate(self, request: ValidationRequest) -> ValidationResult | AdapterError:
         if not isinstance(request, ValidationRequest):
             raise TypeError("request must be a ValidationRequest")
@@ -495,8 +505,9 @@ class StructuredAdapterV1:
                         )
                     )
                 else:
-                    if Counter(extract_placeholders(original.source_text)) != Counter(
-                        extract_placeholders(candidate.target_text)
+                    if not self._translation_preserves_placeholders(
+                        original.source_text,
+                        candidate.target_text,
                     ):
                         issues.append(
                             self._issue(
@@ -1164,8 +1175,9 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 raise ValueError("segment has no target text")
             if hashlib.sha256(segment.source_text.encode("utf-8")).hexdigest() != segment.source_fingerprint:
                 raise ValueError("segment source fingerprint is invalid")
-            if Counter(extract_placeholders(segment.source_text)) != Counter(
-                extract_placeholders(segment.target_text)
+            if not self._translation_preserves_placeholders(
+                segment.source_text,
+                segment.target_text,
             ):
                 raise ValueError("translation changes Ren'Py placeholders")
             entries.append(

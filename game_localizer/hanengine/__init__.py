@@ -65,6 +65,7 @@ from .renpy import (
     RenPyWriter,
     renpy_language_identifier,
     renpy_project_files,
+    validate_renpy_placeholders,
     validate_renpy_language_activation_text,
     validate_renpy_translation_text,
 )

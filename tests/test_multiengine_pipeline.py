@@ -16,10 +16,19 @@ from game_localizer.hanengine import (
     RpgMakerExtractor,
     UnityExtractor,
     UnrealExtractor,
+    extract_placeholders,
 )
 
 
 class MultiEnginePipelineTests(unittest.TestCase):
+    def test_extract_placeholders_balances_nested_expressions_and_legacy_forms(self):
+        self.assertEqual(
+            extract_placeholders(
+                "score=%1$s name=${name} item=[inventory[0]['name']!q]"
+            ),
+            ("%1$s", "${name}", "[inventory[0]['name']!q]"),
+        )
+
     def test_rpg_maker_extracts_event_and_database_text_and_builds_copy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "mv"
