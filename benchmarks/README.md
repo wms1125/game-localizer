@@ -10,9 +10,10 @@ other repository path.
 
 No commercial game files, screenshots, or translated text are included.
 No third-party code or assets are copied, adapted, generated, or committed here.
-This cycle commits only manifests and risk snapshots. Future Ren'Py,
-screenshot, dynamic, and human-reference assets must match the IDs frozen by
-these manifests.
+This cycle commits only manifests and risk snapshots. Future multi-engine
+fixtures, screenshots, dynamic sequences, and human-reference assets must
+match the IDs frozen by these manifests. The existing Ren'Py manifest is a
+historical benchmark subset, not a product-scope restriction.
 
 Regenerate the manifests with:
 

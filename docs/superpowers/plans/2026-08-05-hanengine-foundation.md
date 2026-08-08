@@ -1,5 +1,7 @@
 # HanEngine Foundation Implementation Plan
 
+> 历史计划说明：本文记录首个基础层周期的任务边界，不再定义当前产品范围。后续 AdapterV1 已将产品方向扩展为 Ren'Py、RPG Maker MV/MZ、Godot、Unity 和 Unreal 等主流引擎的统一适配；任何本文中的 Ren'Py 专项任务均表示当时的基准或实施顺序，而非仅支持 Ren'Py 的限制。当前范围以 `README.md` 和 `docs/project-status.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 完成 HanEngine 首个实施周期：先锁定基准资产清单、HanGuard 风险样本与适配器契约测试骨架，再建立无 GUI 的 `HanCore`、`Segment`、`RoutePlan`、`HanTask` 和 `HanStore`，同时保证 Phase 0 后冻结的 146 项基线测试（含原有 99 项应用测试）不退化。

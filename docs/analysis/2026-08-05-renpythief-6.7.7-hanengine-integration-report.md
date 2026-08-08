@@ -1,5 +1,7 @@
 # RenpyThief 6.7.7 源码分析与 HanEngine 整合方案
 
+> 范围说明：本文只分析 RenpyThief 这一特定参考材料，文中对 Ren'Py 的讨论是分析对象的事实，不定义 HanEngine 的产品范围。HanEngine 当前目标是通过统一适配器支持多个主流游戏引擎；请以项目根目录 `README.md` 和 `docs/project-status.md` 为准。
+
 日期：2026-08-05
 
 状态：静态分析定稿（三路分析与独立交叉复核通过）
@@ -163,7 +165,7 @@ RenpyThief 自身的主要产品创新更接近“整合、自动选择、中文
 
 ## 5. 与 HanEngine 当前项目的差距
 
-截至本报告对应提交，HanEngine 现有可运行代码包括本地 TXT/CSV/JSON/明文脚本字典替换、编码兼容、未翻译清单、Tkinter GUI，以及 Ren'Py、Unity、Unreal、Godot、RPG Maker 的只读目录结构检测。现有引擎适配器仍是 `detect_only`/`experimental`；HanEngine Foundation 的 Segment、HanGuard、HanTask、HanStore 和 HanCore 目前存在完整设计与实施计划，但尚未进入此工作树的生产代码。
+以下内容是本报告对应提交时的历史快照，不代表当前实现状态：当时 HanEngine 仅具备本地 TXT/CSV/JSON/明文脚本字典替换、编码兼容、未翻译清单、Tkinter GUI，以及 Ren'Py、Unity、Unreal、Godot、RPG Maker 的只读目录结构检测。当前多引擎 AdapterV1、HanPipelineV1、HanTask、HanStore、HanGuard 和 Electron + React 状态应以 `README.md` 与 `docs/project-status.md` 为准。
 
 | 维度 | RenpyThief 6.7.7 | HanEngine 当前状态 | HanEngine 目标优势 |
 | --- | --- | --- | --- |
