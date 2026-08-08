@@ -136,7 +136,7 @@ python cli.py project validate renpy <project> `
 - RPG Maker、Godot、Unity、Unreal 尚缺少与 Ren'Py 同等级别的真实授权项目 `verified` 记录。
 - 图片/视频内嵌文字、复杂动态文本和专有封包不属于当前原生适配范围。
 - 本次真实验证使用机械测试字典，仍需真实译文、术语表、人工审校和长文本布局回归。
-- 本次代码验证中除外部合规发布扫描外的 403 个 Python 测试均通过；`tools/check_compliance.py --json --release` 在当前环境超时，合规扫描结果仍未完成。
+- 本次代码验证中除外部合规发布扫描外的 406 个 Python 测试均通过；`tools/check_compliance.py --json --release` 在当前环境超时，合规扫描结果仍未完成。
 
 ### 桌面端和发布
 
@@ -150,7 +150,7 @@ python cli.py project validate renpy <project> `
 
 1. [已完成] 增加目标语言激活策略：候选首次运行默认中文，保留原生语言切换和偏好持久化语义，并将激活文件纳入验证清单。
 2. [进行中] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数/上下文语法及运行时拼接仍需补齐。
-3. 将文本标签、占位符、换行和语境元数据纳入统一 Segment V2 模型。
+3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/前后语境；契约会校验 metadata 与段字段一致。后续仍需补充复数/上下文语法的提取来源。
 4. 使用真实中文术语表，完成主菜单、对白、分支、存档和设置页面的截图回归。
 5. 增加长文本、字体回退、文本框溢出和原文回退测试。
 

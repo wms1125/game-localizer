@@ -2,8 +2,11 @@ from .segments import (
     ScreenRegion,
     Segment,
     SegmentDraft,
+    SEGMENT_V2_SCHEMA_VERSION,
     SourceLocation,
     normalize_relative_path,
+    segment_v2_metadata,
+    text_line_breaks,
 )
 from .routing import (
     EvaluationStatus,
@@ -213,8 +216,11 @@ __all__ = [
     "ScreenRegion",
     "Segment",
     "SegmentDraft",
+    "SEGMENT_V2_SCHEMA_VERSION",
+    "segment_v2_metadata",
     "SignalType",
     "SourceLocation",
+    "text_line_breaks",
     "StepHandler",
     "StepResult",
     "StepState",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath, PureWindowsPath
@@ -140,6 +141,99 @@ def _copy_metadata(value: object) -> dict[str, JsonValue]:
     except (TypeError, ValueError) as exc:
         raise ValueError("metadata must contain only finite JSON values") from exc
     return copied
+
+
+SEGMENT_V2_SCHEMA_VERSION = 2
+_SEGMENT_V2_FIELDS = ("schema_version", "placeholders", "text_tags", "line_breaks", "context")
+_SEGMENT_V2_CONTEXT_FIELDS = ("speaker", "kind", "before", "after")
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
+
+
+def _validate_segment_v2_metadata(value: object) -> None:
+    if not isinstance(value, Mapping):
+        raise TypeError("segment_v2 metadata must be an object")
+    _require_exact_keys(value, _SEGMENT_V2_FIELDS, "segment_v2")
+    if value["schema_version"] != SEGMENT_V2_SCHEMA_VERSION:
+        raise ValueError(
+            f"segment_v2 schema_version must be {SEGMENT_V2_SCHEMA_VERSION}"
+        )
+    placeholders = _string_tuple(value["placeholders"], "segment_v2.placeholders")
+    text_tags = _string_tuple(value["text_tags"], "segment_v2.text_tags")
+    if any(tag not in placeholders for tag in text_tags):
+        raise ValueError("segment_v2.text_tags must be present in placeholders")
+    line_breaks = _string_tuple(value["line_breaks"], "segment_v2.line_breaks")
+    if any(token not in {"\n", "\r", "\r\n"} for token in line_breaks):
+        raise ValueError("segment_v2.line_breaks contains an unsupported line break")
+    context = value["context"]
+    if not isinstance(context, Mapping):
+        raise TypeError("segment_v2.context must be an object")
+    _require_exact_keys(context, _SEGMENT_V2_CONTEXT_FIELDS, "segment_v2.context")
+    _optional_string(context["speaker"], "segment_v2.context.speaker")
+    _optional_string(context["kind"], "segment_v2.context.kind")
+    _string_tuple(context["before"], "segment_v2.context.before")
+    _string_tuple(context["after"], "segment_v2.context.after")
+
+
+def segment_v2_metadata(
+    source_text: str,
+    placeholders: Sequence[str],
+    *,
+    text_tags: Sequence[str] = (),
+    speaker: str | None = None,
+    kind: str | None = None,
+    context_before: Sequence[str] = (),
+    context_after: Sequence[str] = (),
+) -> dict[str, JsonValue]:
+    """Build the stable, JSON-safe text contract carried by Segment V2 metadata."""
+    _require_string(source_text, "source_text")
+    protected = _string_tuple(placeholders, "placeholders")
+    tags = _string_tuple(text_tags, "text_tags")
+    if any(tag not in protected for tag in tags):
+        raise ValueError("text_tags must be present in placeholders")
+    metadata: dict[str, JsonValue] = {
+        "schema_version": SEGMENT_V2_SCHEMA_VERSION,
+        "placeholders": list(protected),
+        "text_tags": list(tags),
+        "line_breaks": _LINE_BREAK_RE.findall(source_text),
+        "context": {
+            "speaker": _optional_string(speaker, "speaker"),
+            "kind": _optional_string(kind, "kind"),
+            "before": list(_string_tuple(context_before, "context_before")),
+            "after": list(_string_tuple(context_after, "context_after")),
+        },
+    }
+    _validate_segment_v2_metadata(metadata)
+    return metadata
+
+
+def text_line_breaks(value: str) -> tuple[str, ...]:
+    _require_string(value, "value")
+    return tuple(_LINE_BREAK_RE.findall(value))
+
+
+def _validate_segment_v2_contract(
+    source_text: str,
+    speaker: str | None,
+    context_before: tuple[str, ...],
+    context_after: tuple[str, ...],
+    placeholders: tuple[str, ...],
+    metadata: Mapping[str, JsonValue],
+) -> None:
+    contract = metadata.get("segment_v2")
+    if contract is None:
+        return
+    _validate_segment_v2_metadata(contract)
+    context = contract["context"]
+    if contract["placeholders"] != list(placeholders):
+        raise ValueError("segment_v2 placeholders do not match the segment")
+    if contract["line_breaks"] != list(text_line_breaks(source_text)):
+        raise ValueError("segment_v2 line_breaks do not match source_text")
+    if (
+        context["speaker"] != speaker
+        or context["before"] != list(context_before)
+        or context["after"] != list(context_after)
+    ):
+        raise ValueError("segment_v2 context does not match the segment")
 
 
 @dataclass(frozen=True)
@@ -318,7 +412,16 @@ class SegmentDraft:
             "region_confidence",
             _confidence(self.region_confidence, "region_confidence"),
         )
-        object.__setattr__(self, "metadata", _copy_metadata(self.metadata))
+        metadata = _copy_metadata(self.metadata)
+        _validate_segment_v2_contract(
+            self.source_text,
+            self.speaker,
+            self.context_before,
+            self.context_after,
+            self.placeholders,
+            metadata,
+        )
+        object.__setattr__(self, "metadata", metadata)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -447,7 +550,16 @@ class Segment:
             "region_confidence",
             _confidence(self.region_confidence, "region_confidence"),
         )
-        object.__setattr__(self, "metadata", _copy_metadata(self.metadata))
+        metadata = _copy_metadata(self.metadata)
+        _validate_segment_v2_contract(
+            self.source_text,
+            self.speaker,
+            self.context_before,
+            self.context_after,
+            self.placeholders,
+            metadata,
+        )
+        object.__setattr__(self, "metadata", metadata)
 
     @classmethod
     def from_draft(

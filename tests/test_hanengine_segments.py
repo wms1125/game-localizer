@@ -12,6 +12,8 @@ from game_localizer.hanengine.segments import (
     SegmentDraft,
     SourceLocation,
     normalize_relative_path,
+    segment_v2_metadata,
+    text_line_breaks,
 )
 
 
@@ -174,6 +176,74 @@ class SegmentModelTests(unittest.TestCase):
         for metadata in ({"bad": object()}, {"bad": math.nan}, {1: "non-string key"}):
             with self.subTest(metadata=metadata), self.assertRaisesRegex((TypeError, ValueError), "JSON"):
                 self.make_draft(metadata=metadata)
+
+    def test_segment_v2_metadata_captures_line_breaks_tags_and_context(self):
+        source = "Hello\r\n{name}\n"
+        metadata = segment_v2_metadata(
+            source,
+            ("{name}",),
+            text_tags=("{name}",),
+            speaker="Alice",
+            kind="dialogue",
+            context_before=("Previous",),
+            context_after=("Next",),
+        )
+        self.assertEqual(text_line_breaks(source), ("\r\n", "\n"))
+        self.assertEqual(metadata["schema_version"], 2)
+        self.assertEqual(metadata["line_breaks"], ["\r\n", "\n"])
+        self.assertEqual(metadata["text_tags"], ["{name}"])
+        self.assertEqual(
+            metadata["context"],
+            {
+                "speaker": "Alice",
+                "kind": "dialogue",
+                "before": ["Previous"],
+                "after": ["Next"],
+            },
+        )
+
+    def test_segment_v2_metadata_is_checked_against_segment_fields(self):
+        metadata = segment_v2_metadata(
+            "Hello\nWorld",
+            (),
+            speaker="Alice",
+            kind="dialogue",
+        )
+        draft = self.make_draft(
+            source_text="Hello\nWorld",
+            speaker="Alice",
+            context_before=(),
+            context_after=(),
+            placeholders=(),
+            metadata={"segment_v2": metadata},
+        )
+        self.assertEqual(Segment.from_draft("project-a", "zh-CN", draft).metadata["segment_v2"], metadata)
+
+        with self.assertRaisesRegex(ValueError, "line_breaks"):
+            self.make_draft(
+                source_text="Hello\nWorld",
+                speaker="Alice",
+                context_before=(),
+                context_after=(),
+                placeholders=(),
+                metadata={
+                    "segment_v2": {**metadata, "line_breaks": []},
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "context"):
+            self.make_draft(
+                source_text="Hello\nWorld",
+                speaker="Bob",
+                context_before=(),
+                context_after=(),
+                placeholders=(),
+                metadata={"segment_v2": metadata},
+            )
+
+    def test_segment_v2_metadata_rejects_tags_not_in_placeholders(self):
+        with self.assertRaisesRegex(ValueError, "text_tags"):
+            segment_v2_metadata("Hello", (), text_tags=("{color}",))
 
     def test_draft_rejects_invalid_string_sequences(self):
         for field_name in (

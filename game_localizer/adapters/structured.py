@@ -19,7 +19,12 @@ from game_localizer.hanengine.multiengine import (
     extract_placeholders,
     validate_resource_syntax,
 )
-from game_localizer.hanengine.segments import Segment, SegmentDraft, SourceLocation
+from game_localizer.hanengine.segments import (
+    Segment,
+    SegmentDraft,
+    SourceLocation,
+    segment_v2_metadata,
+)
 from game_localizer.hanengine.renpy import (
     RenPyCatalog,
     RenPyExtractor,
@@ -337,6 +342,19 @@ class StructuredAdapterV1:
         entry: LocalizationEntry,
         catalog: LocalizationCatalog,
     ) -> SegmentDraft:
+        placeholders = extract_placeholders(entry.source_text)
+        metadata = {
+            "engine_id": catalog.engine_id,
+            "kind": entry.kind,
+            "locator": entry.locator,
+            "catalog_language": catalog.language,
+            "catalog_files": list(catalog.files),
+            "segment_v2": segment_v2_metadata(
+                entry.source_text,
+                placeholders,
+                kind=entry.kind,
+            ),
+        }
         return SegmentDraft(
             segment_id=entry.segment_id,
             source_text=entry.source_text,
@@ -344,7 +362,7 @@ class StructuredAdapterV1:
             speaker=None,
             context_before=(),
             context_after=(),
-            placeholders=extract_placeholders(entry.source_text),
+            placeholders=placeholders,
             tags=(catalog.engine_id, entry.kind),
             constraints=("preserve_placeholders",),
             source_location=SourceLocation(
@@ -359,13 +377,7 @@ class StructuredAdapterV1:
             source_fingerprint=entry.source_hash,
             ocr_confidence=None,
             region_confidence=None,
-            metadata={
-                "engine_id": catalog.engine_id,
-                "kind": entry.kind,
-                "locator": entry.locator,
-                "catalog_language": catalog.language,
-                "catalog_files": list(catalog.files),
-            },
+            metadata=metadata,
         )
 
     @staticmethod
@@ -1005,6 +1017,21 @@ class RenPyAdapterV1(StructuredAdapterV1):
             "kind": entry.kind,
             "speaker": entry.speaker,
         }
+        placeholders = extract_placeholders(entry.source_text)
+        metadata = {
+            "engine_id": self.engine_id,
+            "kind": entry.kind,
+            "locator": locator,
+            "catalog_language": self.target_language,
+            "catalog_files": list(catalog_files),
+            "segment_v2": segment_v2_metadata(
+                entry.source_text,
+                placeholders,
+                text_tags=tuple(token for token in placeholders if token.startswith("{")),
+                speaker=entry.speaker,
+                kind=entry.kind,
+            ),
+        }
         return SegmentDraft(
             segment_id=entry.segment_id,
             source_text=entry.source_text,
@@ -1012,7 +1039,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
             speaker=entry.speaker,
             context_before=(),
             context_after=(),
-            placeholders=extract_placeholders(entry.source_text),
+            placeholders=placeholders,
             tags=(self.engine_id, entry.kind),
             constraints=("preserve_placeholders", "preserve_renpy_text_tags"),
             source_location=SourceLocation(
@@ -1028,13 +1055,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
             source_fingerprint=entry.source_hash,
             ocr_confidence=None,
             region_confidence=None,
-            metadata={
-                "engine_id": self.engine_id,
-                "kind": entry.kind,
-                "locator": locator,
-                "catalog_language": self.target_language,
-                "catalog_files": list(catalog_files),
-            },
+            metadata=metadata,
         )
 
     def build(self, request: BuildRequest) -> BuildResult | AdapterError:

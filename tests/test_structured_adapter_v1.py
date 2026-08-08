@@ -512,6 +512,21 @@ class StructuredPipelineTests(unittest.TestCase):
             ExtractRequest(source, working, (), (), "project-renpy-placeholders", make_context("extract"))
         )
         self.assertIsInstance(extracted, ExtractResult)
+        self.assertEqual(
+            extracted.segments[0].metadata["segment_v2"],
+            {
+                "schema_version": 2,
+                "placeholders": ["{color=#f00}", "[inventory[0]['name']!q]", "{/color}"],
+                "text_tags": ["{color=#f00}", "{/color}"],
+                "line_breaks": [],
+                "context": {
+                    "speaker": "e",
+                    "kind": "dialogue",
+                    "before": [],
+                    "after": [],
+                },
+            },
+        )
         originals = tuple(
             Segment.from_draft("project-renpy-placeholders", "zh-CN", draft)
             for draft in extracted.segments
