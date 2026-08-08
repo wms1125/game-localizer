@@ -502,7 +502,7 @@ class StructuredPipelineTests(unittest.TestCase):
         game = source / "game"
         game.mkdir(parents=True)
         (game / "script.rpy").write_text(
-            'label start:\n    e "Stats: {color=#f00}[inventory[0][\'name\']!q]{/color}"\n',
+            'label start:\n    e "Stats{#stats}: {color=#f00}[inventory[0][\'name\']!q]{/color}"\n',
             encoding="utf-8",
         )
         adapter = RenPyAdapterV1()
@@ -516,12 +516,13 @@ class StructuredPipelineTests(unittest.TestCase):
             extracted.segments[0].metadata["segment_v2"],
             {
                 "schema_version": 2,
-                "placeholders": ["{color=#f00}", "[inventory[0]['name']!q]", "{/color}"],
-                "text_tags": ["{color=#f00}", "{/color}"],
+                "placeholders": ["{#stats}", "{color=#f00}", "[inventory[0]['name']!q]", "{/color}"],
+                "text_tags": ["{#stats}", "{color=#f00}", "{/color}"],
                 "line_breaks": [],
                 "context": {
                     "speaker": "e",
                     "kind": "dialogue",
+                    "text_context": "stats",
                     "before": [],
                     "after": [],
                 },
@@ -533,7 +534,7 @@ class StructuredPipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             originals[0].placeholders,
-            ("{color=#f00}", "[inventory[0]['name']!q]", "{/color}"),
+            ("{#stats}", "{color=#f00}", "[inventory[0]['name']!q]", "{/color}"),
         )
 
         def validate(target_text: str) -> ValidationResult:
@@ -557,11 +558,11 @@ class StructuredPipelineTests(unittest.TestCase):
             return result
 
         self.assertTrue(
-            validate("统计：{color=#f00}[inventory[0]['name']!q]{/color}").valid
+            validate("统计{#stats}：{color=#f00}[inventory[0]['name']!q]{/color}").valid
         )
         for invalid in (
-            "统计：{color=#f00}[inventory[1]['name']!q]{/color}",
-            "统计：{/color}[inventory[0]['name']!q]{color=#f00}",
+            "统计{#stats}：{color=#f00}[inventory[1]['name']!q]{/color}",
+            "统计{#stats}：{/color}[inventory[0]['name']!q]{color=#f00}",
         ):
             with self.subTest(invalid=invalid):
                 result = validate(invalid)

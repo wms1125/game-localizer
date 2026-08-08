@@ -150,7 +150,7 @@ python cli.py project validate renpy <project> `
 
 1. [已完成] 增加目标语言激活策略：候选首次运行默认中文，保留原生语言切换和偏好持久化语义，并将激活文件纳入验证清单。
 2. [进行中] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数/上下文语法及运行时拼接仍需补齐。
-3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/前后语境；契约会校验 metadata 与段字段一致。后续仍需补充复数/上下文语法的提取来源。
+3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。后续仍需补充复数语法的提取来源。
 4. 使用真实中文术语表，完成主菜单、对白、分支、存档和设置页面的截图回归。
 5. 增加长文本、字体回退、文本框溢出和原文回退测试。
 

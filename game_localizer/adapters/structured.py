@@ -1030,6 +1030,14 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 text_tags=tuple(token for token in placeholders if token.startswith("{")),
                 speaker=entry.speaker,
                 kind=entry.kind,
+                text_context=next(
+                    (
+                        token[2:-1]
+                        for token in placeholders
+                        if token.startswith("{#") and token.endswith("}") and len(token) > 3
+                    ),
+                    None,
+                ),
             ),
         }
         return SegmentDraft(

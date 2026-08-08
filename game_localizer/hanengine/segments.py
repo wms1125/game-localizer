@@ -145,7 +145,7 @@ def _copy_metadata(value: object) -> dict[str, JsonValue]:
 
 SEGMENT_V2_SCHEMA_VERSION = 2
 _SEGMENT_V2_FIELDS = ("schema_version", "placeholders", "text_tags", "line_breaks", "context")
-_SEGMENT_V2_CONTEXT_FIELDS = ("speaker", "kind", "before", "after")
+_SEGMENT_V2_CONTEXT_FIELDS = ("speaker", "kind", "text_context", "before", "after")
 _LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
 
 
@@ -170,6 +170,7 @@ def _validate_segment_v2_metadata(value: object) -> None:
     _require_exact_keys(context, _SEGMENT_V2_CONTEXT_FIELDS, "segment_v2.context")
     _optional_string(context["speaker"], "segment_v2.context.speaker")
     _optional_string(context["kind"], "segment_v2.context.kind")
+    _optional_string(context["text_context"], "segment_v2.context.text_context")
     _string_tuple(context["before"], "segment_v2.context.before")
     _string_tuple(context["after"], "segment_v2.context.after")
 
@@ -181,6 +182,7 @@ def segment_v2_metadata(
     text_tags: Sequence[str] = (),
     speaker: str | None = None,
     kind: str | None = None,
+    text_context: str | None = None,
     context_before: Sequence[str] = (),
     context_after: Sequence[str] = (),
 ) -> dict[str, JsonValue]:
@@ -198,6 +200,7 @@ def segment_v2_metadata(
         "context": {
             "speaker": _optional_string(speaker, "speaker"),
             "kind": _optional_string(kind, "kind"),
+            "text_context": _optional_string(text_context, "text_context"),
             "before": list(_string_tuple(context_before, "context_before")),
             "after": list(_string_tuple(context_after, "context_after")),
         },

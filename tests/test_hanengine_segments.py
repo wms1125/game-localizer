@@ -197,6 +197,7 @@ class SegmentModelTests(unittest.TestCase):
             {
                 "speaker": "Alice",
                 "kind": "dialogue",
+                "text_context": None,
                 "before": ["Previous"],
                 "after": ["Next"],
             },
