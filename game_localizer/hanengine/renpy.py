@@ -87,7 +87,6 @@ _SCREEN_NON_TEXT_NAMES = frozenset(
     }
 )
 _SCREEN_TEXT_STATEMENTS = frozenset({"label", "text", "textbutton"})
-_PLACEHOLDER_RE = re.compile(r"\[[^\]\n]+\]|\{[^{}\n]+\}")
 _ID_RE = re.compile(r"[^A-Za-z0-9_]+")
 _LANGUAGE_ID_RE = re.compile(r"[^A-Za-z0-9_]+")
 _LANGUAGE_ACTIVATION_PATH = PurePosixPath("game/hanengine_language.rpy")
@@ -237,10 +236,55 @@ class RenPyCatalog:
 
 
 def _validate_placeholders(source: str, target: str) -> None:
-    source_tokens = tuple(_PLACEHOLDER_RE.findall(source))
-    target_tokens = tuple(_PLACEHOLDER_RE.findall(target))
-    if sorted(source_tokens) != sorted(target_tokens):
+    source_tokens = _extract_placeholders(source)
+    target_tokens = _extract_placeholders(target)
+    source_variables = tuple(token for token in source_tokens if token.startswith("["))
+    target_variables = tuple(token for token in target_tokens if token.startswith("["))
+    if sorted(source_variables) != sorted(target_variables):
         raise RenPyValidationError("placeholder set changed during translation")
+    source_tags = tuple(token for token in source_tokens if token.startswith("{"))
+    target_tags = tuple(token for token in target_tokens if token.startswith("{"))
+    if source_tags != target_tags:
+        raise RenPyValidationError("rich text tags changed during translation")
+
+
+def _extract_placeholders(text: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    index = 0
+    while index < len(text):
+        opener = text[index]
+        if opener not in "[{":
+            index += 1
+            continue
+        closer = "]" if opener == "[" else "}"
+        start = index
+        depth = 1
+        quote: str | None = None
+        escaped = False
+        index += 1
+        while index < len(text):
+            character = text[index]
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    quote = None
+            elif character in {"'", '"'} and opener == "[":
+                quote = character
+            elif character == opener:
+                depth += 1
+            elif character == closer:
+                depth -= 1
+                if depth == 0:
+                    tokens.append(text[start : index + 1])
+                    index += 1
+                    break
+            index += 1
+        else:
+            index = start + 1
+    return tuple(tokens)
 
 
 def renpy_language_identifier(language: str) -> str:
@@ -475,7 +519,7 @@ class RenPyExtractor:
                         kind=kind,
                         source_text=source,
                         source_hash=hashlib.sha256(source.encode("utf-8")).hexdigest(),
-                        placeholders=tuple(_PLACEHOLDER_RE.findall(source)),
+                        placeholders=_extract_placeholders(source),
                         speaker=speaker,
                     )
                 )

@@ -27,6 +27,10 @@ label start:
     play music "audio/theme.ogg"
 '''
 
+RICH_DYNAMIC_SCRIPT = '''label rich_dynamic:
+    e "Level [experience // 225], [inventory[0]['name']!q] {color=#f00}{size=*1.2}{b}Ready{/b}{/size}{/color} {image=points.png}"
+'''
+
 
 SCREEN_SCRIPT = '''screen sample:
     style_prefix "sample"
@@ -90,6 +94,59 @@ class RenPyPipelineTests(unittest.TestCase):
         self.assertEqual(RenPyCatalog.from_dict(json.loads(encoded)), translated)
         with self.assertRaisesRegex(RenPyValidationError, "placeholder"):
             catalog.translate({"Hello, [name]! {b}Welcome{/b}.": "你好！"})
+
+    def test_nested_dynamic_expressions_and_rich_text_tags_are_preserved(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "rich.rpy").write_text(
+            RICH_DYNAMIC_SCRIPT,
+            encoding="utf-8",
+        )
+
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+        entry = next(
+            item for item in catalog.entries if item.relative_path == "game/rich.rpy"
+        )
+        expected = (
+            "[experience // 225]",
+            "[inventory[0]['name']!q]",
+            "{color=#f00}",
+            "{size=*1.2}",
+            "{b}",
+            "{/b}",
+            "{/size}",
+            "{/color}",
+            "{image=points.png}",
+        )
+        self.assertEqual(entry.placeholders, expected)
+        translated = catalog.translate(
+            {
+                entry.source_text: (
+                    "等级 [experience // 225]，"
+                    "[inventory[0]['name']!q] "
+                    "{color=#f00}{size=*1.2}{b}准备{/b}{/size}{/color}"
+                    " {image=points.png}"
+                )
+            }
+        )
+        translated_entry = next(
+            item for item in translated.entries if item.source_text == entry.source_text
+        )
+        self.assertIsNotNone(translated_entry.target_text)
+        with self.assertRaisesRegex(RenPyValidationError, "placeholder"):
+            catalog.translate(
+                {entry.source_text: "等级 [experience // 225]，{color=#f00}准备{/color}"}
+            )
+        with self.assertRaisesRegex(RenPyValidationError, "rich text tags"):
+            catalog.translate(
+                {
+                    entry.source_text: (
+                        "等级 [experience // 225]，[inventory[0]['name']!q] "
+                        "{size=*1.2}{color=#f00}准备{/color}{/size}"
+                        " {image=points.png}"
+                    )
+                }
+            )
 
     def test_screen_properties_are_not_treated_as_duplicate_dialogue(self):
         temporary, root = self.make_project()
