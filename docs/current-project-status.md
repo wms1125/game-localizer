@@ -1,8 +1,10 @@
 # HanEngine 当前项目状态
 
-更新时间：2026-08-08
+更新时间：2026-08-09
 
 本文是当前工作树的阶段性状态摘要。它补充并更新 `docs/project-status.md`，重点记录最近的真实 Ren'Py 项目验证和“无感汉化”目标。这里的“已验证”表示工程流水线、编译、字体和运行冒烟证据完整，不代表机器翻译质量已经达到发布标准。
+
+当前仓库分支为 `codex/game-localizer`。最新代码 checkpoint 为 `515b9ab fix: ship RenPy fonts in localization candidates`，该 checkpoint 尚未推送到 GitHub。
 
 ## 1. 已完成内容
 
@@ -31,6 +33,9 @@
 - 候选输出现在额外写出 `game/hanengine_language.rpy`，使用 Ren'Py 原生 `config.default_language` 在首次运行默认启用目标语言；用户后续通过标准 `Language(...)` 切换的选择由 Ren'Py 偏好持久化。
 - 翻译文件和语言激活文件均纳入构建清单、SHA-256 和候选验证；保留激活路径冲突检查，源项目仍不会被修改。
 - 官方验证器现在在临时影子目录中运行，Ren'Py 编译产生的 `.rpyc`、`game/cache` 和日志不会污染候选输出，也不会被误判为 HanEngine 修改。
+- `--font` 不再只做外部覆盖率检查。Ren'Py 构建会把字体复制到 `game/hanengine_fonts/`，并生成 `game/hanengine_fonts.rpy`，对目标语言配置 GUI、对白、按钮和选项字体。
+- 多字体候选使用 Ren'Py 原生 `FontGroup`。字体按参数顺序分配实际 Unicode cmap 覆盖，最后一个字体作为未显式码点的运行时回退；无覆盖码点、非法字体、符号链接、文件名冲突和保留路径冲突都会使构建失败。
+- 字体配置和字体二进制现在与翻译、语言激活文件一起进入 `BuildResult.generated_files`、manifest、SHA-256、候选指纹和 AdapterV1 验证，修复了“字体覆盖检查通过但候选包仍显示方框”的假阳性。
 
 ### 真实非官方项目验证
 
@@ -51,6 +56,17 @@
 - Ren'Py 官方 `The Question` 样例已按发行包 `8.5.3.26051504`、发行包 SHA-256、上游参考提交 `3baa108`、许可证文件哈希、样例树哈希和简体中文文件哈希登记；发行包版本和上游提交是两个独立的证据点。它只作为本地运行时和人工术语审校参考，不作为通用中文翻译质量权威。
 - golden corpus 继续使用仓库文件和 manifest 管理；当前规模不需要专门数据库。数据库只有在需要多人在线审校、权限、查询和版本合并时才有实际收益。
 
+### 官方 The Question 中文候选与运行时证据
+
+- 固定来源：Ren'Py 官方 SDK `8.5.3.26051504` 中的 `The Question`；中文和运行时来源链见 `docs/translation-sources.json`。
+- v2 验证记录：`.tmp/record-renpy-the-question-zhcn-fonts-v2.json`；隔离候选：`.tmp/candidate-renpy-the-question-zhcn-fonts-v2`。
+- 共提取并翻译 228 个源段，228/228 完成；源项目树保持不变。
+- 候选生成 5 个受管文件：翻译文件、语言激活文件、字体配置文件、`SourceHanSansLite.ttf` 和 `DejaVuSans.ttf`。候选指纹为 `024f43d72b1f5b846e9dd09f9b62e31a6c7240816fbaa47ca92325e61d6d92df`。
+- AdapterV1 内部验证通过，字体覆盖无缺失码点，官方 Ren'Py 编译退出码为 0。v2 记录结论仍为 `build_ready`，因为生成记录时 `runtime_smoke` 是 `not_run`。
+- 随后的独立运行时结果位于 `.tmp/runtime-smoke-renpy-the-question-v2/result.json`：窗口成功启动，OpenGL 初始化完成，无 `traceback.txt`、无 stderr；进程由脚本主动终止，因此退出码为 1。
+- 已人工检查 `main-menu.png`、`dialogue.png`、`branch.png`、`settings.png`、`save.png` 和 `load.png`。主菜单、对白、分支选项、设置、保存和读取页面均显示真实汉字，不再出现方框；设置页中的拉丁字母、西里尔字母、日文、韩文和繁体中文也能通过字体组正常显示。
+- 这些截图证明方框乱码缺陷已修复，但还没有回填为一份带稳定运行时引用的 `verified` 验证记录。
+
 ## 2. 当前代码结构
 
 ```text
@@ -70,7 +86,7 @@ game-localizer/
 |     |- tasks.py                   HanTask 状态、事件、检查点和取消
 |     |- store.py                   HanStore SQLite 和项目写入租约
 |     |- pipeline.py                HanPipelineV1 翻译、断点续跑和重试
-|     |- renpy.py                   Ren'Py 提取、占位符校验、`tl/` 翻译和语言激活写出
+|     |- renpy.py                   Ren'Py 提取、占位符校验、`tl/` 翻译、语言激活和字体组写出
 |     |- validation.py              授权项目验证、官方验证器、字体和冒烟证据
 |     |- multiengine.py             多引擎结构化资源读写
 |     |- backup.py, packaging.py    备份、恢复和未加密 ZIP 副本处理
@@ -97,9 +113,10 @@ game-localizer/
 | `--authorized` | 项目验证授权确认 | `project validate` 必须显式提供 |
 | `--authorization-reference` | 授权依据的可脱敏引用 | 不写入私密令牌或项目内容 |
 | `--renpy-sdk` / `--validator` | 官方编译器或验证器 | 成功执行前最多只能得到 `build_ready` |
-| `--font` | 一个或多个 `.ttf`/`.otf` | 用于检查译文 Unicode 覆盖 |
+| `--font` | 一个或多个 `.ttf`/`.otf` | Ren'Py 会按顺序打包字体、生成 `FontGroup` 并检查译文 Unicode 覆盖 |
 | `--runtime-smoke` | `not_run`、`passed`、`failed` | `passed` 必须带稳定引用 |
 | `--language` | 目标语言，默认 `zh-CN` | Ren'Py 输出标识符为 `zh_cn` |
+| `renpy_font_paths` | 内部 `BuildRequest.output_options` 字段 | 由验证工作流从 `--font` 生成，不是用户 CLI 参数 |
 | `HANENGINE_PYTHON` | Electron 调用的 Python 可执行文件 | Windows 默认使用 `python` |
 
 常用验证命令：
@@ -128,13 +145,15 @@ python cli.py project validate renpy <project> `
 
 - Ren'Py 当前生成的是原生 `translate <language>` 文件，并通过 `config.default_language` 在首次运行默认启用目标语言；已有 Ren'Py 持久偏好不会被覆盖。
 - `Heartfelt Moments` 没有现成语言菜单，因此可见的原文/中文切换入口仍需由桌面端或项目设置页承载；底层 `Language(...)` 切换和状态持久化由 Ren'Py 原生机制提供。
-- 当前验证证明了编译和启动，不等同于所有界面路径都已截图确认译文显示。
+- `The Question` 已截图确认主菜单、对白、分支、设置、保存和读取页面，但固定坐标的 `.tmp/run_renpy_smoke.py` 仍是一次性验证脚本，不是稳定、可移植的自动化测试。
+- v2 正式记录尚未携带运行时引用，因此项目证据分散在 `build_ready` JSON 和独立 smoke JSON/截图中；需要重新生成一份统一的 `verified` 记录。
 
 ### 文本覆盖和语境
 
 - 当前 Ren'Py 提取器重点覆盖明文对白、旁白、菜单和部分屏幕文本；复杂 `_()` 包装、运行时拼接和复数语法仍需加强，`{#...}` 文本上下文标记已纳入 Segment V2 metadata。
 - Ren'Py 运行时对重复 `old` 文本存在全局冲突；当前写出器保留首个译文，已有上下文元数据仍需在写出阶段转化为更精确的语境策略。
 - 目前段模型还没有完整保存字体、控件尺寸、换行约束和动画上下文，无法单独保证长中文译文不溢出。
+- 字体回退目前只按本次译文实际码点生成显式映射，最后一个字体承接其他运行时文本；动态生成的新字符仍需专门的回退/缺字回归测试。
 
 ### 范围和验证
 
@@ -144,8 +163,8 @@ python cli.py project validate renpy <project> `
 - 本次真实验证使用机械测试字典，仍需真实译文、术语表、人工审校和长文本布局回归。
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
-- 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：228/228 段完成，内部验证通过，Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；`SourceHanSansLite.ttf` + `DejaVuSans.ttf` 联合字体覆盖通过。该记录当前为 `build_ready`，因为运行时冒烟仍未执行。
-- 本次代码验证中除外部合规发布扫描外的 407 个 Python 测试均通过；`tools/check_compliance.py --json --release` 在当前环境超时，合规扫描结果仍未完成。
+- 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：228/228 段完成，内部验证通过，Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；字体已实际打包且联合覆盖通过。独立 runtime smoke 已通过并人工检查真实汉字，但正式 v2 记录仍为 `build_ready`。
+- 本轮与字体改动直接相关的 60 个测试通过。完整 `python -m unittest discover -s tests` 在 120 秒内未结束，因此不能把之前的 407 测试结果当作当前提交的全量回归结论；`tools/check_compliance.py --json --release` 也仍未完成。
 
 ### 桌面端和发布
 
@@ -160,8 +179,8 @@ python cli.py project validate renpy <project> `
 1. [已完成] 增加目标语言激活策略：候选首次运行默认中文，保留原生语言切换和偏好持久化语义，并将激活文件纳入验证清单。
 2. [进行中] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、有效 `menu:` 一级选项、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数语法及运行时拼接仍需补齐。
 3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。官方文档未发现独立通用的 Ren'Py 复数翻译语法，暂不虚构支持。
-4. [进行中] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。已完成一个官方样例中文候选的 `build_ready` 验证，下一步执行真实运行时启动和主菜单、对白、分支、存档、设置页面的截图回归。
-5. 增加长文本、字体回退、文本框溢出和原文回退测试。
+4. [进行中] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。官方样例中文候选已完成真实运行时启动和主菜单、对白、分支、保存、读取、设置页面的截图回归，汉字显示正常。下一步使用稳定的运行时证据引用重新执行验证，生成一份同时包含构建和运行证据的 `verified` 记录。
+5. [已完成第一步] Ren'Py 候选已打包多字体并生成 `FontGroup`，真实样例未再出现方框。下一步补充长中文文本、文本框溢出、动态生成字符缺字、多字体回退和无法翻译时保留原文的自动化测试。
 
 ### P1.2：统一“原生渲染替换”能力
 
@@ -183,4 +202,4 @@ python cli.py project validate renpy <project> `
 
 ## 当前结论
 
-HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环和自动语言激活的第一版实现。当前最重要的产品缺口不是再增加一个旁路引擎，而是把“原生文本覆盖率、可见语言入口、格式/布局保真和未支持内容分级”继续做成稳定的 P1.1 能力。
+HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、自动语言激活和字体随候选包交付的第一版实现。`The Question` 已独立通过编译、运行冒烟和人工截图检查，方框乱码缺陷已修复；但其正式 v2 记录仍是 `build_ready`，不能称为统一的 `verified` 证据。当前应先用稳定引用生成该统一记录，再继续补齐长文本布局、动态缺字、原文回退、可见语言入口和未支持内容分级等 P1.1 能力，而不是扩展新的旁路引擎。
