@@ -23,6 +23,7 @@ from .visual import (
 from .renpy_visual_capture import (
     RENPY_CAPTURE_PLAN_SCHEMA_VERSION,
     RENPY_CAPTURE_REPORT_SCHEMA_VERSION,
+    RendererObservation,
 )
 from .visual_style import (
     TextRegionObservation,
@@ -590,11 +591,17 @@ def _verified_capture_variant(
         raise VisualEvidenceError(f"capture report {variant} source or runtime state is invalid")
     source_sha256 = _sha256_string(payload["source_tree_sha256"], f"{variant}.source_tree_sha256")
     assertion_payloads = _mapping_sequence(payload["screen_assertions"], f"{variant}.screen_assertions")
-    assertions: list[tuple[str, str]] = []
+    assertions: list[tuple[str, str, RendererObservation]] = []
     for assertion in assertion_payloads:
         _exact_keys(
             assertion,
-            ("expected_screen", "observed_screens", "passed", "sample_id"),
+            (
+                "expected_screen",
+                "observed_screens",
+                "passed",
+                "renderer_observation",
+                "sample_id",
+            ),
             f"{variant}.screen_assertion",
         )
         sample_id = _plain_string(assertion["sample_id"], "sample_id")
@@ -608,7 +615,15 @@ def _verified_capture_variant(
             raise VisualEvidenceError(f"capture report {variant} observed screens are invalid")
         if assertion["passed"] is not True or expected_screen not in observed_screens:
             raise VisualEvidenceError(f"capture report {variant} screen assertion did not pass")
-        assertions.append((sample_id, expected_screen))
+        try:
+            renderer_observation = RendererObservation.from_dict(
+                _mapping(assertion["renderer_observation"], "renderer_observation")
+            )
+        except (TypeError, ValueError) as exc:
+            raise VisualEvidenceError(
+                f"capture report {variant} renderer observation is invalid"
+            ) from exc
+        assertions.append((sample_id, expected_screen, renderer_observation))
     screenshot_payloads = _mapping_sequence(payload["screenshots"], f"{variant}.screenshots")
     screenshots: list[dict[str, object]] = []
     for screenshot in screenshot_payloads:
@@ -639,6 +654,16 @@ def _verified_capture_variant(
         )
     if [item[0] for item in assertions] != [item["sample_id"] for item in screenshots]:
         raise VisualEvidenceError(f"capture report {variant} assertions and screenshots do not match")
+    for assertion, screenshot in zip(assertions, screenshots, strict=True):
+        observation = assertion[2]
+        if (
+            observation.coordinate_space != "capture_pixels"
+            or observation.viewport_width != screenshot["width"]
+            or observation.viewport_height != screenshot["height"]
+        ):
+            raise VisualEvidenceError(
+                f"capture report {variant} renderer viewport does not match screenshot"
+            )
     return source_sha256, tuple(screenshots)
 
 
@@ -671,6 +696,7 @@ def prepare_visual_evidence_manifest(
             "plan_schema_version",
             "plan_sha256",
             "reference",
+            "renderer_observation_verified",
             "schema_version",
             "semantic_alignment_verified",
         ),
@@ -680,13 +706,18 @@ def prepare_visual_evidence_manifest(
         capture_payload["schema_version"] != RENPY_CAPTURE_REPORT_SCHEMA_VERSION
         or capture_payload["plan_schema_version"] != RENPY_CAPTURE_PLAN_SCHEMA_VERSION
     ):
-        raise VisualEvidenceError("capture report must use the current Ren'Py v2 schemas")
+        raise VisualEvidenceError(
+            "capture report must use the current Ren'Py report and plan schemas"
+        )
     if (
         capture_payload["capture_passed"] is not True
         or capture_payload["semantic_alignment_verified"] is not True
+        or capture_payload["renderer_observation_verified"] is not True
         or capture_payload["passed"] is not True
     ):
-        raise VisualEvidenceError("capture report must have verified semantic alignment")
+        raise VisualEvidenceError(
+            "capture report must have verified semantic alignment and renderer observation"
+        )
     annotations = load_manual_visual_annotations(annotations_path)
     if annotations.capture_report_sha256 != _sha256_file(capture_report_path):
         raise VisualEvidenceError("manual annotations reference a different capture report")

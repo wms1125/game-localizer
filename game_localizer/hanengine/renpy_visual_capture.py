@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -20,8 +20,12 @@ from .segments import JsonValue
 
 
 RENPY_CAPTURE_PLAN_SCHEMA_VERSION = "hanengine.renpy-capture-plan/v2"
-RENPY_CAPTURE_REPORT_SCHEMA_VERSION = "hanengine.renpy-capture-report/v2"
+RENPY_CAPTURE_REPORT_SCHEMA_VERSION = "hanengine.renpy-capture-report/v3"
+RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION = (
+    "hanengine.renpy-renderer-observation/v1"
+)
 _LEGACY_CAPTURE_PLAN_SCHEMA_VERSION = "hanengine.renpy-capture-plan/v1"
+_RENPY_RUNTIME_STATE_SCHEMA_VERSION = "hanengine.renpy-runtime-state/v2"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -70,6 +74,14 @@ def _number(value: object, name: str, *, minimum: float, maximum: float) -> floa
     if not minimum <= number <= maximum:
         raise ValueError(f"{name} must be between {minimum:g} and {maximum:g}")
     return number
+
+
+def _integer(value: object, name: str, *, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
 
 
 def _sha256(path: Path) -> str:
@@ -286,11 +298,235 @@ class RenPyCapturePlan:
 
 
 @dataclass(frozen=True)
+class RendererTextRegion:
+    text: str
+    x: float
+    y: float
+    width: float
+    height: float
+    line_count: int
+    baseline: float | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text", _string(self.text, "text"))
+        for name in ("x", "y"):
+            object.__setattr__(
+                self,
+                name,
+                _number(getattr(self, name), name, minimum=0, maximum=100_000),
+            )
+        for name in ("width", "height"):
+            object.__setattr__(
+                self,
+                name,
+                _number(
+                    getattr(self, name),
+                    name,
+                    minimum=0.001,
+                    maximum=100_000,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "line_count",
+            _integer(self.line_count, "line_count", minimum=0, maximum=10_000),
+        )
+        if self.baseline is not None:
+            object.__setattr__(
+                self,
+                "baseline",
+                _number(self.baseline, "baseline", minimum=0, maximum=100_000),
+            )
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "text": self.text,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "line_count": self.line_count,
+            "baseline": self.baseline,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "RendererTextRegion":
+        payload = _mapping(payload, "renderer_text_region")
+        _exact_keys(
+            payload,
+            ("text", "x", "y", "width", "height", "line_count", "baseline"),
+            "renderer_text_region",
+        )
+        return cls(
+            text=payload["text"],
+            x=payload["x"],
+            y=payload["y"],
+            width=payload["width"],
+            height=payload["height"],
+            line_count=payload["line_count"],
+            baseline=payload["baseline"],
+        )
+
+
+@dataclass(frozen=True)
+class RendererObservation:
+    viewport_width: int
+    viewport_height: int
+    text_regions: tuple[RendererTextRegion, ...]
+    coordinate_space: str = "capture_pixels"
+    schema_version: str = RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError("renderer observation schema_version is unsupported")
+        if self.coordinate_space not in {
+            "capture_pixels",
+            "renpy_virtual_pixels",
+        }:
+            raise ValueError("renderer observation coordinate_space is unsupported")
+        object.__setattr__(
+            self,
+            "viewport_width",
+            _integer(
+                self.viewport_width,
+                "viewport_width",
+                minimum=1,
+                maximum=100_000,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "viewport_height",
+            _integer(
+                self.viewport_height,
+                "viewport_height",
+                minimum=1,
+                maximum=100_000,
+            ),
+        )
+        regions = tuple(self.text_regions)
+        if any(not isinstance(item, RendererTextRegion) for item in regions):
+            raise TypeError("text_regions must contain RendererTextRegion values")
+        for region in regions:
+            if (
+                region.x + region.width > self.viewport_width + 0.001
+                or region.y + region.height > self.viewport_height + 0.001
+            ):
+                raise ValueError("renderer text region must fit inside the viewport")
+        object.__setattr__(self, "text_regions", regions)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "schema_version": self.schema_version,
+            "coordinate_space": self.coordinate_space,
+            "viewport_width": self.viewport_width,
+            "viewport_height": self.viewport_height,
+            "text_regions": [item.to_dict() for item in self.text_regions],
+        }
+
+    def to_capture_space(
+        self,
+        *,
+        capture_width: int,
+        capture_height: int,
+        content_x: int,
+        content_y: int,
+        content_width: int,
+        content_height: int,
+    ) -> "RendererObservation":
+        if self.coordinate_space != "renpy_virtual_pixels":
+            raise ValueError("renderer observation is not in Ren'Py virtual pixels")
+        capture_width = _integer(
+            capture_width, "capture_width", minimum=1, maximum=100_000
+        )
+        capture_height = _integer(
+            capture_height, "capture_height", minimum=1, maximum=100_000
+        )
+        content_x = _integer(
+            content_x, "content_x", minimum=0, maximum=capture_width
+        )
+        content_y = _integer(
+            content_y, "content_y", minimum=0, maximum=capture_height
+        )
+        content_width = _integer(
+            content_width,
+            "content_width",
+            minimum=1,
+            maximum=capture_width,
+        )
+        content_height = _integer(
+            content_height,
+            "content_height",
+            minimum=1,
+            maximum=capture_height,
+        )
+        if (
+            content_x + content_width > capture_width
+            or content_y + content_height > capture_height
+        ):
+            raise ValueError("renderer content area must fit inside the capture")
+        scale_x = content_width / self.viewport_width
+        scale_y = content_height / self.viewport_height
+        regions = tuple(
+            RendererTextRegion(
+                text=region.text,
+                x=round(content_x + region.x * scale_x, 3),
+                y=round(content_y + region.y * scale_y, 3),
+                width=round(region.width * scale_x, 3),
+                height=round(region.height * scale_y, 3),
+                line_count=region.line_count,
+                baseline=(
+                    round(region.baseline * scale_y, 3)
+                    if region.baseline is not None
+                    else None
+                ),
+            )
+            for region in self.text_regions
+        )
+        return RendererObservation(
+            viewport_width=capture_width,
+            viewport_height=capture_height,
+            text_regions=regions,
+            coordinate_space="capture_pixels",
+        )
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "RendererObservation":
+        payload = _mapping(payload, "renderer_observation")
+        _exact_keys(
+            payload,
+            (
+                "schema_version",
+                "coordinate_space",
+                "viewport_width",
+                "viewport_height",
+                "text_regions",
+            ),
+            "renderer_observation",
+        )
+        regions = _mapping_sequence(payload["text_regions"], "text_regions")
+        return cls(
+            schema_version=payload["schema_version"],
+            coordinate_space=payload["coordinate_space"],
+            viewport_width=payload["viewport_width"],
+            viewport_height=payload["viewport_height"],
+            text_regions=tuple(RendererTextRegion.from_dict(item) for item in regions),
+        )
+
+
+@dataclass(frozen=True)
+class _RuntimeState:
+    screens: tuple[str, ...]
+    renderer_observation: RendererObservation | None
+
+
+@dataclass(frozen=True)
 class ScreenAssertionResult:
     sample_id: str
     expected_screen: str
     observed_screens: tuple[str, ...]
     passed: bool
+    renderer_observation: RendererObservation | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -298,6 +534,11 @@ class ScreenAssertionResult:
             "expected_screen": self.expected_screen,
             "observed_screens": list(self.observed_screens),
             "passed": self.passed,
+            "renderer_observation": (
+                self.renderer_observation.to_dict()
+                if self.renderer_observation is not None
+                else None
+            ),
         }
 
 
@@ -344,20 +585,86 @@ class WindowsRenPyCaptureBackend:
             raise RenPyVisualCaptureError("Ren'Py shadow project is missing its game directory")
         probe_path = game_root / f"_hanengine_visual_probe_{uuid.uuid4().hex}.rpy"
         names_literal = json.dumps(screen_names, ensure_ascii=True)
+        renderer_schema_literal = json.dumps(
+            RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
+        )
+        runtime_schema_literal = json.dumps(_RENPY_RUNTIME_STATE_SCHEMA_VERSION)
         probe_path.write_text(
             "init -1000 python:\n"
             "    import json as _hanengine_json\n"
+            "    import math as _hanengine_math\n"
             "    import os as _hanengine_os\n"
             f"    _hanengine_screen_names = {names_literal}\n"
+            f"    _hanengine_renderer_schema = {renderer_schema_literal}\n"
+            f"    _hanengine_runtime_schema = {runtime_schema_literal}\n"
+            "    def _hanengine_renderer_observation():\n"
+            "        _root = getattr(renpy.game.interface, 'surftree', None)\n"
+            "        if _root is None:\n"
+            "            return None\n"
+            "        _viewport_width = int(round(float(_root.width)))\n"
+            "        _viewport_height = int(round(float(_root.height)))\n"
+            "        if _viewport_width < 1 or _viewport_height < 1:\n"
+            "            return None\n"
+            "        _regions = []\n"
+            "        _region_keys = set()\n"
+            "        _pending = [(_root, 0.0, 0.0, ())]\n"
+            "        _visited = 0\n"
+            "        while _pending and _visited < 10000:\n"
+            "            _node, _x, _y, _ancestors = _pending.pop()\n"
+            "            if id(_node) in _ancestors:\n"
+            "                continue\n"
+            "            _visited += 1\n"
+            "            _render_of = getattr(_node, 'render_of', ())\n"
+            "            for _displayable in _render_of:\n"
+            "                if not isinstance(_displayable, renpy.text.text.Text):\n"
+            "                    continue\n"
+            "                _text = _displayable.get_all_text()\n"
+            "                _width = float(getattr(_node, 'width', 0.0))\n"
+            "                _height = float(getattr(_node, 'height', 0.0))\n"
+            "                if not _text or not all(_hanengine_math.isfinite(_value) for _value in (_x, _y, _width, _height)):\n"
+            "                    continue\n"
+            "                _left = max(0.0, min(float(_viewport_width), _x))\n"
+            "                _top = max(0.0, min(float(_viewport_height), _y))\n"
+            "                _right = max(0.0, min(float(_viewport_width), _x + _width))\n"
+            "                _bottom = max(0.0, min(float(_viewport_height), _y + _height))\n"
+            "                if _right <= _left or _bottom <= _top:\n"
+            "                    continue\n"
+            "                _layout = _displayable.get_layout()\n"
+            "                _baseline = getattr(_layout, 'baseline', None)\n"
+            "                if _baseline is not None:\n"
+            "                    _baseline = float(_baseline)\n"
+            "                    if not _hanengine_math.isfinite(_baseline) or _baseline < 0:\n"
+            "                        _baseline = None\n"
+            "                _line_count = len(getattr(_layout, 'lines', ()))\n"
+            "                _values = (round(_left, 3), round(_top, 3), round(_right - _left, 3), round(_bottom - _top, 3))\n"
+            "                _key = (_text,) + _values + (_line_count, _baseline)\n"
+            "                if _key in _region_keys:\n"
+            "                    continue\n"
+            "                _region_keys.add(_key)\n"
+            "                _regions.append({'text': _text, 'x': _values[0], 'y': _values[1], 'width': _values[2], 'height': _values[3], 'line_count': _line_count, 'baseline': _baseline})\n"
+            "            _next_ancestors = _ancestors + (id(_node),)\n"
+            "            for _child in getattr(_node, 'children', ()):\n"
+            "                if not isinstance(_child, tuple) or len(_child) < 3:\n"
+            "                    continue\n"
+            "                try:\n"
+            "                    _child_x = float(_child[1])\n"
+            "                    _child_y = float(_child[2])\n"
+            "                except (TypeError, ValueError):\n"
+            "                    continue\n"
+            "                if _hanengine_math.isfinite(_child_x) and _hanengine_math.isfinite(_child_y):\n"
+            "                    _pending.append((_child[0], _x + _child_x, _y + _child_y, _next_ancestors))\n"
+            "        _regions.sort(key=lambda _item: (_item['y'], _item['x'], _item['text']))\n"
+            "        return {'schema_version': _hanengine_renderer_schema, 'coordinate_space': 'renpy_virtual_pixels', 'viewport_width': _viewport_width, 'viewport_height': _viewport_height, 'text_regions': _regions}\n"
             "    def _hanengine_write_screen_state():\n"
             "        try:\n"
             f"            _state_path = _hanengine_os.environ.get('{WindowsRenPyCaptureBackend._SCREEN_STATE_ENV}')\n"
             "            if not _state_path:\n"
             "                return\n"
             "            _screens = [name for name in _hanengine_screen_names if renpy.get_screen(name) is not None]\n"
+            "            _renderer = _hanengine_renderer_observation()\n"
             "            _temporary = _state_path + '.tmp'\n"
             "            with open(_temporary, 'w', encoding='utf-8') as _stream:\n"
-            "                _hanengine_json.dump({'screens': _screens}, _stream, sort_keys=True)\n"
+            "                _hanengine_json.dump({'schema_version': _hanengine_runtime_schema, 'screens': _screens, 'renderer_observation': _renderer}, _stream, ensure_ascii=False, sort_keys=True)\n"
             "            _hanengine_os.replace(_temporary, _state_path)\n"
             "        except Exception:\n"
             "            pass\n"
@@ -368,17 +675,65 @@ class WindowsRenPyCaptureBackend:
         return probe_path
 
     @staticmethod
-    def _read_observed_screens(state_path: Path) -> tuple[str, ...]:
+    def _read_runtime_state(state_path: Path) -> _RuntimeState:
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            return ()
-        screens = payload.get("screens") if isinstance(payload, Mapping) else None
+            payload = _mapping(payload, "renpy_runtime_state")
+            _exact_keys(
+                payload,
+                ("schema_version", "screens", "renderer_observation"),
+                "renpy_runtime_state",
+            )
+            if payload["schema_version"] != _RENPY_RUNTIME_STATE_SCHEMA_VERSION:
+                raise ValueError("Ren'Py runtime state schema is unsupported")
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+            return _RuntimeState((), None)
+        screens = payload["screens"]
         if isinstance(screens, (str, bytes)) or not isinstance(screens, Sequence):
-            return ()
+            return _RuntimeState((), None)
         if any(not isinstance(item, str) or not item for item in screens):
-            return ()
-        return tuple(screens)
+            return _RuntimeState((), None)
+        renderer_payload = payload["renderer_observation"]
+        if renderer_payload is None:
+            renderer_observation = None
+        else:
+            try:
+                renderer_observation = RendererObservation.from_dict(
+                    _mapping(renderer_payload, "renderer_observation")
+                )
+            except (TypeError, ValueError):
+                return _RuntimeState((), None)
+        return _RuntimeState(tuple(screens), renderer_observation)
+
+    @classmethod
+    def _read_observed_screens(cls, state_path: Path) -> tuple[str, ...]:
+        return cls._read_runtime_state(state_path).screens
+
+    @staticmethod
+    def _renderer_observation_to_capture(
+        observation: RendererObservation,
+        hwnd: int,
+        window_geometry: tuple[int, int, int, int],
+        user32: object,
+    ) -> RendererObservation:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        origin = wintypes.POINT(0, 0)
+        if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            raise RenPyVisualCaptureError("Ren'Py client geometry is unavailable")
+        if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+            raise RenPyVisualCaptureError("Ren'Py client origin is unavailable")
+        window_left, window_top, window_width, window_height = window_geometry
+        return observation.to_capture_space(
+            capture_width=window_width,
+            capture_height=window_height,
+            content_x=origin.x - window_left,
+            content_y=origin.y - window_top,
+            content_width=rect.right - rect.left,
+            content_height=rect.bottom - rect.top,
+        )
 
     @staticmethod
     def _capture_window_png(hwnd: int, width: int, height: int, output: Path) -> bool:
@@ -499,14 +854,18 @@ class WindowsRenPyCaptureBackend:
             return None
         deadline = time.monotonic() + scenario.screen_timeout_seconds
         observed: tuple[str, ...] = ()
+        renderer_observation: RendererObservation | None = None
         while time.monotonic() < deadline:
-            observed = cls._read_observed_screens(state_path)
-            if scenario.expected_screen in observed:
+            runtime_state = cls._read_runtime_state(state_path)
+            observed = runtime_state.screens
+            renderer_observation = runtime_state.renderer_observation
+            if scenario.expected_screen in observed and renderer_observation is not None:
                 return ScreenAssertionResult(
                     sample_id=scenario.sample_id,
                     expected_screen=scenario.expected_screen,
                     observed_screens=observed,
                     passed=True,
+                    renderer_observation=renderer_observation,
                 )
             if process.poll() is not None:
                 break
@@ -516,6 +875,7 @@ class WindowsRenPyCaptureBackend:
             expected_screen=scenario.expected_screen,
             observed_screens=observed,
             passed=False,
+            renderer_observation=renderer_observation,
         )
 
     def capture(
@@ -672,13 +1032,28 @@ class WindowsRenPyCaptureBackend:
                     if expected_screen_reached:
                         break
                 assertion = self._wait_for_expected_screen(scenario, state_path, process)
-                if assertion is not None:
-                    screen_assertions.append(assertion)
                 window = locate_window(
                     scenario.screen_timeout_seconds,
                     expected_size=capture_size,
                 )
                 force_foreground(window._hWnd)
+                if assertion is not None:
+                    if assertion.renderer_observation is not None:
+                        assertion = replace(
+                            assertion,
+                            renderer_observation=self._renderer_observation_to_capture(
+                                assertion.renderer_observation,
+                                window._hWnd,
+                                (
+                                    window.left,
+                                    window.top,
+                                    window.width,
+                                    window.height,
+                                ),
+                                user32,
+                            ),
+                        )
+                    screen_assertions.append(assertion)
                 screenshot_path = output_root / f"{scenario.sample_id}.png"
                 if not self._capture_window_png(window._hWnd, window.width, window.height, screenshot_path):
                     with mss.mss() as screen:
@@ -789,8 +1164,28 @@ class RenPyCapturePairReport:
         )
 
     @property
+    def renderer_observation_verified(self) -> bool:
+        return (
+            self.plan_schema_version == RENPY_CAPTURE_PLAN_SCHEMA_VERSION
+            and bool(self.reference.screen_assertions)
+            and bool(self.candidate.screen_assertions)
+            and all(
+                item.renderer_observation is not None
+                for item in self.reference.screen_assertions
+            )
+            and all(
+                item.renderer_observation is not None
+                for item in self.candidate.screen_assertions
+            )
+        )
+
+    @property
     def passed(self) -> bool:
-        return self.capture_passed and self.semantic_alignment_verified
+        return (
+            self.capture_passed
+            and self.semantic_alignment_verified
+            and self.renderer_observation_verified
+        )
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -801,6 +1196,7 @@ class RenPyCapturePairReport:
             "plan_schema_version": self.plan_schema_version,
             "capture_passed": self.capture_passed,
             "semantic_alignment_verified": self.semantic_alignment_verified,
+            "renderer_observation_verified": self.renderer_observation_verified,
             "passed": self.passed,
             "reference": self.reference.to_dict(),
             "candidate": self.candidate.to_dict(),
@@ -873,6 +1269,26 @@ def _variant_report(
                 height=height,
             )
         )
+    assertions_by_sample = {
+        assertion.sample_id: assertion for assertion in result.screen_assertions
+    }
+    for screenshot in screenshots:
+        assertion = assertions_by_sample.get(screenshot.sample_id)
+        observation = (
+            assertion.renderer_observation if assertion is not None else None
+        )
+        if observation is not None:
+            if observation.coordinate_space != "capture_pixels":
+                raise RenPyVisualCaptureError(
+                    "renderer observation must use capture pixel coordinates"
+                )
+            if (
+                observation.viewport_width != screenshot.width
+                or observation.viewport_height != screenshot.height
+            ):
+                raise RenPyVisualCaptureError(
+                    "renderer observation viewport does not match the capture dimensions"
+                )
     return CaptureVariantReport(
         variant=variant,
         source_tree_sha256=source_before,
@@ -993,10 +1409,13 @@ __all__ = [
     "CapturedScreenshot",
     "RENPY_CAPTURE_PLAN_SCHEMA_VERSION",
     "RENPY_CAPTURE_REPORT_SCHEMA_VERSION",
+    "RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION",
     "RenPyCaptureBackend",
     "RenPyCapturePairReport",
     "RenPyCapturePlan",
     "RenPyVisualCaptureError",
+    "RendererObservation",
+    "RendererTextRegion",
     "ScreenAssertionResult",
     "WindowsRenPyCaptureBackend",
     "load_renpy_capture_plan",

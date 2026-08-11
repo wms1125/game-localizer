@@ -11,9 +11,13 @@ from game_localizer.hanengine.renpy_visual_capture import (
     BackendCaptureResult,
     CaptureAction,
     RENPY_CAPTURE_PLAN_SCHEMA_VERSION,
+    RENPY_CAPTURE_REPORT_SCHEMA_VERSION,
     RenPyCapturePlan,
     RenPyVisualCaptureError,
+    RendererObservation,
+    RendererTextRegion,
     ScreenAssertionResult,
+    WindowsRenPyCaptureBackend,
     load_renpy_capture_plan,
     run_renpy_capture_pair,
 )
@@ -36,10 +40,17 @@ def _png(width: int, height: int, value: int) -> bytes:
 
 
 class FakeCaptureBackend:
-    def __init__(self, *, mismatch=False, omit_assertions=False):
+    def __init__(
+        self,
+        *,
+        mismatch=False,
+        omit_assertions=False,
+        omit_renderer=False,
+    ):
         self.calls = []
         self.mismatch = mismatch
         self.omit_assertions = omit_assertions
+        self.omit_renderer = omit_renderer
 
     def capture(self, launcher, project_root, output_root, save_root, plan):
         call_index = len(self.calls)
@@ -67,6 +78,25 @@ class FakeCaptureBackend:
                         expected_screen=scenario.expected_screen,
                         observed_screens=(scenario.expected_screen,),
                         passed=True,
+                        renderer_observation=(
+                            None
+                            if self.omit_renderer
+                            else RendererObservation(
+                                viewport_width=width,
+                                viewport_height=24,
+                                text_regions=(
+                                    RendererTextRegion(
+                                        text=scenario.expected_screen,
+                                        x=2,
+                                        y=3,
+                                        width=20,
+                                        height=10,
+                                        line_count=1,
+                                        baseline=8,
+                                    ),
+                                ),
+                            )
+                        ),
                     )
                     for scenario in plan.scenarios
                     if scenario.expected_screen is not None
@@ -164,6 +194,94 @@ class RenPyVisualCaptureTests(unittest.TestCase):
                 }
             )
 
+    def test_renderer_observation_round_trip_rejects_unknown_fields(self):
+        observation = RendererObservation(
+            viewport_width=1280,
+            viewport_height=720,
+            text_regions=(
+                RendererTextRegion(
+                    text="开始游戏",
+                    x=44,
+                    y=244,
+                    width=96,
+                    height=31,
+                    line_count=1,
+                    baseline=24,
+                ),
+            ),
+        )
+
+        self.assertEqual(
+            RendererObservation.from_dict(observation.to_dict()), observation
+        )
+        invalid = observation.to_dict()
+        invalid["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "fields"):
+            RendererObservation.from_dict(invalid)
+
+    def test_renderer_observation_maps_client_area_to_capture_pixels(self):
+        observation = RendererObservation(
+            viewport_width=1280,
+            viewport_height=720,
+            coordinate_space="renpy_virtual_pixels",
+            text_regions=(
+                RendererTextRegion(
+                    text="Start",
+                    x=44,
+                    y=244,
+                    width=96,
+                    height=31,
+                    line_count=1,
+                    baseline=24,
+                ),
+            ),
+        )
+
+        mapped = observation.to_capture_space(
+            capture_width=1296,
+            capture_height=759,
+            content_x=8,
+            content_y=31,
+            content_width=1280,
+            content_height=720,
+        )
+
+        self.assertEqual(mapped.coordinate_space, "capture_pixels")
+        self.assertEqual((mapped.viewport_width, mapped.viewport_height), (1296, 759))
+        self.assertEqual((mapped.text_regions[0].x, mapped.text_regions[0].y), (52, 275))
+
+    def test_windows_geometry_helper_maps_runtime_observation(self):
+        class FakeUser32:
+            @staticmethod
+            def GetClientRect(hwnd, pointer):
+                pointer._obj.right = 1280
+                pointer._obj.bottom = 720
+                return 1
+
+            @staticmethod
+            def ClientToScreen(hwnd, pointer):
+                pointer._obj.x = 108
+                pointer._obj.y = 231
+                return 1
+
+        observation = RendererObservation(
+            viewport_width=1280,
+            viewport_height=720,
+            coordinate_space="renpy_virtual_pixels",
+            text_regions=(
+                RendererTextRegion("Start", 44, 244, 96, 31, 1, 24),
+            ),
+        )
+
+        mapped = WindowsRenPyCaptureBackend._renderer_observation_to_capture(
+            observation,
+            123,
+            (100, 200, 1296, 759),
+            FakeUser32(),
+        )
+
+        self.assertEqual((mapped.text_regions[0].x, mapped.text_regions[0].y), (52, 275))
+
     def test_v2_plan_requires_screen_assertions(self):
         payload = self.v2_plan_payload()
         plan = RenPyCapturePlan.from_dict(payload)
@@ -191,11 +309,35 @@ class RenPyVisualCaptureTests(unittest.TestCase):
 
         self.assertTrue(report.capture_passed)
         self.assertTrue(report.semantic_alignment_verified)
+        self.assertTrue(report.renderer_observation_verified)
         self.assertTrue(report.passed)
+        self.assertEqual(report.schema_version, RENPY_CAPTURE_REPORT_SCHEMA_VERSION)
         self.assertEqual(
             [item.expected_screen for item in report.reference.screen_assertions],
             ["main_menu", "say", "game_menu"],
         )
+
+    def test_v2_pair_fails_when_renderer_observation_is_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            launcher, reference, candidate, plan_path = self.fixture(root)
+            plan_path.write_text(
+                json.dumps(self.v2_plan_payload(), indent=2), encoding="utf-8"
+            )
+
+            report = run_renpy_capture_pair(
+                launcher,
+                reference,
+                candidate,
+                plan_path,
+                root / "evidence",
+                authorization_reference="repository-owned-test-fixture",
+                backend_factory=lambda: FakeCaptureBackend(omit_renderer=True),
+            )
+
+        self.assertTrue(report.semantic_alignment_verified)
+        self.assertFalse(report.renderer_observation_verified)
+        self.assertFalse(report.passed)
 
     def test_v2_pair_rejects_backend_that_omits_screen_assertions(self):
         with tempfile.TemporaryDirectory() as temporary:

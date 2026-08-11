@@ -167,6 +167,23 @@ class VisualEvidenceTests(unittest.TestCase):
                         "expected_screen": expected_screen,
                         "observed_screens": [expected_screen] if assertion_passed else ["say"],
                         "passed": assertion_passed,
+                        "renderer_observation": {
+                            "schema_version": "hanengine.renpy-renderer-observation/v1",
+                            "coordinate_space": "capture_pixels",
+                            "viewport_width": size[0],
+                            "viewport_height": size[1],
+                            "text_regions": [
+                                {
+                                    "text": expected_screen,
+                                    "x": 1,
+                                    "y": 1,
+                                    "width": 10,
+                                    "height": 8,
+                                    "line_count": 1,
+                                    "baseline": 6,
+                                }
+                            ],
+                        },
                         "sample_id": "main-menu",
                     }
                 ],
@@ -198,7 +215,8 @@ class VisualEvidenceTests(unittest.TestCase):
             "plan_schema_version": "hanengine.renpy-capture-plan/v2",
             "plan_sha256": HASH_B,
             "reference": variant("reference", reference_bytes, (32, 18), HASH_A),
-            "schema_version": "hanengine.renpy-capture-report/v2",
+            "renderer_observation_verified": True,
+            "schema_version": "hanengine.renpy-capture-report/v3",
             "semantic_alignment_verified": semantic_alignment,
         }
         capture_path = root / "capture-report.json"
