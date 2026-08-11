@@ -4,7 +4,7 @@
 
 本文是当前工作树的阶段性状态摘要。它补充并更新 `docs/project-status.md`，重点记录最近的真实 Ren'Py 项目验证和“无感汉化”目标。这里的“已验证”表示工程流水线、编译、字体和运行冒烟证据完整，不代表机器翻译质量已经达到发布标准。
 
-当前仓库分支为 `codex/game-localizer`。最新本地代码 checkpoint 为 `9bcda39 feat: add visual style quality gates`，远端尚未同步；工作树还包含视觉证据运行器、Ren'Py 成对截图采集器和本状态文档的未提交改动。
+当前仓库分支为 `codex/game-localizer`。本轮起点 checkpoint 为 `fe64856 docs: record v11 client language evidence`，并已同步到远端检查点；本轮继续在此分支实现 P1.1 质量门。
 
 ## 1. 已完成内容
 
@@ -129,9 +129,10 @@ game-localizer/
 | `--authorization-reference` | 授权依据的可脱敏引用 | 不写入私密令牌或项目内容 |
 | `--renpy-sdk` / `--validator` | 官方编译器或验证器 | 成功执行前最多只能得到 `build_ready` |
 | `--font` | 一个或多个 `.ttf`/`.otf` | Ren'Py 会按顺序打包字体、生成 `FontGroup` 并检查译文 Unicode 覆盖 |
+| `--font-probe-text` | 可重复的运行时动态文本探针 | 必须与 `--font` 同时使用；探针码点和译文一起参与字体覆盖与 `FontGroup` 分配 |
 | `--runtime-smoke` | `not_run`、`passed`、`failed` | `passed` 必须带稳定引用 |
 | `--language` | 目标语言，默认 `zh-CN` | Ren'Py 输出标识符为 `zh_cn` |
-| `renpy_font_paths` | 内部 `BuildRequest.output_options` 字段 | 由验证工作流从 `--font` 生成，不是用户 CLI 参数 |
+| `renpy_font_paths` / `renpy_font_probe_texts` | 内部 `BuildRequest.output_options` 字段 | 由验证工作流从 `--font` / `--font-probe-text` 生成，不是用户 CLI 参数 |
 | `HANENGINE_PYTHON` | Electron 调用的 Python 可执行文件 | Windows 默认使用 `python` |
 | `HANENGINE_GAME_LANGUAGE` | HanEngine 客户端启动游戏时传递的语言模式 | `zh_cn` 启动中文；`source` 清除 Ren'Py 语言偏好后启动原文；仅由客户端启动生效 |
 | `visual prepare` | 从已验证采集报告和人工区域标注生成 v2 manifest | 必须显式提供 `--authorized`；输入、输出和证据图片必须位于同一证据目录 |
@@ -175,8 +176,8 @@ python cli.py project validate renpy <project> `
 - 当前 Ren'Py 提取器覆盖明文对白、旁白、菜单、屏幕控件以及同一行多个直接 `_()` 字符串字面量；复杂运行时拼接和复数语法仍需加强，`{#...}` 文本上下文标记已纳入 Segment V2 metadata。
 - 结构化适配器会把中文目标中“源文等于译文”的明显英文自然语言标记为非阻断性 `untranslated_natural_language` 告警；客户端将其显示为“需检查”。单个标识符、缩写、路径、变量和产品品牌不按此规则误报。
 - Ren'Py 运行时对重复 `old` 文本存在全局冲突；当前写出器保留首个译文，已有上下文元数据仍需在写出阶段转化为更精确的语境策略。
-- 目前段模型还没有完整保存字体、控件尺寸、换行约束和动画上下文，无法单独保证长中文译文不溢出。
-- 字体回退目前只按本次译文实际码点生成显式映射，最后一个字体承接其他运行时文本；动态生成的新字符仍需专门的回退/缺字回归测试。
+- 段模型仍没有完整保存字体、控件尺寸、换行约束和动画上下文，不能单独保证长中文译文不溢出；本轮已在 `VisualHardGatePolicy` 增加按场景/区域的最大行数预算，预算超限会阻断硬门。
+- Ren'Py 写出器现在支持可选运行时字体探针；探针字符与译文共同参与联合 Unicode 覆盖检查和显式 `FontGroup` 范围分配，缺字、无字体探针和多字体回退均有自动化回归。
 
 ### 范围和验证
 
@@ -187,7 +188,7 @@ python cli.py project validate renpy <project> `
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
 - 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：目录覆盖率为 242/242，v11 内部验证通过且仅剩 2 个非阻断告警（作者署名、语言名称），Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；字体已实际打包且联合覆盖通过。原文/中文客户端模式均完成六场景 runtime smoke，候选树与验证记录一致。
-- 本轮已完整执行 Ren'Py、结构化适配、视觉采集、视觉证据、视觉样式和项目验证六个相关测试模块，共 92 项通过；其中包含客户端语言环境传递和字体覆盖回归。完整工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误。
+- 本轮已完整执行 Ren'Py、结构化适配、视觉采集、视觉证据、视觉样式和项目验证六个相关测试模块，共 98 项通过；其中包含客户端语言环境传递、长文本行数预算、动态字体探针和多字体回退回归。Python 编译检查、Electron 语法检查和桌面端 `npm run build` 均通过。完整工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误。
 
 ### 桌面端和发布
 
@@ -203,7 +204,7 @@ python cli.py project validate renpy <project> `
 2. [已完成第一阶段] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、有效 `menu:` 一级选项、同一行多个直接字符串字面量、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数语法及运行时拼接仍需补齐。
 3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。官方文档未发现独立通用的 Ren'Py 复数翻译语法，暂不虚构支持。
 4. [已完成] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。官方样例中文候选已完成真实运行时启动和主菜单、对白、分支、保存、读取、设置页面的截图回归，动态 UI 文本显示正常；v8 记录的稳定运行时引用中包含 r7 报告 SHA-256 和候选指纹。
-5. [已完成第一步] Ren'Py 候选已打包多字体并生成 `FontGroup`，真实样例未再出现方框。下一步补充长中文文本、文本框溢出、动态生成字符缺字、多字体回退和无法翻译时保留原文的自动化测试。
+5. [本轮完成] Ren'Py 候选继续打包多字体并生成 `FontGroup`；新增按场景/区域最大行数的长文本质量门、运行时动态字符字体探针、探针缺字失败和多字体显式范围回退测试。旧视觉策略 JSON 仍可读取，98 项六模块回归全部通过。无法翻译时保留原文的复数/运行时拼接策略仍待补齐。
 6. [进行中] 视觉档案、截图比较、硬门报告和判定结果已支持严格 JSON 往返；A/B PNG 清单、哈希校验、外部判官边界、Ren'Py 影子项目成对采集器和受控人工标注准备流程已完成。官方样例 v11 已完成原文/中文双模式六场景 `6/6 + 6/6` 语义对齐，保存/读取页已用空存档重采并通过人工检查；视觉判官最终仍为 `escalate`，因为实际 AI 服务尚未接入，renderer/OCR 自动观察和 Unity/TMP 资源构建也尚未接入。
 
 ### P1.2：统一“原生渲染替换”能力
@@ -226,4 +227,4 @@ python cli.py project validate renpy <project> `
 
 ## 当前结论
 
-HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、自动语言激活和字体随候选包交付的第一版实现。本轮已将语言入口迁移到 HanEngine 客户端，并把“目录有目标值”与“译文完整”分开表示；明显未翻译英文会进入待检查队列，v10 已修复可见的无障碍说明和测试分支漏译。v11 已独立完成官方编译以及原文/中文双模式六场景运行验证，保存/读取页也已用全新空存档重采；候选指纹和输出树与 v10 基线完全一致，最终记录结论为 `verified`。下一步是补齐长文本布局、动态缺字、多字体回退和可审计的自动视觉观察。
+HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、自动语言激活和字体随候选包交付的第一版实现。本轮已将语言入口迁移到 HanEngine 客户端，并把“目录有目标值”与“译文完整”分开表示；明显未翻译英文会进入待检查队列，v10 已修复可见的无障碍说明和测试分支漏译。v11 已独立完成官方编译以及原文/中文双模式六场景运行验证，保存/读取页也已用全新空存档重采；候选指纹和输出树与 v10 基线完全一致，最终记录结论为 `verified`。P1.1 的长文本预算、动态缺字探针和多字体回退质量门已落地，下一步是接入 renderer/OCR 自动观察，并继续处理复数语法、运行时拼接和无法翻译时的原文保留策略。

@@ -366,6 +366,81 @@ class RenPyPipelineTests(unittest.TestCase):
         self.assertIn(config, result.generated_paths)
         self.assertIn(shipped / "Source_Han_Sans.ttf", result.generated_paths)
 
+    def test_writer_rejects_runtime_font_probe_without_configured_fonts(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        catalog = RenPyExtractor().extract(root).translate(
+            {"A narration line.": "甲"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "require configured font_paths"):
+            RenPyWriter().build(
+                catalog,
+                root / "localized-output",
+                source_root=root,
+                font_probe_texts=("★",),
+            )
+
+    def test_writer_rejects_runtime_probe_codepoint_missing_from_fonts(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        font = root / "primary.ttf"
+        font.write_bytes(b"primary font")
+        catalog = RenPyExtractor().extract(root).translate(
+            {"A narration line.": "甲"}
+        )
+
+        with patch(
+            "game_localizer.hanengine.renpy._font_unicode_coverage",
+            return_value={ord("甲")},
+        ), self.assertRaisesRegex(ValueError, "U\\+2605"):
+            RenPyWriter().build(
+                catalog,
+                root / "localized-output",
+                source_root=root,
+                font_paths=(font,),
+                font_probe_texts=("★",),
+            )
+
+    def test_writer_assigns_runtime_probe_to_covering_fallback_font(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        primary = root / "primary.ttf"
+        fallback = root / "fallback.ttf"
+        primary.write_bytes(b"primary font")
+        fallback.write_bytes(b"fallback font")
+        catalog = RenPyExtractor().extract(root).translate(
+            {"A narration line.": "甲"}
+        )
+
+        with patch(
+            "game_localizer.hanengine.renpy._font_unicode_coverage",
+            side_effect=({ord("甲")}, {ord("★")}),
+        ):
+            RenPyWriter().build(
+                catalog,
+                root / "localized-output",
+                source_root=root,
+                font_paths=(primary, fallback),
+                font_probe_texts=("★",),
+            )
+
+        config_text = (
+            root / "localized-output" / "game" / "hanengine_fonts.rpy"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '_hanengine_font_group.add("hanengine_fonts/primary.ttf", 0x7532, 0x7532)',
+            config_text,
+        )
+        self.assertIn(
+            '_hanengine_font_group.add("hanengine_fonts/fallback.ttf", 0x2605, 0x2605)',
+            config_text,
+        )
+        self.assertIn(
+            '_hanengine_font_group.add("hanengine_fonts/fallback.ttf", None, None)',
+            config_text,
+        )
+
     def test_language_identifier_is_safe_and_generated_syntax_fails_closed(self):
         self.assertEqual(renpy_language_identifier("zh-CN"), "zh_cn")
         self.assertEqual(renpy_language_identifier("123"), "lang_123")

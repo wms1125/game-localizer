@@ -1122,11 +1122,21 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     not isinstance(path, str) or not path for path in configured_fonts
                 ):
                     raise ValueError("renpy_font_paths must be a list of non-empty strings")
+                configured_probes = request.output_options.get(
+                    "renpy_font_probe_texts", []
+                )
+                if not isinstance(configured_probes, list) or any(
+                    not isinstance(text, str) or not text for text in configured_probes
+                ):
+                    raise ValueError(
+                        "renpy_font_probe_texts must be a list of non-empty strings"
+                    )
                 written = RenPyWriter().build(
                     catalog,
                     temporary,
                     source_root=request.source_root,
                     font_paths=tuple(Path(path) for path in configured_fonts),
+                    font_probe_texts=tuple(configured_probes),
                 )
                 relative_paths = tuple(
                     path.relative_to(temporary).as_posix()

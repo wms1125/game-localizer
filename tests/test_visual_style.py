@@ -166,6 +166,55 @@ class VisualStyleTests(unittest.TestCase):
         self.assertTrue(report.passed)
         self.assertEqual(report.failed_codes, ())
 
+    def test_line_budgets_block_long_text_and_accept_text_within_budget(self):
+        policy = VisualHardGatePolicy(
+            max_line_count_delta=5,
+            max_line_counts={"main-menu": {"primary-action": 2}},
+        )
+
+        accepted = run_visual_hard_gates(
+            self.comparison(candidate=self.region(lines=2)),
+            policy,
+        )
+        blocked = run_visual_hard_gates(
+            self.comparison(candidate=self.region(lines=3)),
+            policy,
+        )
+
+        self.assertTrue(accepted.passed)
+        self.assertEqual(blocked.failed_codes, ("line_budget",))
+
+    def test_line_budget_policy_reads_legacy_payload_and_rejects_unknown_targets(self):
+        legacy = {
+            "max_position_delta_px": 2.0,
+            "max_size_delta_px": 2.0,
+            "max_baseline_delta_px": 2.0,
+            "max_line_count_delta": 1,
+            "require_font_resolution": True,
+        }
+        restored = VisualHardGatePolicy.from_dict(legacy)
+        self.assertEqual(restored.max_line_counts, {})
+
+        policy = VisualHardGatePolicy(
+            max_line_counts={"main-menu": {"missing-region": 2}}
+        )
+        report = run_visual_hard_gates(self.comparison(), policy)
+        self.assertIn("line_budget_regions", report.failed_codes)
+
+        result = evaluate_visual_gate(
+            self.profile(),
+            (self.comparison(),),
+            policy=VisualHardGatePolicy(
+                max_line_counts={"missing-scenario": {"primary-action": 2}}
+            ),
+        )
+        self.assertEqual(result.decision, VisualGateDecision.BLOCKED)
+        self.assertIn("line_budget_scenarios", result.hard_gate.failed_codes)
+
+        unknown = dict(legacy, unexpected=True)
+        with self.assertRaisesRegex(ValueError, "fields"):
+            VisualHardGatePolicy.from_dict(unknown)
+
     def test_hard_gates_block_missing_glyphs_overflow_and_unresolved_font(self):
         report = run_visual_hard_gates(
             self.comparison(

@@ -42,6 +42,7 @@ class ProjectValidationTests(unittest.TestCase):
         directory: str = "renpy_tutorial",
         official_validator: OfficialValidatorConfig | None = None,
         font_paths: tuple[Path, ...] = (),
+        font_probe_texts: tuple[str, ...] = (),
         runtime_smoke: str = "not_run",
         runtime_smoke_reference: str | None = None,
     ) -> ProjectValidationRequest:
@@ -57,6 +58,7 @@ class ProjectValidationTests(unittest.TestCase):
             state_root=root / "state",
             record_path=root / f"record-{engine_id}.json",
             font_paths=font_paths,
+            font_probe_texts=font_probe_texts,
             official_validator=official_validator,
             runtime_smoke=runtime_smoke,
             runtime_smoke_reference=runtime_smoke_reference,
@@ -118,6 +120,7 @@ class ProjectValidationTests(unittest.TestCase):
                 root,
                 official_validator=validator,
                 font_paths=(font_path,),
+                font_probe_texts=("★",),
                 runtime_smoke="passed",
                 runtime_smoke_reference="manual-smoke-2026-08-08",
             )
@@ -130,16 +133,17 @@ class ProjectValidationTests(unittest.TestCase):
                     "required_codepoints": [],
                     "missing_codepoints": [],
                 },
-            ), patch(
+            ) as coverage_validator, patch(
                 "game_localizer.hanengine.renpy._font_unicode_coverage",
                 return_value=set(range(0x20, 0x7F))
-                | set(map(ord, "请选择目的地。你好！开始游戏欢迎来到教程。\uff0c")),
+                | set(map(ord, "请选择目的地。你好！开始游戏欢迎来到教程。\uff0c★")),
             ):
                 record = ProjectValidationRunner().run(request)
 
             self.assertEqual(record.conclusion, "verified")
             self.assertEqual(record.payload["official_validator"]["status"], "passed")
             self.assertTrue(record.payload["official_validator"]["output_tree_preserved"])
+            self.assertIn("★", coverage_validator.call_args.args[1])
 
     def test_official_validator_records_only_portable_result_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -263,6 +267,11 @@ class ProjectValidationTests(unittest.TestCase):
                     record_path=root / "output" / "record.json",
                 )
 
+    def test_request_rejects_font_probe_without_configured_fonts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "require configured font_paths"):
+                self._request(Path(temporary), font_probe_texts=("★",))
+
     def test_cli_requires_authorization_and_writes_build_ready_record(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -294,6 +303,13 @@ class ProjectValidationTests(unittest.TestCase):
             self.assertEqual(denied, 1)
             self.assertIn("--authorized", errors.getvalue())
             self.assertFalse(record.exists())
+
+            with redirect_stderr(io.StringIO()) as errors:
+                missing_font = cli.main(
+                    [*arguments, "--authorized", "--font-probe-text", "★"]
+                )
+            self.assertEqual(missing_font, 1)
+            self.assertIn("require configured font_paths", errors.getvalue())
 
             with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
                 accepted = cli.main([*arguments, "--authorized"])

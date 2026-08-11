@@ -87,6 +87,7 @@ class ProjectValidationRequest:
     target_language: str = "zh-CN"
     source_language: str = "en"
     font_paths: tuple[Path, ...] = ()
+    font_probe_texts: tuple[str, ...] = ()
     official_validator: OfficialValidatorConfig | None = None
     runtime_smoke: Literal["not_run", "passed", "failed"] = "not_run"
     runtime_smoke_reference: str | None = None
@@ -131,6 +132,14 @@ class ProjectValidationRequest:
             "font_paths",
             tuple(path.expanduser().resolve(strict=False) for path in fonts),
         )
+        if isinstance(self.font_probe_texts, (str, bytes)):
+            raise TypeError("font_probe_texts must be a sequence of strings")
+        probes = tuple(self.font_probe_texts)
+        if any(not isinstance(text, str) or not text for text in probes):
+            raise ValueError("font_probe_texts must contain non-empty strings")
+        if probes and not fonts:
+            raise ValueError("font probe texts require configured font_paths")
+        object.__setattr__(self, "font_probe_texts", probes)
         if self.official_validator is not None and not isinstance(
             self.official_validator, OfficialValidatorConfig
         ):
@@ -473,6 +482,10 @@ class ProjectValidationRunner:
                     output_options["renpy_font_paths"] = [
                         str(path) for path in request.font_paths
                     ]
+                    if request.font_probe_texts:
+                        output_options["renpy_font_probe_texts"] = list(
+                            request.font_probe_texts
+                        )
                 built = workflow.build(
                     translated.catalog,
                     request.output_root,
@@ -485,9 +498,12 @@ class ProjectValidationRunner:
             output_before_validator = tree_sha256(request.output_root)
             official = run_official_validator(request.official_validator, request.output_root)
             output_after_validator = tree_sha256(request.output_root)
+            coverage_texts = tuple(
+                entry.target_text or "" for entry in translated.catalog.entries
+            ) + request.font_probe_texts
             font = validate_font_coverage(
                 request.font_paths,
-                (entry.target_text or "" for entry in translated.catalog.entries),
+                coverage_texts,
             )
             runtime_smoke = {
                 "status": request.runtime_smoke,

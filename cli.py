@@ -629,6 +629,12 @@ def run_project(argv: list[str]) -> int:
     validate.add_argument("--language", default="zh-CN")
     validate.add_argument("--source-language", default="en")
     validate.add_argument("--font", action="append", default=[])
+    validate.add_argument(
+        "--font-probe-text",
+        action="append",
+        default=[],
+        help="runtime text whose codepoints must be covered by configured fonts",
+    )
     validator = validate.add_mutually_exclusive_group()
     validator.add_argument(
         "--validator",
@@ -687,6 +693,7 @@ def run_project(argv: list[str]) -> int:
             target_language=args.language,
             source_language=args.source_language,
             font_paths=tuple(Path(path) for path in args.font),
+            font_probe_texts=tuple(args.font_probe_text),
             official_validator=official_validator,
             runtime_smoke=args.runtime_smoke,
             runtime_smoke_reference=args.runtime_smoke_reference,

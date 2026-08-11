@@ -682,9 +682,18 @@ class RenPyWriter:
         *,
         source_root: Path | None = None,
         font_paths: Iterable[Path] = (),
+        font_probe_texts: Iterable[str] = (),
     ) -> RenPyBuildResult:
         if not isinstance(catalog, RenPyCatalog):
             raise TypeError("catalog must be a RenPyCatalog")
+        paths = tuple(font_paths)
+        if isinstance(font_probe_texts, (str, bytes)):
+            raise TypeError("font_probe_texts must be an iterable of strings")
+        probes = tuple(font_probe_texts)
+        if any(not isinstance(text, str) or not text for text in probes):
+            raise ValueError("font_probe_texts must contain non-empty strings")
+        if probes and not paths:
+            raise ValueError("font probe texts require configured font_paths")
         output = output_root.resolve(strict=False)
         if source_root is not None:
             source = source_root.resolve(strict=True)
@@ -766,7 +775,8 @@ class RenPyWriter:
             output,
             language,
             translated,
-            font_paths,
+            paths,
+            probes,
         )
         generated_paths = (path, activation_path)
         if font_config_path is not None:
@@ -787,6 +797,7 @@ class RenPyWriter:
         language: str,
         translated: Iterable[RenPySegment],
         font_paths: Iterable[Path],
+        font_probe_texts: Iterable[str],
     ) -> tuple[tuple[Path, ...], Path | None]:
         paths = tuple(font_paths)
         if not paths:
@@ -814,10 +825,13 @@ class RenPyWriter:
             names.add(folded)
             resolved_paths.append(resolved)
 
+        required_texts = tuple(item.target_text or "" for item in translated) + tuple(
+            font_probe_texts
+        )
         required = {
             ord(character)
-            for item in translated
-            for character in (item.target_text or "")
+            for text in required_texts
+            for character in text
             if not character.isspace() and ord(character) >= 0x20
         }
         coverage = tuple(_font_unicode_coverage(path) for path in resolved_paths)
@@ -828,7 +842,14 @@ class RenPyWriter:
         )
         if missing:
             preview = ", ".join(f"U+{codepoint:04X}" for codepoint in missing[:8])
-            raise ValueError(f"configured fonts do not cover translated text: {preview}")
+            scope = (
+                "translated text and runtime probes"
+                if font_probe_texts
+                else "translated text"
+            )
+            raise ValueError(
+                f"configured fonts do not cover {scope}: {preview}"
+            )
 
         font_directory = output / Path(*_FONT_DIRECTORY.parts)
         font_directory.mkdir(parents=True, exist_ok=True)

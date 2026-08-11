@@ -4,7 +4,7 @@ import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
@@ -465,6 +465,7 @@ class VisualHardGatePolicy:
     max_baseline_delta_px: float = 2.0
     max_line_count_delta: int = 1
     require_font_resolution: bool = True
+    max_line_counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "max_position_delta_px", _nonnegative(self.max_position_delta_px, "max_position_delta_px"))
@@ -473,6 +474,22 @@ class VisualHardGatePolicy:
         if isinstance(self.max_line_count_delta, bool) or not isinstance(self.max_line_count_delta, int) or self.max_line_count_delta < 0:
             raise ValueError("max_line_count_delta must be a non-negative integer")
         object.__setattr__(self, "require_font_resolution", _bool(self.require_font_resolution, "require_font_resolution"))
+        raw_budgets = self.max_line_counts
+        if not isinstance(raw_budgets, Mapping):
+            raise TypeError("max_line_counts must be a mapping")
+        budgets: dict[str, dict[str, int]] = {}
+        for sample_id, raw_regions in raw_budgets.items():
+            sample_id = _plain_string(sample_id, "max_line_counts sample ID")
+            if not isinstance(raw_regions, Mapping):
+                raise TypeError("max_line_counts regions must be mappings")
+            regions: dict[str, int] = {}
+            for region_id, maximum in raw_regions.items():
+                region_id = _plain_string(region_id, "max_line_counts region ID")
+                if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
+                    raise ValueError("max_line_counts values must be positive integers")
+                regions[region_id] = maximum
+            budgets[sample_id] = regions
+        object.__setattr__(self, "max_line_counts", budgets)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -481,28 +498,32 @@ class VisualHardGatePolicy:
             "max_baseline_delta_px": self.max_baseline_delta_px,
             "max_line_count_delta": self.max_line_count_delta,
             "require_font_resolution": self.require_font_resolution,
+            "max_line_counts": {
+                sample_id: dict(regions)
+                for sample_id, regions in self.max_line_counts.items()
+            },
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "VisualHardGatePolicy":
         payload = _mapping(payload, "visual_hard_gate_policy")
-        _exact_keys(
-            payload,
-            (
-                "max_position_delta_px",
-                "max_size_delta_px",
-                "max_baseline_delta_px",
-                "max_line_count_delta",
-                "require_font_resolution",
-            ),
-            "visual_hard_gate_policy",
+        legacy_fields = (
+            "max_position_delta_px",
+            "max_size_delta_px",
+            "max_baseline_delta_px",
+            "max_line_count_delta",
+            "require_font_resolution",
         )
+        fields = set(payload)
+        if fields != set(legacy_fields) and fields != {*legacy_fields, "max_line_counts"}:
+            raise ValueError("visual_hard_gate_policy payload fields do not match schema")
         return cls(
             max_position_delta_px=payload["max_position_delta_px"],
             max_size_delta_px=payload["max_size_delta_px"],
             max_baseline_delta_px=payload["max_baseline_delta_px"],
             max_line_count_delta=payload["max_line_count_delta"],
             require_font_resolution=payload["require_font_resolution"],
+            max_line_counts=payload.get("max_line_counts", {}),
         )
 
 
@@ -707,6 +728,7 @@ def run_visual_hard_gates(
         raise TypeError("policy must be VisualHardGatePolicy or None")
     expected = {item.region_id: item for item in reference.reference_regions}
     actual = {item.region_id: item for item in reference.candidate_regions}
+    line_budgets = policy.max_line_counts.get(reference.sample_id, {})
     checks: list[VisualCheck] = []
     checks.append(
         _check(
@@ -717,6 +739,17 @@ def run_visual_hard_gates(
             else "Reference and candidate text regions differ",
         )
     )
+    if line_budgets:
+        known_budget_regions = set(line_budgets).issubset(expected)
+        checks.append(
+            _check(
+                "line_budget_regions",
+                known_budget_regions,
+                "line-count budgets reference observed regions"
+                if known_budget_regions
+                else "line-count budgets reference unknown regions",
+            )
+        )
     for region_id in sorted(set(expected) | set(actual)):
         source = expected.get(region_id)
         candidate = actual.get(region_id)
@@ -749,6 +782,16 @@ def run_visual_hard_gates(
                 region_id,
             )
         )
+        maximum_lines = line_budgets.get(region_id)
+        if maximum_lines is not None:
+            checks.append(
+                _check(
+                    "line_budget",
+                    candidate.line_count <= maximum_lines,
+                    f"line count={candidate.line_count}, maximum={maximum_lines}",
+                    region_id,
+                )
+            )
         baseline_delta = abs(source.baseline - candidate.baseline)
         checks.append(
             _check(
@@ -816,6 +859,9 @@ def evaluate_visual_gate(
         raise ValueError("comparisons must contain unique sample IDs")
     expected_samples = set(profile.scenarios)
     actual_samples = {item.sample_id for item in comparisons}
+    policy = VisualHardGatePolicy() if policy is None else policy
+    if not isinstance(policy, VisualHardGatePolicy):
+        raise TypeError("policy must be VisualHardGatePolicy or None")
     reports: list[VisualCheck] = [
         _check(
             "scenario_set",
@@ -825,6 +871,17 @@ def evaluate_visual_gate(
             else "comparison evidence does not match profile scenarios",
         )
     ]
+    if policy.max_line_counts:
+        known_budget_samples = set(policy.max_line_counts).issubset(expected_samples)
+        reports.append(
+            _check(
+                "line_budget_scenarios",
+                known_budget_samples,
+                "line-count budgets reference profile scenarios"
+                if known_budget_samples
+                else "line-count budgets reference unknown scenarios",
+            )
+        )
     for comparison in comparisons:
         reports.extend(run_visual_hard_gates(comparison, policy).checks)
     hard_gate = VisualHardGateReport(tuple(reports))
