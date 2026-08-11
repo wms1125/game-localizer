@@ -1,0 +1,20 @@
+{
+  "entries": [
+    {
+      "line": 2,
+      "kind": "dialogue",
+      "speaker": "e",
+      "source_text": "Back",
+      "placeholders": [],
+      "text_context": null
+    },
+    {
+      "line": 4,
+      "kind": "dialogue",
+      "speaker": "n",
+      "source_text": "Back",
+      "placeholders": [],
+      "text_context": null
+    }
+  ]
+}

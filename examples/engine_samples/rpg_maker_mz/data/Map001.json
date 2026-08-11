@@ -1,0 +1,9 @@
+{
+  "displayName": "Workshop Floor",
+  "events": [
+    {
+      "code": 102,
+      "parameters": [["Tune the clock", "Read the blueprint"], 0, 0, 2, 0]
+    }
+  ]
+}

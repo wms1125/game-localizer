@@ -1,0 +1,3273 @@
+{
+  "contract": "hanengine.benchmark/v1",
+  "cases": [
+    {
+      "case_id": "guard-h0-01",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-01",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-02",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-02",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-03",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-03",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-04",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-04",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-05",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-05",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-06",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-06",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-07",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-07",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-08",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-08",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-09",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-09",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-10",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-10",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-11",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-11",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-12",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-12",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-13",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-13",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-14",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-14",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-15",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-15",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h0-16",
+      "stratum": "H0",
+      "project_id": "benchmark-guard-h0-16",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H0_PROJECT",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-01",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-01",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-02",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-02",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-03",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-03",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-04",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-04",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-05",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-05",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-06",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-06",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-07",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-07",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-08",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-08",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-09",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-09",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-10",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-10",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-11",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-11",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-12",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-12",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-13",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-13",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-14",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-14",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-15",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-15",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h1-16",
+      "stratum": "H1",
+      "project_id": "benchmark-guard-h1-16",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H1_OFFLINE",
+      "expected_allowed_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": []
+    },
+    {
+      "case_id": "guard-h2-01",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-01",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-02",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-02",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-03",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-03",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-04",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-04",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-05",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-05",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-06",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-06",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-07",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-07",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-08",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-08",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-09",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-09",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-10",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-10",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-11",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-11",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-12",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-12",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-13",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-13",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-14",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-14",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-15",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-15",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h2-16",
+      "stratum": "H2",
+      "project_id": "benchmark-guard-h2-16",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H2_RESTRICTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-01",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-01",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-02",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-02",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-03",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-03",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-04",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-04",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-05",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-05",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-06",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-06",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-07",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-07",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-08",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-08",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-h3-09",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-09",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-overlay_forbidden",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "overlay_forbidden",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-overlay_forbidden benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "overlay_forbidden",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: overlay_forbidden"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-10",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-10",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-overlay_forbidden",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "overlay_forbidden",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-overlay_forbidden benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "overlay_forbidden",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: overlay_forbidden"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-11",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-11",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-overlay_forbidden",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "overlay_forbidden",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-overlay_forbidden benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "overlay_forbidden",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: overlay_forbidden"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-12",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-12",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-overlay_forbidden",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "overlay_forbidden",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-overlay_forbidden benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "overlay_forbidden",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: overlay_forbidden"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-13",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-13",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-capture_black_frame",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "capture_black_frame",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-capture_black_frame benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "capture_black_frame",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: capture_black_frame"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-14",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-14",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-capture_black_frame",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "capture_black_frame",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-capture_black_frame benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "capture_black_frame",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: capture_black_frame"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-15",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-15",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-capture_black_frame",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "capture_black_frame",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-capture_black_frame benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "capture_black_frame",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: capture_black_frame"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-h3-16",
+      "stratum": "H3",
+      "project_id": "benchmark-guard-h3-16",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H3_PROTECTED",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-capture_black_frame",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "capture_black_frame",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [
+            "capture",
+            "ocr",
+            "visual_replace"
+          ],
+          "reason": "synthetic synthetic-capture_black_frame benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "capture_black_frame",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: capture_black_frame"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ]
+    },
+    {
+      "case_id": "guard-edge-01",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-01",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-conflict-1",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "risk_conflict_1",
+          "minimum_risk": "H2_RESTRICTED",
+          "blocked_operations": [],
+          "reason": "synthetic synthetic-conflict-1 benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "risk_conflict_1",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: risk_conflict_1"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-02",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-02",
+      "user_baseline": "H1_OFFLINE",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-conflict-2",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "risk_conflict_2",
+          "minimum_risk": "H3_PROTECTED",
+          "blocked_operations": [],
+          "reason": "synthetic synthetic-conflict-2 benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "risk_conflict_2",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: risk_conflict_2"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-03",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-03",
+      "user_baseline": "H3_PROTECTED",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-conflict-3",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "risk_conflict_3",
+          "minimum_risk": "H1_OFFLINE",
+          "blocked_operations": [],
+          "reason": "synthetic synthetic-conflict-3 benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "risk_conflict_3",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: risk_conflict_3"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H3_PROTECTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-04",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-04",
+      "user_baseline": "H2_RESTRICTED",
+      "adapter_baseline": "H1_OFFLINE",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [
+        {
+          "rule_id": "synthetic-conflict-4",
+          "rule_version": "1.0.0",
+          "signal_type": "capture_result",
+          "match_value": "risk_conflict_4",
+          "minimum_risk": "H0_PROJECT",
+          "blocked_operations": [],
+          "reason": "synthetic synthetic-conflict-4 benchmark rule",
+          "evidence_source": "repository-owned synthetic benchmark",
+          "last_verified_date": "2026-08-05"
+        }
+      ],
+      "signals": [
+        {
+          "signal_type": "capture_result",
+          "value": "risk_conflict_4",
+          "source": "synthetic_benchmark",
+          "evidence": "synthetic signal: risk_conflict_4"
+        }
+      ],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "complete",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-05",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-05",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "missing_evidence",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-06",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-06",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "missing_evidence",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-07",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-07",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "missing_evidence",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-08",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-08",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "missing_evidence",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-09",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-09",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "unknown_rule",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-10",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-10",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "unknown_rule",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-11",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-11",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "unknown_rule",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-12",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-12",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "unknown_rule",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-13",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-13",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "evaluation_failed",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-14",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-14",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "evaluation_failed",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-15",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-15",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "evaluation_failed",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    },
+    {
+      "case_id": "guard-edge-16",
+      "stratum": "edge",
+      "project_id": "benchmark-guard-edge-16",
+      "user_baseline": "H0_PROJECT",
+      "adapter_baseline": "H0_PROJECT",
+      "available_operations": [
+        "detect",
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "rules": [],
+      "signals": [],
+      "provisional_evaluation_status": "complete",
+      "final_evaluation_status": "evaluation_failed",
+      "expected_risk": "H2_RESTRICTED",
+      "expected_allowed_operations": [
+        "detect",
+        "capture",
+        "ocr",
+        "visual_replace"
+      ],
+      "expected_blocked_operations": [
+        "extract",
+        "validate",
+        "build",
+        "verify",
+        "rollback",
+        "install_patch"
+      ]
+    }
+  ]
+}
