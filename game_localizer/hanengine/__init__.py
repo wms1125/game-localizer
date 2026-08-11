@@ -91,6 +91,7 @@ from .pipeline import (
 )
 from .tts import CloudTtsProvider, TtsProviderError, TtsRequest, TtsResult, WindowsSapiTts
 from .visual import (
+    DEFAULT_OCR_RESIDUAL_ALLOWLIST,
     OcrBox,
     OcrFrame,
     OverlayText,
@@ -99,6 +100,7 @@ from .visual import (
     TkOverlayWindow,
     VisualReplacementEngine,
     VisualReplacementSession,
+    detect_english_residuals,
 )
 from .visual_style import (
     FontAssetReference,
@@ -125,6 +127,7 @@ from .visual_evidence import (
     VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION,
     VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION,
     VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION,
+    VISUAL_OCR_OBSERVATION_SCHEMA_VERSION,
     VisualEvidenceError,
     VisualEvidenceManifest,
     VisualEvidenceReport,
@@ -315,6 +318,7 @@ __all__ = [
     "TtsRequest",
     "TtsResult",
     "WindowsSapiTts",
+    "DEFAULT_OCR_RESIDUAL_ALLOWLIST",
     "OcrBox",
     "OcrFrame",
     "OverlayText",
@@ -323,6 +327,7 @@ __all__ = [
     "TkOverlayWindow",
     "VisualReplacementEngine",
     "VisualReplacementSession",
+    "detect_english_residuals",
     "FontAssetReference",
     "TextMetrics",
     "TextRegionObservation",
@@ -345,6 +350,7 @@ __all__ = [
     "VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION",
     "VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION",
     "VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION",
+    "VISUAL_OCR_OBSERVATION_SCHEMA_VERSION",
     "VisualEvidenceError",
     "VisualEvidenceManifest",
     "VisualEvidenceReport",

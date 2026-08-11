@@ -847,6 +847,7 @@ def evaluate_visual_gate(
     policy: VisualHardGatePolicy | None = None,
     minimum_style_score: float = 0.85,
     minimum_confidence: float = 0.80,
+    extra_hard_checks: Sequence[VisualCheck] = (),
 ) -> VisualGateResult:
     """Apply hard gates first, then ask an optional style judge for escalation decisions."""
 
@@ -862,6 +863,9 @@ def evaluate_visual_gate(
     policy = VisualHardGatePolicy() if policy is None else policy
     if not isinstance(policy, VisualHardGatePolicy):
         raise TypeError("policy must be VisualHardGatePolicy or None")
+    extra_hard_checks = tuple(extra_hard_checks)
+    if any(not isinstance(item, VisualCheck) for item in extra_hard_checks):
+        raise TypeError("extra_hard_checks must contain VisualCheck values")
     reports: list[VisualCheck] = [
         _check(
             "scenario_set",
@@ -871,6 +875,7 @@ def evaluate_visual_gate(
             else "comparison evidence does not match profile scenarios",
         )
     ]
+    reports.extend(extra_hard_checks)
     if policy.max_line_counts:
         known_budget_samples = set(policy.max_line_counts).issubset(expected_samples)
         reports.append(

@@ -3,10 +3,12 @@ from unittest.mock import patch
 
 from game_localizer.hanengine.translation import TranslationResult, TranslationRequest
 from game_localizer.hanengine.visual import (
+    DEFAULT_OCR_RESIDUAL_ALLOWLIST,
     OcrBox,
     OcrFrame,
     VisualReplacementEngine,
     VisualReplacementSession,
+    detect_english_residuals,
 )
 
 
@@ -56,6 +58,43 @@ class VisualTests(unittest.TestCase):
         provider = PytesseractOcrProvider()
         with patch.object(provider, "_load", side_effect=RuntimeError("not installed")):
             self.assertFalse(provider.available())
+
+    def test_ocr_residual_detection_skips_allowlisted_brands_and_paths(self):
+        frame = OcrFrame(
+            (
+                self.box("Start game"),
+                self.box(DEFAULT_OCR_RESIDUAL_ALLOWLIST[0]),
+                self.box("Ren'Py"),
+                self.box("save/file.json"),
+                self.box("HP"),
+            ),
+            "bg",
+        )
+
+        residuals = detect_english_residuals(frame)
+
+        self.assertEqual([box.text for box in residuals], ["Start game"])
+
+    def test_ocr_residual_detection_accepts_explicit_language_allowlist(self):
+        frame = OcrFrame((self.box("Español"),), "bg")
+
+        self.assertEqual(
+            detect_english_residuals(frame, allowlist=("Español",)),
+            (),
+        )
+
+    def test_ocr_residual_detection_ignores_low_confidence_text(self):
+        frame = OcrFrame((OcrBox(10, 20, 100, 30, "Start game", 0.79),), "bg")
+
+        self.assertEqual(detect_english_residuals(frame), ())
+
+    def test_ocr_residual_detection_rejects_invalid_minimum_confidence(self):
+        frame = OcrFrame((self.box("Start game"),), "bg")
+
+        for value in (-0.01, 1.01, True, "0.80"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "minimum_confidence"):
+                    detect_english_residuals(frame, minimum_confidence=value)
 
 
 if __name__ == "__main__":

@@ -3,12 +3,18 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from .translation import TranslationProvider, TranslationRequest
+
+
+DEFAULT_OCR_RESIDUAL_ALLOWLIST = ("english", "ren'py")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+_PATHLIKE_RE = re.compile(r"^[A-Za-z0-9_.:/\\-]+$")
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,48 @@ class OcrFrame:
         if not isinstance(self.background_fingerprint, str) or not self.background_fingerprint:
             raise ValueError("background_fingerprint must not be empty")
         object.__setattr__(self, "boxes", boxes)
+
+
+def detect_english_residuals(
+    frame: OcrFrame,
+    *,
+    allowlist: Iterable[str] = (),
+    minimum_confidence: float = 0.80,
+) -> tuple[OcrBox, ...]:
+    """Return OCR boxes that look like untranslated natural-language English."""
+
+    if not isinstance(frame, OcrFrame):
+        raise TypeError("frame must be an OcrFrame")
+    if (
+        isinstance(minimum_confidence, bool)
+        or not isinstance(minimum_confidence, (int, float))
+        or not 0.0 <= minimum_confidence <= 1.0
+    ):
+        raise ValueError("minimum_confidence must be in [0.0, 1.0]")
+    if isinstance(allowlist, (str, bytes)):
+        raise TypeError("allowlist must be an iterable of strings")
+    normalized_allowlist = set(DEFAULT_OCR_RESIDUAL_ALLOWLIST)
+    for value in allowlist:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("allowlist must contain non-empty strings")
+        normalized_allowlist.add(" ".join(value.split()).casefold())
+
+    residuals: list[OcrBox] = []
+    for box in frame.boxes:
+        if box.confidence < minimum_confidence:
+            continue
+        normalized = " ".join(box.text.split()).casefold()
+        words = _LATIN_WORD_RE.findall(box.text)
+        if not words or normalized in normalized_allowlist:
+            continue
+        if _PATHLIKE_RE.fullmatch(box.text.strip()) and any(
+            marker in box.text for marker in "_./:\\"
+        ):
+            continue
+        if all(word.isupper() for word in words) and len("".join(words)) <= 5:
+            continue
+        residuals.append(box)
+    return tuple(residuals)
 
 
 @dataclass(frozen=True)
@@ -243,6 +291,7 @@ class TkOverlayWindow:
 
 
 __all__ = [
+    "DEFAULT_OCR_RESIDUAL_ALLOWLIST",
     "OcrBox",
     "OcrFrame",
     "OverlayText",
@@ -251,4 +300,5 @@ __all__ = [
     "TkOverlayWindow",
     "VisualReplacementEngine",
     "VisualReplacementSession",
+    "detect_english_residuals",
 ]

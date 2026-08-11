@@ -23,6 +23,7 @@ from game_localizer.hanengine import (
     HanStore,
     PipelineTranslationFailed,
     OfficialValidatorConfig,
+    PytesseractOcrProvider,
     ProjectBusyError,
     ProjectValidationRequest,
     ProjectValidationRunner,
@@ -724,6 +725,25 @@ def run_visual(argv: list[str]) -> int:
     verify.add_argument("--judge-arg", action="append", default=[])
     verify.add_argument("--judge-timeout", type=int, default=120)
     verify.add_argument("--judge-provider", default="external-command")
+    verify.add_argument(
+        "--ocr-language",
+        help="enable local OCR observation, for example chi_sim+eng",
+    )
+    verify.add_argument(
+        "--ocr-allowlist",
+        action="append",
+        default=[],
+        help="natural-language OCR text to allow as a brand or language name",
+    )
+    verify.add_argument(
+        "--ocr-min-confidence",
+        type=float,
+        help="minimum OCR confidence used by coverage and residual gates (default: 0.80)",
+    )
+    verify.add_argument(
+        "--ocr-report",
+        help="OCR sidecar path; defaults to ocr-observation.json beside the report",
+    )
     prepare = commands.add_parser(
         "prepare",
         help="prepare a manual visual evidence manifest from a verified Ren'Py capture report",
@@ -787,11 +807,29 @@ def run_visual(argv: list[str]) -> int:
                 timeout_seconds=args.judge_timeout,
                 provider_name=args.judge_provider,
             )
+        ocr_provider = None
+        if args.ocr_language:
+            ocr_provider = PytesseractOcrProvider()
+        elif (
+            args.ocr_allowlist
+            or args.ocr_min_confidence is not None
+            or args.ocr_report
+        ):
+            raise ValueError("OCR options require --ocr-language")
         report = run_visual_evidence(
             Path(args.manifest),
             Path(args.output),
             authorization_reference=args.authorization_reference,
             judge=judge,
+            ocr_provider=ocr_provider,
+            ocr_language=args.ocr_language,
+            ocr_allowlist=tuple(args.ocr_allowlist),
+            ocr_minimum_confidence=(
+                0.80
+                if args.ocr_min_confidence is None
+                else args.ocr_min_confidence
+            ),
+            ocr_report_path=None if args.ocr_report is None else Path(args.ocr_report),
         )
         print(f"Visual decision: {report.decision.value}")
         print(f"Report: {Path(args.output).expanduser().absolute()}")

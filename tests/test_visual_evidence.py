@@ -12,6 +12,7 @@ from io import StringIO
 from pathlib import Path
 
 import cli
+from game_localizer.hanengine.visual import OcrBox, OcrFrame
 from game_localizer.hanengine.visual_evidence import (
     CommandImageVisualJudge,
     VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION,
@@ -48,6 +49,16 @@ class FakeImageJudge:
     def judge_images(self, profile, comparison, reference_image, candidate_image):
         self.calls += 1
         raise AssertionError("hard-gate failures must not call the image judge")
+
+
+class FakeOcrProvider:
+    def __init__(self, reference: OcrFrame, candidate: OcrFrame):
+        self.reference = reference
+        self.candidate = candidate
+
+    def recognize(self, image, *, language):
+        self.language = language
+        return self.candidate if "candidate" in str(image) else self.reference
 
 
 class VisualEvidenceTests(unittest.TestCase):
@@ -309,6 +320,201 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertEqual(judge.calls, 0)
         self.assertIn("hard_gate:missing_glyphs", report.gate.reasons)
 
+    def test_ocr_observation_writes_sidecar_and_blocks_candidate_residuals(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            sidecar = root / "ocr-observation.json"
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "Start game\nnow", 0.99),), "bg")
+            judge = FakeImageJudge()
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                judge=judge,
+                ocr_provider=FakeOcrProvider(frame, frame),
+                ocr_language="eng",
+                ocr_report_path=sidecar,
+                ocr_image_loader=lambda path: path,
+            )
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+
+        self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
+        self.assertEqual(judge.calls, 0)
+        self.assertIn("ocr_candidate_residual_text", report.gate.hard_gate.failed_codes)
+        self.assertEqual(payload["schema_version"], "hanengine.visual-ocr-observation/v1")
+        self.assertEqual(
+            payload["samples"][0]["candidate"]["residual_texts"],
+            ["Start game\nnow"],
+        )
+        self.assertEqual(payload["minimum_confidence"], 0.80)
+        self.assertEqual(payload["allowlist"], ["english", "ren'py"])
+        self.assertEqual(payload["samples"][0]["candidate"]["boxes"][0]["line_count"], 2)
+
+    def test_ocr_observation_uses_threshold_for_candidate_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            reference = OcrFrame((OcrBox(1, 2, 10, 5, "Start", 0.99),), "bg")
+            candidate = OcrFrame((OcrBox(1, 2, 10, 5, "Start game", 0.79),), "bg")
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                ocr_provider=FakeOcrProvider(reference, candidate),
+                ocr_language="eng",
+                ocr_image_loader=lambda path: path,
+            )
+
+        self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
+        self.assertIn("ocr_candidate_coverage", report.gate.hard_gate.failed_codes)
+        self.assertNotIn(
+            "ocr_candidate_residual_text",
+            report.gate.hard_gate.failed_codes,
+        )
+
+    def test_ocr_observation_does_not_block_low_confidence_residual(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            reference = OcrFrame((OcrBox(1, 2, 10, 5, "Start", 0.99),), "bg")
+            candidate = OcrFrame(
+                (
+                    OcrBox(1, 2, 10, 5, "开始", 0.99),
+                    OcrBox(1, 8, 10, 5, "Start game", 0.79),
+                ),
+                "bg",
+            )
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                ocr_provider=FakeOcrProvider(reference, candidate),
+                ocr_language="eng",
+                ocr_image_loader=lambda path: path,
+            )
+
+        self.assertEqual(report.decision, VisualGateDecision.ESCALATE)
+        self.assertNotIn(
+            "ocr_candidate_residual_text",
+            report.gate.hard_gate.failed_codes,
+        )
+
+    def test_ocr_observation_rejects_invalid_minimum_confidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "Start", 0.99),), "bg")
+
+            with self.assertRaisesRegex(ValueError, "ocr_minimum_confidence"):
+                run_visual_evidence(
+                    manifest,
+                    root / "report.json",
+                    authorization_reference="repository-owned-test-fixture",
+                    ocr_provider=FakeOcrProvider(frame, frame),
+                    ocr_language="eng",
+                    ocr_minimum_confidence=1.01,
+                    ocr_image_loader=lambda path: path,
+                )
+
+    def test_ocr_observation_rejects_options_without_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+
+            with self.assertRaisesRegex(ValueError, "require an OCR provider"):
+                run_visual_evidence(
+                    manifest,
+                    root / "report.json",
+                    authorization_reference="repository-owned-test-fixture",
+                    ocr_allowlist=("English",),
+                )
+
+    def test_ocr_observation_rejects_sidecar_path_collisions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "开始", 0.99),), "bg")
+
+            for destination in (
+                manifest,
+                root / "report.json",
+            ):
+                with self.subTest(destination=destination.name):
+                    with self.assertRaisesRegex(VisualEvidenceError, "must not replace"):
+                        run_visual_evidence(
+                            manifest,
+                            root / "report.json",
+                            authorization_reference="repository-owned-test-fixture",
+                            ocr_provider=FakeOcrProvider(frame, frame),
+                            ocr_language="eng",
+                            ocr_report_path=destination,
+                            ocr_image_loader=lambda path: path,
+                        )
+
+            flat_candidate = root / "candidate.png"
+            flat_candidate.write_bytes(_png(32, 18, 224))
+            payload = self.manifest()
+            payload["samples"][0]["candidate_image"] = flat_candidate.name
+            manifest.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(VisualEvidenceError, "must not replace"):
+                run_visual_evidence(
+                    manifest,
+                    root / "report.json",
+                    authorization_reference="repository-owned-test-fixture",
+                    ocr_provider=FakeOcrProvider(frame, frame),
+                    ocr_language="eng",
+                    ocr_report_path=flat_candidate,
+                    ocr_image_loader=lambda path: path,
+                )
+
+    def test_ocr_observation_allows_configured_language_name_and_records_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            sidecar = root / "ocr-observation.json"
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "Español", 0.99),), "bg")
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                ocr_provider=FakeOcrProvider(frame, frame),
+                ocr_language="eng",
+                ocr_allowlist=("Español",),
+                ocr_report_path=sidecar,
+                ocr_image_loader=lambda path: path,
+            )
+            self.assertTrue(sidecar.is_file())
+
+        self.assertEqual(report.decision, VisualGateDecision.ESCALATE)
+        self.assertNotIn("ocr_candidate_residual_text", report.gate.hard_gate.failed_codes)
+
+    def test_ocr_observation_blocks_when_candidate_has_no_detected_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            reference = OcrFrame((OcrBox(1, 2, 10, 5, "Start", 0.99),), "bg")
+            candidate = OcrFrame((), "bg")
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                ocr_provider=FakeOcrProvider(reference, candidate),
+                ocr_language="eng",
+                ocr_image_loader=lambda path: path,
+            )
+
+        self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
+        self.assertIn("ocr_candidate_coverage", report.gate.hard_gate.failed_codes)
+
     def test_command_image_judge_receives_paths_and_can_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -375,6 +581,54 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertIn("requires explicit", stderr.getvalue())
         self.assertEqual(escalated, 2)
         self.assertIn("Visual decision: escalate", stdout.getvalue())
+
+    def test_cli_requires_language_when_ocr_options_are_requested(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            arguments = [
+                "verify",
+                "--manifest",
+                str(manifest),
+                "--output",
+                str(root / "report.json"),
+                "--authorization-reference",
+                "repository-owned-test-fixture",
+                "--authorized",
+                "--ocr-allowlist",
+                "English",
+            ]
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                result = cli.run_visual(arguments)
+
+        self.assertEqual(result, 1)
+        self.assertIn("require --ocr-language", stderr.getvalue())
+
+    def test_cli_rejects_invalid_ocr_minimum_confidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            arguments = [
+                "verify",
+                "--manifest",
+                str(manifest),
+                "--output",
+                str(root / "report.json"),
+                "--authorization-reference",
+                "repository-owned-test-fixture",
+                "--authorized",
+                "--ocr-language",
+                "eng",
+                "--ocr-min-confidence",
+                "1.01",
+            ]
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                result = cli.run_visual(arguments)
+
+        self.assertEqual(result, 1)
+        self.assertIn("ocr_minimum_confidence", stderr.getvalue())
 
     def test_prepare_cli_requires_authorization_and_writes_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:

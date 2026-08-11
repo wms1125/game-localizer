@@ -74,6 +74,7 @@
 
 - 已建立 `VisualStyleProfile`、`VisualComparison`、硬性排版门槛和可插拔 `VisualJudge` 的严格 JSON 往返契约；`VisualEvidenceManifest` 和 `VisualEvidenceReport` 已升级到 v2，报告只保存相对路径、截图尺寸、SHA-256、观察来源/引用和结构化判定，不嵌入图片二进制。
 - 已新增 `visual_evidence.py`、`cli.py visual prepare` 和 `cli.py visual verify`。`prepare` 从 v2 Ren'Py 采集报告和严格 `hanengine.visual-evidence-annotations/v1` 人工标注生成受控 manifest，重新校验 screen 语义、场景顺序、源指纹、PNG 尺寸/哈希和区域 ID，并固定写入 `observation_source=manual`；`verify` 按 `blocked -> escalate -> pass` 顺序执行确定性硬门和可选外部判官。
+- `visual verify` 已支持可选本地 OCR 自动观察：`--ocr-language` 启用观察，`--ocr-allowlist` 扩展默认允许的 `English`/`Ren'Py` 名称，`--ocr-min-confidence` 默认 `0.80`，`--ocr-report` 指定证据目录内的 sidecar。每个 OCR 框记录位置、尺寸、文本、换行数和置信度；达到阈值的候选框若含英文自然语言残留或参考有文字而候选无有效文字，会触发硬门并在判官前短路。OCR 只补充人工布局观察，不改变 v2 主报告 schema，也不宣称 renderer 自动观察已完成。
 - 已新增 `renpy_visual_capture.py` 和 `cli.py visual capture-renpy`：同一声明式交互计划分别运行原文和候选项目，项目先复制到临时影子目录，记录源树是否保持不变、窗口几何、截图哈希和运行状态。
 - Ren'Py 采集计划和报告已升级到 v2。每个场景必须声明 `expected_screen`，临时影子项目中的只读引擎探针通过原生 `renpy.get_screen()` 验证页面语义；旧 v1 计划仍可读取，但只能得到 `capture_passed`，不能得到 `semantic_alignment_verified` 或整体 `passed`。Windows 后端支持右键菜单动作，并会重新定位同一进程、等待稳定窗口几何，拒绝瞬时小窗口截图；目标窗口优先通过 Win32 `PrintWindow` 直接采集，失败时才回退桌面截图，默认使用 `angle2` 渲染器规避渲染器恢复页。
 - 官方 `The Question` 参考源和 v7 汉化候选已通过 v2 六场景成对采集。`.tmp/visual-evidence-renpy-the-question-v7-dynamic-ui-r7/capture-report.json` 记录原文和候选在主菜单、对白、分支、设置、保存和读取页面均为 6/6 screen 断言通过，12 张 PNG 均为 `1296x759`，两棵源树保持不变，报告 SHA-256 为 `423afc73dccbe427102bf35ed35e825d53151ace9e9ad9d98bc05f0385ad075f`。
@@ -103,9 +104,9 @@ game-localizer/
 |     |- multiengine.py             多引擎结构化资源读写
 |     |- backup.py, packaging.py    备份、恢复和未加密 ZIP 副本处理
 |     |- translation.py, tts.py     本地/云翻译和 TTS 路由
-|     |- visual.py                  OCR 稳定性判断和视觉替换会话
+|     |- visual.py                  OCR 稳定性、残留文本识别和视觉替换会话
 |     |- visual_style.py            VisualStyleProfile、硬性视觉门槛和可插拔 VisualJudge 契约
-|     |- visual_evidence.py         A/B 截图清单、哈希校验、视觉报告和外部判官边界
+|     |- visual_evidence.py         A/B 截图清单、哈希校验、OCR sidecar、视觉报告和外部判官边界
 |     `- renpy_visual_capture.py    Ren'Py 影子项目成对截图采集和运行报告
 |- desktop/
 |  |- electron/main.cjs             窗口、登录会话、Python 子进程和 IPC
@@ -137,6 +138,9 @@ game-localizer/
 | `HANENGINE_GAME_LANGUAGE` | HanEngine 客户端启动游戏时传递的语言模式 | `zh_cn` 启动中文；`source` 清除 Ren'Py 语言偏好后启动原文；仅由客户端启动生效 |
 | `visual prepare` | 从已验证采集报告和人工区域标注生成 v2 manifest | 必须显式提供 `--authorized`；输入、输出和证据图片必须位于同一证据目录 |
 | `visual verify` | 对成对截图运行硬门和可选外部判官 | 必须显式提供 `--authorized` 和 `--authorization-reference` |
+| `--ocr-language` | 为 `visual verify` 启用本地 OCR 观察，例如 `chi_sim+eng` | 需要本地 Tesseract/pytesseract；未启用时不改变旧工作流 |
+| `--ocr-min-confidence` | OCR 覆盖率和英文残留门使用的最低置信度，默认 `0.80` | 必须在 `0.0..1.0`；低于阈值的框只保留在 sidecar，不参与阻断 |
+| `--ocr-allowlist` / `--ocr-report` | 扩展自然语言允许名单 / 指定 OCR sidecar 文件 | 两者都必须与 `--ocr-language` 一起使用，sidecar 必须位于证据目录 |
 | `visual capture-renpy` | 按声明式计划采集原文/候选 PNG | 只在临时影子项目中运行，输出目录必须为空 |
 | `observation_source` | 区域观察来源：`renderer`、`ocr` 或 `manual` | 人工标注不能伪装成自动检测 |
 
@@ -168,7 +172,7 @@ python cli.py project validate renpy <project> `
 - 原文/中文切换入口已放在 HanEngine 客户端设置和启动按钮中，不在游戏内添加语言菜单。用户直接双击游戏可执行文件时不经过该客户端控制，仍遵循候选默认值和 Ren'Py 自身偏好。
 - `The Question` 已通过 `visual capture-renpy` 确认主菜单、对白、分支、设置、保存和读取页面；旧的固定坐标一次性脚本不再承担本轮证据。
 - v11 正式记录携带构建、编译、字体以及原文/中文双模式六场景运行时引用，当前图形环境补证已完成。截图文件名不单独承担页面语义断言，证据由报告中的 `expected_screen` 结果、PNG 哈希、报告哈希和候选树哈希共同约束。
-- `visual capture-renpy` 已用 Ren'Py 引擎级 screen 探针阻止错页截图被误判为对齐，并用 `PrintWindow` 降低桌面前台程序干扰。声明式动作仍使用相对坐标，计划需要为目标项目校准并由 `expected_screen` 验收；renderer/OCR 自动观察仍未接入。
+- `visual capture-renpy` 已用 Ren'Py 引擎级 screen 探针阻止错页截图被误判为对齐，并用 `PrintWindow` 降低桌面前台程序干扰。声明式动作仍使用相对坐标，计划需要为目标项目校准并由 `expected_screen` 验收；OCR 自动观察已接入 `visual verify` 作为人工布局观察的补充，但 renderer 自动观察仍未接入，且尚未对 v11 六场景运行截图完成真实 OCR 复验。
 - 当前没有配置实际 AI 服务；`CommandImageVisualJudge` 只提供无 shell 的外部命令边界，r7 报告因此按设计为 `escalate`，而不是视觉质量 `pass`。
 
 ### 文本覆盖和语境
@@ -188,7 +192,7 @@ python cli.py project validate renpy <project> `
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
 - 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：目录覆盖率为 242/242，v11 内部验证通过且仅剩 2 个非阻断告警（作者署名、语言名称），Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；字体已实际打包且联合覆盖通过。原文/中文客户端模式均完成六场景 runtime smoke，候选树与验证记录一致。
-- 本轮已完整执行 Ren'Py、结构化适配、视觉采集、视觉证据、视觉样式和项目验证六个相关测试模块，共 98 项通过；其中包含客户端语言环境传递、长文本行数预算、动态字体探针和多字体回退回归。Python 编译检查、Electron 语法检查和桌面端 `npm run build` 均通过。完整工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误。
+- 本轮已完整执行 Ren'Py pipeline、结构化适配、Ren'Py 视觉采集、视觉、视觉证据、视觉样式和项目验证七个相关测试模块，共 116 项通过；其中包含客户端语言环境传递、长文本行数预算、动态字体探针、多字体回退、OCR 置信度过滤、英文残留硬门、判官短路和 sidecar 路径冲突回归。Python 编译检查、两个 Electron 入口语法检查和桌面端 `npm run build` 均通过。完整工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误。
 
 ### 桌面端和发布
 
@@ -204,8 +208,8 @@ python cli.py project validate renpy <project> `
 2. [已完成第一阶段] 扩展 Ren'Py 提取器：已覆盖 `_()`、常见屏幕文本控件、有效 `menu:` 一级选项、同一行多个直接字符串字面量、嵌套动态表达式和富文本标签校验；通用结构化适配器与 Ren'Py AdapterV1 现在共享平衡占位符扫描和标签顺序校验；复数语法及运行时拼接仍需补齐。
 3. [已完成第一步] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。官方文档未发现独立通用的 Ren'Py 复数翻译语法，暂不虚构支持。
 4. [已完成] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。官方样例中文候选已完成真实运行时启动和主菜单、对白、分支、保存、读取、设置页面的截图回归，动态 UI 文本显示正常；v8 记录的稳定运行时引用中包含 r7 报告 SHA-256 和候选指纹。
-5. [本轮完成] Ren'Py 候选继续打包多字体并生成 `FontGroup`；新增按场景/区域最大行数的长文本质量门、运行时动态字符字体探针、探针缺字失败和多字体显式范围回退测试。旧视觉策略 JSON 仍可读取，98 项六模块回归全部通过。无法翻译时保留原文的复数/运行时拼接策略仍待补齐。
-6. [进行中] 视觉档案、截图比较、硬门报告和判定结果已支持严格 JSON 往返；A/B PNG 清单、哈希校验、外部判官边界、Ren'Py 影子项目成对采集器和受控人工标注准备流程已完成。官方样例 v11 已完成原文/中文双模式六场景 `6/6 + 6/6` 语义对齐，保存/读取页已用空存档重采并通过人工检查；视觉判官最终仍为 `escalate`，因为实际 AI 服务尚未接入，renderer/OCR 自动观察和 Unity/TMP 资源构建也尚未接入。
+5. [本轮完成] Ren'Py 候选继续打包多字体并生成 `FontGroup`；新增按场景/区域最大行数的长文本质量门、运行时动态字符字体探针、探针缺字失败和多字体显式范围回退测试。旧视觉策略 JSON 仍可读取，116 项七模块回归全部通过。无法翻译时保留原文的复数/运行时拼接策略仍待补齐。
+6. [本轮完成第一步] 视觉档案、截图比较、硬门报告和判定结果已支持严格 JSON 往返；A/B PNG 清单、哈希校验、外部判官边界、Ren'Py 影子项目成对采集器和受控人工标注准备流程已完成。`visual verify` 新增可选 pytesseract OCR 观察，默认 `0.80` 置信度过滤、`English`/`Ren'Py` 默认允许名单、可扩展允许名单、英文自然语言残留硬门、候选 OCR 覆盖硬门和独立 `hanengine.visual-ocr-observation/v1` sidecar；OCR 硬门失败时不会调用视觉判官。OCR 不替代人工布局观察，renderer 自动观察仍未接入。官方样例 v11 已完成原文/中文双模式六场景 `6/6 + 6/6` 语义对齐，真实六场景 OCR 复验和 Unity/TMP 资源构建仍待下一步。
 
 ### P1.2：统一“原生渲染替换”能力
 
@@ -227,4 +231,4 @@ python cli.py project validate renpy <project> `
 
 ## 当前结论
 
-HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、自动语言激活和字体随候选包交付的第一版实现。本轮已将语言入口迁移到 HanEngine 客户端，并把“目录有目标值”与“译文完整”分开表示；明显未翻译英文会进入待检查队列，v10 已修复可见的无障碍说明和测试分支漏译。v11 已独立完成官方编译以及原文/中文双模式六场景运行验证，保存/读取页也已用全新空存档重采；候选指纹和输出树与 v10 基线完全一致，最终记录结论为 `verified`。P1.1 的长文本预算、动态缺字探针和多字体回退质量门已落地，下一步是接入 renderer/OCR 自动观察，并继续处理复数语法、运行时拼接和无法翻译时的原文保留策略。
+HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、自动语言激活和字体随候选包交付的第一版实现。本轮已将语言入口迁移到 HanEngine 客户端，并把“目录有目标值”与“译文完整”分开表示；明显未翻译英文会进入待检查队列，v10 已修复可见的无障碍说明和测试分支漏译。v11 已独立完成官方编译以及原文/中文双模式六场景运行验证，保存/读取页也已用全新空存档重采；候选指纹和输出树与 v10 基线完全一致，最终记录结论为 `verified`。P1.1 的长文本预算、动态缺字探针、多字体回退质量门和 OCR 英文残留观察第一步已落地；下一步是对真实六场景执行 OCR 复验、接入 renderer 自动观察，并继续处理复数语法、运行时拼接和无法翻译时的原文保留策略。

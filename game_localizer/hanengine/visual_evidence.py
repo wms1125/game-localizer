@@ -5,7 +5,7 @@ import json
 import struct
 import subprocess
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Protocol
 
 from .segments import JsonValue, normalize_relative_path
+from .visual import (
+    DEFAULT_OCR_RESIDUAL_ALLOWLIST,
+    OcrBox,
+    OcrFrame,
+    OcrProvider,
+    detect_english_residuals,
+)
 from .renpy_visual_capture import (
     RENPY_CAPTURE_PLAN_SCHEMA_VERSION,
     RENPY_CAPTURE_REPORT_SCHEMA_VERSION,
@@ -20,6 +27,7 @@ from .renpy_visual_capture import (
 from .visual_style import (
     TextRegionObservation,
     VisualComparison,
+    VisualCheck,
     VisualGateDecision,
     VisualGateResult,
     VisualHardGatePolicy,
@@ -32,6 +40,7 @@ from .visual_style import (
 VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION = "hanengine.visual-evidence-annotations/v1"
 VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION = "hanengine.visual-evidence-manifest/v2"
 VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION = "hanengine.visual-evidence-report/v2"
+VISUAL_OCR_OBSERVATION_SCHEMA_VERSION = "hanengine.visual-ocr-observation/v1"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -113,6 +122,44 @@ def _png_size(path: Path) -> tuple[int, int]:
     if width < 1 or height < 1:
         raise VisualEvidenceError(f"visual evidence has invalid dimensions: {path.name}")
     return width, height
+
+
+def _load_ocr_image(path: Path) -> object:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return image.convert("RGB")
+    except Exception as exc:
+        raise VisualEvidenceError("OCR image loading is unavailable") from exc
+
+
+def _ocr_box_payload(box: OcrBox, residual: bool) -> dict[str, JsonValue]:
+    return {
+        "x": box.x,
+        "y": box.y,
+        "width": box.width,
+        "height": box.height,
+        "text": box.text,
+        "line_count": len(box.text.splitlines()),
+        "confidence": box.confidence,
+        "residual_english": residual,
+    }
+
+
+def _ocr_frame_payload(
+    frame: OcrFrame, residuals: tuple[OcrBox, ...]
+) -> dict[str, JsonValue]:
+    residual_set = set(residuals)
+    return {
+        "background_fingerprint": frame.background_fingerprint,
+        "box_count": len(frame.boxes),
+        "boxes": [
+            _ocr_box_payload(box, box in residual_set)
+            for box in frame.boxes
+        ],
+        "residual_texts": [box.text for box in residuals],
+    }
 
 
 def _resolve_evidence_file(root: Path, relative_path: str) -> Path:
@@ -725,14 +772,43 @@ def run_visual_evidence(
     *,
     authorization_reference: str,
     judge: ImageVisualJudge | None = None,
+    ocr_provider: OcrProvider | None = None,
+    ocr_language: str | None = None,
+    ocr_allowlist: Sequence[str] = (),
+    ocr_minimum_confidence: float = 0.80,
+    ocr_report_path: Path | None = None,
+    ocr_image_loader: Callable[[Path], object] = _load_ocr_image,
 ) -> VisualEvidenceReport:
     authorization_reference = _plain_string(authorization_reference, "authorization_reference")
     manifest_path = _regular_input_file(manifest_path, "manifest_path")
     root = manifest_path.parent.resolve(strict=True)
     manifest = load_visual_evidence_manifest(manifest_path)
+    if (
+        isinstance(ocr_minimum_confidence, bool)
+        or not isinstance(ocr_minimum_confidence, (int, float))
+        or not 0.0 <= ocr_minimum_confidence <= 1.0
+    ):
+        raise ValueError("ocr_minimum_confidence must be in [0.0, 1.0]")
+    if ocr_provider is not None:
+        if not isinstance(ocr_language, str) or not ocr_language.strip():
+            raise ValueError("ocr_language is required when OCR observation is enabled")
+        if isinstance(ocr_allowlist, (str, bytes)):
+            raise TypeError("ocr_allowlist must be a sequence of strings")
+        ocr_allowlist = tuple(ocr_allowlist)
+        if not callable(ocr_image_loader):
+            raise TypeError("ocr_image_loader must be callable")
+    elif (
+        ocr_language is not None
+        or ocr_allowlist
+        or ocr_minimum_confidence != 0.80
+        or ocr_report_path is not None
+    ):
+        raise ValueError("OCR options require an OCR provider")
     comparisons: list[VisualComparison] = []
     image_records: list[VisualImageEvidence] = []
     image_paths: dict[str, tuple[Path, Path]] = {}
+    ocr_checks: list[VisualCheck] = []
+    ocr_samples: list[dict[str, JsonValue]] = []
     for sample in manifest.samples:
         reference = _resolve_evidence_file(root, sample.reference_image)
         candidate = _resolve_evidence_file(root, sample.candidate_image)
@@ -765,12 +841,139 @@ def run_visual_evidence(
             )
         )
         image_paths[sample.sample_id] = (reference, candidate)
+        if ocr_provider is not None:
+            try:
+                reference_frame = ocr_provider.recognize(
+                    ocr_image_loader(reference),
+                    language=ocr_language.strip(),
+                )
+                candidate_frame = ocr_provider.recognize(
+                    ocr_image_loader(candidate),
+                    language=ocr_language.strip(),
+                )
+            except Exception as exc:
+                raise VisualEvidenceError(
+                    f"OCR observation failed for sample {sample.sample_id}"
+                ) from exc
+            if not isinstance(reference_frame, OcrFrame) or not isinstance(
+                candidate_frame, OcrFrame
+            ):
+                raise VisualEvidenceError("OCR provider must return OcrFrame values")
+            reference_residuals = detect_english_residuals(
+                reference_frame,
+                allowlist=ocr_allowlist,
+                minimum_confidence=ocr_minimum_confidence,
+            )
+            candidate_residuals = detect_english_residuals(
+                candidate_frame,
+                allowlist=ocr_allowlist,
+                minimum_confidence=ocr_minimum_confidence,
+            )
+            reference_confident_boxes = tuple(
+                box
+                for box in reference_frame.boxes
+                if box.confidence >= ocr_minimum_confidence
+            )
+            candidate_confident_boxes = tuple(
+                box
+                for box in candidate_frame.boxes
+                if box.confidence >= ocr_minimum_confidence
+            )
+            candidate_covered = (
+                bool(candidate_confident_boxes) or not reference_confident_boxes
+            )
+            residual_preview = ", ".join(
+                repr(box.text) for box in candidate_residuals[:5]
+            )
+            ocr_checks.extend(
+                (
+                    VisualCheck(
+                        "ocr_candidate_coverage",
+                        candidate_covered,
+                        "candidate OCR detected text"
+                        if candidate_covered
+                        else "candidate OCR detected no text while reference OCR did",
+                    ),
+                    VisualCheck(
+                        "ocr_candidate_residual_text",
+                        not candidate_residuals,
+                        "candidate OCR found no residual English natural language"
+                        if not candidate_residuals
+                        else f"candidate OCR found residual English: {residual_preview}",
+                    ),
+                )
+            )
+            ocr_samples.append(
+                {
+                    "sample_id": sample.sample_id,
+                    "reference": _ocr_frame_payload(
+                        reference_frame, reference_residuals
+                    ),
+                    "candidate": _ocr_frame_payload(
+                        candidate_frame, candidate_residuals
+                    ),
+                }
+            )
+    if ocr_provider is not None:
+        output_destination = output_path.expanduser().absolute().resolve(strict=False)
+        ocr_path = (
+            output_destination.with_name("ocr-observation.json")
+            if ocr_report_path is None
+            else ocr_report_path.expanduser().absolute().resolve(strict=False)
+        )
+        if ocr_path.parent.resolve(strict=False) != root:
+            raise VisualEvidenceError(
+                "ocr_report_path must be in the capture evidence directory"
+            )
+        protected_paths = {
+            manifest_path.resolve(strict=True),
+            output_destination,
+            *(
+                path.resolve(strict=True)
+                for pair in image_paths.values()
+                for path in pair
+            ),
+        }
+        if ocr_path in protected_paths:
+            raise VisualEvidenceError(
+                "ocr_report_path must not replace the manifest, report, or evidence images"
+            )
+        _write_json(
+            {
+                "schema_version": VISUAL_OCR_OBSERVATION_SCHEMA_VERSION,
+                "created_at": datetime.now(UTC)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "language": ocr_language.strip(),
+                "minimum_confidence": ocr_minimum_confidence,
+                "allowlist": sorted(
+                    {
+                        *DEFAULT_OCR_RESIDUAL_ALLOWLIST,
+                        *(
+                            " ".join(value.split()).casefold()
+                            for value in ocr_allowlist
+                        ),
+                    }
+                ),
+                "samples": ocr_samples,
+            },
+            ocr_path,
+        )
+        ocr_checks.append(
+            VisualCheck(
+                "ocr_observation_artifact",
+                True,
+                f"OCR observations written to {ocr_path.relative_to(root).as_posix()}",
+            )
+        )
     bound_judge = None if judge is None else _BoundImageJudge(judge, image_paths)
     gate = evaluate_visual_gate(
         manifest.profile,
         comparisons,
         judge=bound_judge,
         policy=manifest.policy,
+        extra_hard_checks=ocr_checks,
     )
     report = VisualEvidenceReport(
         created_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -794,6 +997,7 @@ __all__ = [
     "VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION",
     "VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION",
     "VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION",
+    "VISUAL_OCR_OBSERVATION_SCHEMA_VERSION",
     "VisualEvidenceError",
     "VisualEvidenceManifest",
     "VisualEvidenceReport",
