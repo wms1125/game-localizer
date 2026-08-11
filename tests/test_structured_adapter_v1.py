@@ -260,6 +260,31 @@ class StructuredPipelineTests(unittest.TestCase):
             )
         )
 
+    def test_validation_warns_when_english_natural_language_is_left_unchanged(self):
+        source, _ = self._make_mv_project()
+        extracted = self._extract_mv(source)
+        originals, translated = self._segments(extracted)
+        unchanged = tuple(
+            replace(segment, target_text=segment.source_text, translation_source="test")
+            if segment.source_text == "Hello, {name}!"
+            else segment
+            for segment in translated
+        )
+        result = RpgMakerMVAdapterV1().validate(
+            ValidationRequest(
+                extracted.source_tree_fingerprint,
+                originals,
+                unchanged,
+                "utf-8",
+                {},
+                make_context("validate"),
+            )
+        )
+        self.assertIsInstance(result, ValidationResult)
+        self.assertTrue(result.valid)
+        self.assertIn("untranslated_natural_language", {issue.code for issue in result.issues})
+        self.assertEqual(result.warning_count, 1)
+
     def test_build_failure_preserves_existing_staging_contents(self):
         source, _ = self._make_mv_project()
         extracted = self._extract_mv(source)

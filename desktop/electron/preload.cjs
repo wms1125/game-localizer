@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("hanengine", {
   selectFile: (options = {}) => ipcRenderer.invoke("dialog:select-file", options),
   selectDirectory: (options = {}) => ipcRenderer.invoke("dialog:select-directory", options),
   saveFile: (options = {}) => ipcRenderer.invoke("dialog:save-file", options),
+  launchGame: (executablePath, language) => ipcRenderer.invoke("game:launch", executablePath, language),
   scanProject: (rootPath) => ipcRenderer.invoke("project:scan", rootPath),
   readCatalog: (filePath) => ipcRenderer.invoke("catalog:read", filePath),
   writeCatalog: (filePath, updates) => ipcRenderer.invoke("catalog:write", filePath, updates),

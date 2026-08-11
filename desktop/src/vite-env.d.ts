@@ -15,6 +15,8 @@ type TranslationRow = {
   locator?: Record<string, unknown>;
 };
 
+type GameLanguage = "zh-CN" | "source";
+
 type CatalogPayload = {
   kind: "catalog" | "dictionary";
   metadata: { engine: string; sourceLanguage: string; targetLanguage: string; fileCount: number };
@@ -87,6 +89,7 @@ interface Window {
     selectFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
     selectDirectory: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
     saveFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePath?: string }>;
+    launchGame: (executablePath: string, language: string) => Promise<{ pid: number | null }>;
     scanProject: (rootPath: string) => Promise<ProjectNode[]>;
     readCatalog: (filePath: string) => Promise<CatalogPayload>;
     writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;

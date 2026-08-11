@@ -56,6 +56,19 @@ function backendMode(mode: Mode) {
   return mode === "professional" ? "studio" : "player";
 }
 
+function isLikelyUntranslated(source: string, target: string) {
+  if (!target.trim() || source.trim() !== target.trim()) return false;
+  if (/[\u3400-\u9fff]/.test(source)) return false;
+  if (!/[A-Za-z]{2}/.test(source)) return false;
+  if (/^([A-Za-z_][A-Za-z0-9_]*|[A-Z]{1,4}|[0-9A-Za-z_./:+-]+)$/.test(source.trim())) return false;
+  return /\s/.test(source.trim()) || source.trim().length > 8;
+}
+
+function rowStatus(source: string, target: string): TranslationRow["status"] {
+  if (!target.trim()) return "pending";
+  return isLikelyUntranslated(source, target) ? "warning" : "translated";
+}
+
 function selectedDetectionCandidate(report: DetectionReport | null) {
   return report?.candidate || report?.candidates?.find((item) => item.engine_id === report.selected_engine) || null;
 }
@@ -103,6 +116,22 @@ function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [mode, setMode] = useState<Mode>("normal");
+  const [gameLanguage, setGameLanguage] = useState<GameLanguage>(() => {
+    try {
+      const value = window.localStorage.getItem("hanengine.gameLanguage");
+      return value === "source" ? "source" : "zh-CN";
+    } catch {
+      return "zh-CN";
+    }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [gameExecutablePath, setGameExecutablePath] = useState(() => {
+    try {
+      return window.localStorage.getItem("hanengine.gameExecutablePath") || "";
+    } catch {
+      return "";
+    }
+  });
   const [view, setView] = useState<View>("workspace");
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
@@ -115,6 +144,7 @@ function App() {
   const [rows, setRows] = useState<TranslationRow[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [filter, setFilter] = useState("");
+  const [reviewOnly, setReviewOnly] = useState(false);
   const [logs, setLogs] = useState<string[]>(["HanEngine 已就绪。请选择项目目录或目录文件开始工作。"]);
   const [running, setRunning] = useState(false);
   const [activeTask, setActiveTask] = useState("");
@@ -205,11 +235,15 @@ function App() {
   const selected = rows.find((row) => row.id === selectedId) || rows[0];
   const filteredRows = useMemo(() => {
     const query = filter.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter((row) => `${row.id} ${row.context} ${row.source} ${row.target}`.toLowerCase().includes(query));
-  }, [filter, rows]);
+    return rows.filter((row) => {
+      const matchesQuery = !query || `${row.id} ${row.context} ${row.source} ${row.target}`.toLowerCase().includes(query);
+      const needsReview = !reviewOnly || row.status === "pending" || row.status === "draft" || row.status === "warning";
+      return matchesQuery && needsReview;
+    });
+  }, [filter, reviewOnly, rows]);
   const translatedCount = rows.filter((row) => row.status === "translated").length;
-  const pendingCount = rows.length - translatedCount;
+  const warningCount = rows.filter((row) => row.status === "warning").length;
+  const pendingCount = rows.length - translatedCount - warningCount;
   const detectedCandidate = selectedDetectionCandidate(detection);
   const detectedCapabilities = capabilityNames(detectedCandidate);
   const allowedOperations = detection?.allowed_operations || [];
@@ -221,6 +255,39 @@ function App() {
 
   function appendLog(message: string) {
     setLogs((current) => [...current, message].slice(-240));
+  }
+
+  function updateGameLanguage(value: GameLanguage) {
+    setGameLanguage(value);
+    try {
+      window.localStorage.setItem("hanengine.gameLanguage", value);
+    } catch {
+      // Settings still apply to the current session when storage is unavailable.
+    }
+    appendLog("[语言] 客户端启动语言：" + (value === "zh-CN" ? "简体中文" : "原文"));
+  }
+
+  async function chooseGameExecutable() {
+    const result = await window.hanengine?.selectFile({ title: "选择游戏启动程序", filters: [{ name: "程序", extensions: ["exe", "sh", "app"] }] });
+    if (result && !result.canceled && result.filePaths[0]) {
+      const selectedPath = result.filePaths[0];
+      setGameExecutablePath(selectedPath);
+      try {
+        window.localStorage.setItem("hanengine.gameExecutablePath", selectedPath);
+      } catch {
+        // The path remains available in the current session when storage is unavailable.
+      }
+    }
+  }
+
+  async function launchSelectedGame() {
+    if (!gameExecutablePath) return appendLog("请先在 HanEngine 设置中选择游戏启动程序。");
+    try {
+      const launched = await window.hanengine.launchGame(gameExecutablePath, gameLanguage === "zh-CN" ? "zh_cn" : "source");
+      appendLog("[启动] 已按" + (gameLanguage === "zh-CN" ? "简体中文" : "原文") + "模式启动游戏" + (launched.pid ? "（PID " + launched.pid + "）" : ""));
+    } catch (error) {
+      appendLog("[启动] 游戏启动失败：" + String(error));
+    }
   }
 
   async function refreshTasks() {
@@ -333,7 +400,7 @@ function App() {
     setCatalogPath(selectedPath);
     try {
       const catalog = await window.hanengine.readCatalog(selectedPath);
-      setRows(catalog.rows);
+      setRows(catalog.rows.map((row) => ({ ...row, status: rowStatus(row.source, row.target) })));
       setSelectedId(catalog.rows[0]?.id || "");
       if (catalog.metadata.engine && catalog.metadata.engine !== "auto") setEngine(catalog.metadata.engine);
       appendLog(`已加载 ${catalog.rows.length} 条翻译记录：${selectedPath}`);
@@ -384,7 +451,7 @@ function App() {
     let selectedEngine = engine;
     if (selectedEngine === "auto") selectedEngine = detection?.selected_engine || (await detectProject(projectPath)) || "auto";
     if (selectedEngine === "auto") return appendLog("无法提取：请手动选择一个引擎。");
-    const args = ["engine", "extract", selectedEngine, projectPath, "--output", output, "--mode", backendMode(mode)];
+    const args = ["engine", "extract", selectedEngine, projectPath, "--output", output, "--language", "zh-CN", "--mode", backendMode(mode)];
     const result = await runPython(args, "提取翻译目录");
     if (result?.code === 0) await loadCatalog(output);
   }
@@ -395,7 +462,7 @@ function App() {
     const result = await window.hanengine?.selectDirectory({ title: "选择汉化输出目录" });
     if (!result || result.canceled || !result.filePaths[0]) return;
     const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
-    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", result.filePaths[0], "--dictionary", dictionaryPath, "--mode", backendMode(mode)], "翻译、构建并验证");
+    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", result.filePaths[0], "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", backendMode(mode)], "翻译、构建并验证");
   }
 
   async function chooseQuickOutput() {
@@ -422,7 +489,7 @@ function App() {
     setQuickStatus("running");
     setActiveWorkflowTaskIds([]);
     const result = await runPython(
-      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, "--dictionary", dictionaryPath, "--mode", "player"],
+      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", "player"],
       "一键汉化：提取、翻译、校验、构建和验证",
     );
     setQuickStatus(result?.code === 0 ? "completed" : "failed");
@@ -441,7 +508,7 @@ function App() {
   }
 
   function updateSelectedTarget(value: string) {
-    setRows((current) => current.map((row) => row.id === selectedId ? { ...row, target: value, status: value.trim() ? "translated" : "draft" } : row));
+    setRows((current) => current.map((row) => row.id === selectedId ? { ...row, target: value, status: rowStatus(row.source, value) } : row));
   }
 
   function toggleNode(node: ProjectNode) {
@@ -484,7 +551,7 @@ function App() {
           <button className={mode === "normal" ? "active" : ""} onClick={() => setMode("normal")}><Users size={15} />普通</button>
           <button className={mode === "professional" ? "active" : ""} onClick={() => setMode("professional")}><Workflow size={15} />专业</button>
         </div>
-        <div className="title-actions"><button className="icon-button no-drag" title="刷新项目" onClick={() => projectPath && openProject()}><RefreshCw size={16} /></button><button className="icon-button no-drag" title="设置"><Settings2 size={16} /></button><span className="account-chip no-drag"><CircleUserRound size={15} /><span>{currentUser.display_name || currentUser.username}</span></span><button className="icon-button no-drag" title="退出登录" onClick={() => void logout()}><LogOut size={16} /></button></div>
+        <div className="title-actions"><button className="icon-button no-drag" title="刷新项目" onClick={() => projectPath && openProject()}><RefreshCw size={16} /></button><button className="icon-button no-drag" title="启动游戏" onClick={() => void launchSelectedGame()}><Play size={16} /></button><button className="icon-button no-drag" title="设置" onClick={() => setSettingsOpen(true)}><Settings2 size={16} /></button><span className="account-chip no-drag"><CircleUserRound size={15} /><span>{currentUser.display_name || currentUser.username}</span></span><button className="icon-button no-drag" title="退出登录" onClick={() => void logout()}><LogOut size={16} /></button></div>
       </header>
 
       <div className={`body-grid ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -501,8 +568,8 @@ function App() {
 
           {view === "workspace" && mode === "professional" && <>
             <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载字典" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
-            <div className="stats-strip"><div><span>总条目</span><strong>{rows.length.toLocaleString()}</strong></div><div><span>已完成</span><strong className="success-text">{translatedCount.toLocaleString()}</strong></div><div><span>待翻译</span><strong className="warning-text">{pendingCount.toLocaleString()}</strong></div><div className="stats-spacer" /><div className="file-context"><FileJson2 size={14} /><span>{catalogPath ? basename(catalogPath) : "提取或打开 catalog JSON 后显示翻译条目"}</span></div></div>
-            <div className="filter-bar"><div className="search-box"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索 ID、上下文或文本" /></div><button className="filter-button"><CircleAlert size={14} />仅看待翻译</button></div>
+            <div className="stats-strip"><div><span>总条目</span><strong>{rows.length.toLocaleString()}</strong></div><div><span>已完成</span><strong className="success-text">{translatedCount.toLocaleString()}</strong></div><div><span>待翻译</span><strong className="warning-text">{pendingCount.toLocaleString()}</strong></div><div><span>需检查</span><strong className="warning-text">{warningCount.toLocaleString()}</strong></div><div className="stats-spacer" /><div className="file-context"><FileJson2 size={14} /><span>{catalogPath ? basename(catalogPath) : "提取或打开 catalog JSON 后显示翻译条目"}</span></div></div>
+            <div className="filter-bar"><div className="search-box"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索 ID、上下文或文本" /></div><button className={`filter-button ${reviewOnly ? "active" : ""}`} onClick={() => setReviewOnly((value) => !value)}><CircleAlert size={14} />仅看待检查</button></div>
             <section className="translation-area"><div className="table-wrap"><table><thead><tr><th className="id-col">ID</th><th className="context-col">上下文</th><th>原文</th><th>译文</th><th className="status-col">状态</th></tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id} className={row.id === selectedId ? "selected-row" : ""} onClick={() => setSelectedId(row.id)}><td className="mono">{row.id}</td><td className="muted-cell">{row.context}</td><td>{row.source}</td><td className={!row.target ? "placeholder-cell" : ""}>{row.target || "点击下方编辑译文"}</td><td><span className={`status-pill ${row.status}`}>{statusLabel[row.status]}</span></td></tr>) : <tr><td className="empty-table" colSpan={5}>尚未加载翻译目录。打开项目后点击“提取文本”，或直接打开 catalog JSON。</td></tr>}</tbody></table></div><div className="editor-panel"><div className="editor-heading"><div><span className="eyebrow">当前条目</span><strong>{selected?.context || "未选择"}</strong></div><span className="editor-id">{selected?.id || "-"}</span></div><div className="editor-fields"><div><label>原文</label><div className="source-preview">{selected?.source || "选择一条翻译记录"}</div></div><div><label>译文</label><textarea value={selected?.target || ""} onChange={(event) => updateSelectedTarget(event.target.value)} placeholder="输入简体中文译文..." /></div></div></div></section>
           </>}
           {view === "workspace" && mode === "normal" && <QuickLocalizationView
@@ -538,8 +605,41 @@ function App() {
           <footer className="statusbar"><span><span className="connection-dot" />HanEngine Core</span><span>模式：{mode === "professional" ? "专业" : "普通"}</span><span>Python CLI 已连接</span><span className="status-spacer" />{running ? <button className="cancel-button" onClick={cancelActiveWorkflow}><Square size={12} />请求停止</button> : <span>就绪</span>}</footer>
         </main>
       </div>
+      {settingsOpen && <ClientSettingsDialog
+        language={gameLanguage}
+        executablePath={gameExecutablePath}
+        onClose={() => setSettingsOpen(false)}
+        onLanguageChange={updateGameLanguage}
+        onChooseExecutable={() => void chooseGameExecutable()}
+        onLaunch={() => void launchSelectedGame()}
+      />}
     </div>
   );
+}
+
+function ClientSettingsDialog({
+  language,
+  executablePath,
+  onClose,
+  onLanguageChange,
+  onChooseExecutable,
+  onLaunch,
+}: {
+  language: GameLanguage;
+  executablePath: string;
+  onClose: () => void;
+  onLanguageChange: (value: GameLanguage) => void;
+  onChooseExecutable: () => void;
+  onLaunch: () => void;
+}) {
+  return <div className="settings-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="客户端设置" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="settings-heading"><div><span className="eyebrow">HanEngine</span><h2>客户端设置</h2></div><button className="icon-button" title="关闭" onClick={onClose}><X size={17} /></button></div>
+      <div className="settings-field"><span>启动语言</span><div className="settings-segment" role="radiogroup" aria-label="启动语言"><button className={language === "zh-CN" ? "active" : ""} role="radio" aria-checked={language === "zh-CN"} onClick={() => onLanguageChange("zh-CN")}>简体中文</button><button className={language === "source" ? "active" : ""} role="radio" aria-checked={language === "source"} onClick={() => onLanguageChange("source")}>原文</button></div></div>
+      <div className="settings-field"><span>游戏启动程序</span><div className="settings-path"><input value={executablePath} readOnly placeholder="尚未选择" /><button className="secondary-button" onClick={onChooseExecutable}>浏览</button></div></div>
+      <div className="settings-actions"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onLaunch} disabled={!executablePath}><Play size={15} />启动游戏</button></div>
+    </section>
+  </div>;
 }
 
 function AuthLoadingScreen() {

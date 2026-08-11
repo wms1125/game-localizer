@@ -95,6 +95,17 @@ _LANGUAGE_ACTIVATION_PATH = PurePosixPath("game/hanengine_language.rpy")
 _FONT_CONFIG_PATH = PurePosixPath("game/hanengine_fonts.rpy")
 _FONT_DIRECTORY = PurePosixPath("game/hanengine_fonts")
 _LANGUAGE_ACTIVATION_RE = re.compile(r"^define config\.default_language = (.+)$")
+_LANGUAGE_OVERRIDE_HEADER = "init 1 python:"
+_LANGUAGE_OVERRIDE_LINES = (
+    "    import os as _hanengine_os",
+    "    _hanengine_requested_language = _hanengine_os.environ.get(\"HANENGINE_GAME_LANGUAGE\")",
+    "    if _hanengine_requested_language == \"source\":",
+    "        config.default_language = None",
+    "        config.language = None",
+    "        _preferences.language = None",
+    "    elif _hanengine_requested_language:",
+    "        config.language = _hanengine_requested_language",
+)
 _FONT_CONFIG_HEADER_RE = re.compile(
     r"^translate ([A-Za-z_][A-Za-z0-9_]*) python:$"
 )
@@ -381,25 +392,24 @@ def validate_renpy_language_activation_text(
     if not isinstance(text, str):
         raise TypeError("text must be a string")
     declarations: list[str] = []
-    for line_number, line in enumerate(text.splitlines(), 1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        declaration = _LANGUAGE_ACTIVATION_RE.fullmatch(line)
-        if declaration is None:
-            raise RenPyValidationError(
-                f"invalid language activation statement at line {line_number}"
-            )
-        try:
-            language = ast.literal_eval(declaration.group(1))
-        except (SyntaxError, ValueError) as exc:
-            raise RenPyValidationError(
-                f"invalid language identifier at line {line_number}"
-            ) from exc
-        if not isinstance(language, str) or language != renpy_language_identifier(language):
-            raise RenPyValidationError(
-                f"invalid language identifier at line {line_number}"
-            )
-        declarations.append(language)
+    statements = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if not statements:
+        raise RenPyValidationError("language activation file must contain one default language declaration")
+    declaration = _LANGUAGE_ACTIVATION_RE.fullmatch(statements[0])
+    if declaration is None:
+        raise RenPyValidationError("invalid language activation statement at line 1")
+    try:
+        language = ast.literal_eval(declaration.group(1))
+    except (SyntaxError, ValueError) as exc:
+        raise RenPyValidationError("invalid language identifier at line 1") from exc
+    if not isinstance(language, str) or language != renpy_language_identifier(language):
+        raise RenPyValidationError("invalid language identifier at line 1")
+    declarations.append(language)
+    remainder = statements[1:]
+    if remainder:
+        expected_override = [_LANGUAGE_OVERRIDE_HEADER, *_LANGUAGE_OVERRIDE_LINES]
+        if remainder != expected_override:
+            raise RenPyValidationError("invalid language override statements")
     if len(declarations) != 1:
         raise RenPyValidationError(
             "language activation file must contain one default language declaration"
@@ -495,10 +505,46 @@ def _tokens_for_line(line: str) -> tuple[tokenize.TokenInfo, ...]:
         return ()
 
 
+def _significant_tokens(line: str) -> tuple[tokenize.TokenInfo, ...]:
+    ignored = {
+        tokenize.ENCODING,
+        tokenize.NEWLINE,
+        tokenize.NL,
+        tokenize.ENDMARKER,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.COMMENT,
+    }
+    return tuple(token for token in _tokens_for_line(line) if token.type not in ignored)
+
+
+def _extract_translation_call_literals(line: str) -> tuple[str, ...]:
+    tokens = _significant_tokens(line)
+    values: list[str] = []
+    for index in range(len(tokens) - 3):
+        if not (
+            tokens[index].type == tokenize.NAME
+            and tokens[index].string == "_"
+            and tokens[index + 1].type == tokenize.OP
+            and tokens[index + 1].string == "("
+            and tokens[index + 2].type == tokenize.STRING
+            and tokens[index + 3].type == tokenize.OP
+            and tokens[index + 3].string == ")"
+        ):
+            continue
+        try:
+            value = ast.literal_eval(tokens[index + 2].string)
+        except (SyntaxError, ValueError):
+            continue
+        if isinstance(value, str) and value:
+            values.append(value)
+    return tuple(values)
+
+
 def _extract_line(line: str) -> tuple[str, str | None, str] | None:
     if not line.strip() or line.lstrip().startswith("#"):
         return None
-    tokens = [token for token in _tokens_for_line(line) if token.type not in {tokenize.ENCODING, tokenize.NEWLINE, tokenize.NL, tokenize.ENDMARKER, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT}]
+    tokens = list(_significant_tokens(line))
     string_index = next((index for index, token in enumerate(tokens) if token.type == tokenize.STRING), None)
     if string_index is None:
         return None
@@ -575,33 +621,42 @@ class RenPyExtractor:
                     continue
                 if menu_indent is not None and stripped and indentation <= menu_indent:
                     menu_indent = None
+                parsed_entries: list[tuple[str, str | None, str]] = []
                 parsed = _extract_line(line)
-                if parsed is None:
-                    continue
-                kind, speaker, source = parsed
-                if menu_indent is not None and speaker is None and indentation > menu_indent:
-                    kind = "menu"
-                identity = f"{relative}\0{kind}\0{speaker or ''}\0{source}".encode("utf-8")
-                base_segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
-                occurrence = duplicate_counts.get(base_segment_id, 0)
-                duplicate_counts[base_segment_id] = occurrence + 1
-                if occurrence:
-                    identity += f"\0{occurrence}".encode("ascii")
-                    segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
-                else:
-                    segment_id = base_segment_id
-                entries.append(
-                    RenPySegment(
-                        segment_id=segment_id,
-                        relative_path=relative,
-                        line=line_number,
-                        kind=kind,
-                        source_text=source,
-                        source_hash=hashlib.sha256(source.encode("utf-8")).hexdigest(),
-                        placeholders=_extract_placeholders(source),
-                        speaker=speaker,
-                    )
+                if parsed is not None:
+                    parsed_entries.append(parsed)
+                wrapped_sources = list(_extract_translation_call_literals(line))
+                if parsed is not None and parsed[2] in wrapped_sources:
+                    wrapped_sources.remove(parsed[2])
+                parsed_entries.extend(
+                    ("narration", None, source) for source in wrapped_sources
                 )
+                if not parsed_entries:
+                    continue
+                for kind, speaker, source in parsed_entries:
+                    if menu_indent is not None and speaker is None and indentation > menu_indent:
+                        kind = "menu"
+                    identity = f"{relative}\0{kind}\0{speaker or ''}\0{source}".encode("utf-8")
+                    base_segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
+                    occurrence = duplicate_counts.get(base_segment_id, 0)
+                    duplicate_counts[base_segment_id] = occurrence + 1
+                    if occurrence:
+                        identity += f"\0{occurrence}".encode("ascii")
+                        segment_id = "renpy:" + hashlib.sha256(identity).hexdigest()[:24]
+                    else:
+                        segment_id = base_segment_id
+                    entries.append(
+                        RenPySegment(
+                            segment_id=segment_id,
+                            relative_path=relative,
+                            line=line_number,
+                            kind=kind,
+                            source_text=source,
+                            source_hash=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                            placeholders=_extract_placeholders(source),
+                            speaker=speaker,
+                        )
+                    )
         return RenPyCatalog(language, _project_fingerprint(root, files), tuple(entries))
 
 
@@ -694,6 +749,10 @@ class RenPyWriter:
             "# Generated by HanEngine; source project remains unchanged.",
             "# Later Language(...) choices are persisted by Ren'Py preferences.",
             f"define config.default_language = {_quote(language)}",
+            "",
+            "# HanEngine desktop controls the language at launch; no in-game menu is added.",
+            _LANGUAGE_OVERRIDE_HEADER,
+            *_LANGUAGE_OVERRIDE_LINES,
             "",
         ]
         activation_text = "\n".join(activation_lines)

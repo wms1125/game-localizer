@@ -49,6 +49,13 @@ WRAPPED_SCREEN_SCRIPT = '''screen wrapped:
     label _("Screen label")
 '''
 
+DYNAMIC_SCREEN_SCRIPT = '''screen file_slots(title):
+    default page_name_value = FilePageNameInputValue(pattern=_("Page {}"), auto=_("Automatic saves"), quick=_("Quick saves"))
+    text FileTime(slot, format=_("{#file_time}%A, %B %d %Y, %H:%M"), empty=_("empty slot"))
+    $ ignored_dynamic = _(dynamic_label)
+    $ ignored_expression = _("prefix" + suffix)
+'''
+
 
 class RenPyPipelineTests(unittest.TestCase):
     def make_project(self):
@@ -213,6 +220,56 @@ class RenPyPipelineTests(unittest.TestCase):
         self.assertIn('old "Wrapped title"', rendered)
         self.assertNotIn("hanengine_renpy", rendered)
 
+    def test_extracts_multiple_literal_translation_calls_from_dynamic_screen_expressions(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        screen = root / "game" / "dynamic-screen.rpy"
+        screen.write_text(DYNAMIC_SCREEN_SCRIPT, encoding="utf-8")
+        source_before = screen.read_bytes()
+
+        catalog = RenPyExtractor().extract(root, language="zh_cn")
+        entries = [
+            entry
+            for entry in catalog.entries
+            if entry.relative_path == "game/dynamic-screen.rpy"
+        ]
+
+        self.assertEqual(
+            [entry.source_text for entry in entries],
+            [
+                "Page {}",
+                "Automatic saves",
+                "Quick saves",
+                "{#file_time}%A, %B %d %Y, %H:%M",
+                "empty slot",
+            ],
+        )
+        self.assertEqual([entry.line for entry in entries], [2, 2, 2, 3, 3])
+        self.assertTrue(all(entry.kind == "narration" for entry in entries))
+        self.assertTrue(all(entry.speaker is None for entry in entries))
+        self.assertEqual(entries[0].placeholders, ("{}",))
+        self.assertEqual(entries[3].placeholders, ("{#file_time}",))
+        translated = catalog.translate(
+            {
+                "Page {}": "第 {} 页",
+                "Automatic saves": "自动存档",
+                "Quick saves": "快速存档",
+                "{#file_time}%A, %B %d %Y, %H:%M": "{#file_time}%Y-%m-%d %H:%M",
+                "empty slot": "空存档位",
+            }
+        )
+        result = RenPyWriter().build(
+            translated,
+            root / "localized-output",
+            source_root=root,
+        )
+        rendered = result.path.read_text(encoding="utf-8")
+        self.assertIn('old "Page {}"\n    new "第 {} 页"', rendered)
+        self.assertIn('old "empty slot"\n    new "空存档位"', rendered)
+        self.assertEqual(screen.read_bytes(), source_before)
+        with self.assertRaisesRegex(RenPyValidationError, "rich text tags"):
+            catalog.translate({"Page {}": "第一页"})
+
     def test_writer_generates_tl_output_without_modifying_source(self):
         temporary, root = self.make_project()
         self.addCleanup(temporary.cleanup)
@@ -238,7 +295,9 @@ class RenPyPipelineTests(unittest.TestCase):
             "zh_cn",
         )
         self.assertIn('define config.default_language = "zh_cn"', activation)
-        self.assertNotIn("config.language =", activation)
+        self.assertIn('os.environ.get("HANENGINE_GAME_LANGUAGE")', activation)
+        self.assertIn('if _hanengine_requested_language == "source":', activation)
+        self.assertIn("config.language = _hanengine_requested_language", activation)
 
     def test_writer_deduplicates_repeated_source_text(self):
         temporary, root = self.make_project()

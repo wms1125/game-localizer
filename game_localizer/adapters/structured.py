@@ -86,6 +86,19 @@ _COMMON_LIMITATIONS = (
 )
 
 
+def _is_untranslated_natural_language(source: str, target: str, language: str) -> bool:
+    if not language.casefold().startswith("zh") or not target.strip():
+        return False
+    if source.strip() != target.strip() or re.search(r"[\u3400-\u9fff]", source):
+        return False
+    text = source.strip()
+    if not re.search(r"[A-Za-z]{2}", text) or not re.search(r"\s", text):
+        return False
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_./:+-]*", text):
+        return False
+    return len(text) >= 8
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -540,8 +553,22 @@ class StructuredAdapterV1:
                                     "The translation cannot be represented in the target encoding",
                                     segment=candidate,
                                     suggested_action="Use UTF-8 or revise unsupported characters",
+                                    )
                                 )
+                    if _is_untranslated_natural_language(
+                        original.source_text,
+                        candidate.target_text,
+                        self.target_language,
+                    ):
+                        issues.append(
+                            self._issue(
+                                "untranslated_natural_language",
+                                "The target text is identical to the English source and may remain untranslated",
+                                segment=candidate,
+                                severity=IssueSeverity.WARNING,
+                                suggested_action="Review this entry and provide a natural-language translation",
                             )
+                        )
                 request.context.progress(index, total, current_item=segment_id)
 
             for segment_id in sorted(translated.keys() - originals.keys()):

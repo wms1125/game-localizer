@@ -9,6 +9,7 @@ const BACKEND_ROOT = app.isPackaged
   : PROJECT_ROOT;
 const runningProcesses = new Map();
 const authSessions = new Map();
+const GAME_LANGUAGE_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".test-runs",
@@ -129,6 +130,31 @@ async function requireAuthenticated(event) {
 
 function runTaskControl(sender, args) {
   return runPython(sender, taskControlId(args[1] || args[0]), args);
+}
+
+async function launchGame(executablePath, language) {
+  if (typeof executablePath !== "string" || !executablePath) {
+    throw new TypeError("executablePath must be a non-empty string");
+  }
+  if (language !== "source" && (typeof language !== "string" || !GAME_LANGUAGE_PATTERN.test(language))) {
+    throw new TypeError("language must be source or a Ren'Py language identifier");
+  }
+  const executable = path.resolve(executablePath);
+  const details = await fs.stat(executable);
+  if (!details.isFile()) throw new Error("请选择可启动的游戏程序");
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, [], {
+      cwd: path.dirname(executable),
+      env: { ...process.env, HANENGINE_GAME_LANGUAGE: language },
+      windowsHide: false,
+      detached: process.platform !== "win32",
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ pid: child.pid || null });
+    });
+  });
 }
 
 async function scanDirectory(rootPath, relative = "", depth = 0) {
@@ -269,6 +295,10 @@ app.whenReady().then(() => {
   ipcMain.handle("dialog:select-file", (_event, options) => dialog.showOpenDialog({ properties: ["openFile"], ...options }));
   ipcMain.handle("dialog:select-directory", (_event, options) => dialog.showOpenDialog({ properties: ["openDirectory"], ...options }));
   ipcMain.handle("dialog:save-file", (_event, options) => dialog.showSaveDialog(options));
+  ipcMain.handle("game:launch", async (event, executablePath, language) => {
+    await requireAuthenticated(event);
+    return launchGame(executablePath, language);
+  });
   ipcMain.handle("project:scan", async (event, rootPath) => {
     await requireAuthenticated(event);
     return scanDirectory(path.resolve(rootPath));
