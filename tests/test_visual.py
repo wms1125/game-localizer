@@ -83,6 +83,32 @@ class VisualTests(unittest.TestCase):
             (),
         )
 
+    def test_ocr_residual_detection_allows_brand_joined_to_chinese(self):
+        frame = OcrFrame((self.box("Ren'Py7+版本"),), "bg")
+
+        self.assertEqual(detect_english_residuals(frame), ())
+
+    def test_ocr_residual_detection_still_flags_text_after_allowlisted_brand(self):
+        frame = OcrFrame((self.box("Ren'Py Start game"),), "bg")
+
+        self.assertEqual(
+            [box.text for box in detect_english_residuals(frame)],
+            ["Ren'Py Start game"],
+        )
+
+    def test_rapidocr_provider_maps_quadrilateral_to_box(self):
+        from game_localizer.hanengine.visual import RapidOcrProvider
+
+        provider = RapidOcrProvider()
+        provider._engine = lambda image: (
+            [([[10.2, 20.8], [30.9, 20.1], [31.1, 40.2], [10.0, 40.9]], "你好", 0.96)],
+            [0.1, 0.2, 0.3],
+        )
+
+        frame = provider.recognize(object(), language="chi_sim+eng")
+
+        self.assertEqual(frame.boxes, (OcrBox(10, 20, 22, 21, "你好", 0.96),))
+
     def test_ocr_residual_detection_ignores_low_confidence_text(self):
         frame = OcrFrame((OcrBox(10, 20, 100, 30, "Start game", 0.79),), "bg")
 

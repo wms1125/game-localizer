@@ -24,6 +24,7 @@ from game_localizer.hanengine import (
     PipelineTranslationFailed,
     OfficialValidatorConfig,
     PytesseractOcrProvider,
+    RapidOcrProvider,
     ProjectBusyError,
     ProjectValidationRequest,
     ProjectValidationRunner,
@@ -730,6 +731,11 @@ def run_visual(argv: list[str]) -> int:
         help="enable local OCR observation, for example chi_sim+eng",
     )
     verify.add_argument(
+        "--ocr-provider",
+        choices=("tesseract", "rapidocr"),
+        help="local OCR implementation used with --ocr-language (default: tesseract)",
+    )
+    verify.add_argument(
         "--ocr-allowlist",
         action="append",
         default=[],
@@ -809,9 +815,14 @@ def run_visual(argv: list[str]) -> int:
             )
         ocr_provider = None
         if args.ocr_language:
-            ocr_provider = PytesseractOcrProvider()
+            ocr_provider = (
+                RapidOcrProvider()
+                if args.ocr_provider == "rapidocr"
+                else PytesseractOcrProvider()
+            )
         elif (
-            args.ocr_allowlist
+            args.ocr_provider
+            or args.ocr_allowlist
             or args.ocr_min_confidence is not None
             or args.ocr_report
         ):

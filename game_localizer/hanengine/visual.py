@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import importlib.metadata
+import math
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -84,14 +86,20 @@ def detect_english_residuals(
         if box.confidence < minimum_confidence:
             continue
         normalized = " ".join(box.text.split()).casefold()
-        words = _LATIN_WORD_RE.findall(box.text)
+        residual_candidate = normalized
+        for allowed in sorted(normalized_allowlist, key=len, reverse=True):
+            residual_candidate = residual_candidate.replace(allowed, " ")
+        words = _LATIN_WORD_RE.findall(residual_candidate)
+        original_words = _LATIN_WORD_RE.findall(box.text)
         if not words or normalized in normalized_allowlist:
             continue
         if _PATHLIKE_RE.fullmatch(box.text.strip()) and any(
             marker in box.text for marker in "_./:\\"
         ):
             continue
-        if all(word.isupper() for word in words) and len("".join(words)) <= 5:
+        if all(word.isupper() for word in original_words) and len(
+            "".join(original_words)
+        ) <= 5:
             continue
         residuals.append(box)
     return tuple(residuals)
@@ -171,7 +179,24 @@ class OcrProvider(Protocol):
     def recognize(self, image: object, *, language: str) -> OcrFrame: ...
 
 
+def _image_fingerprint(image: object) -> str:
+    digest = hashlib.sha256()
+    digest.update(repr(getattr(image, "mode", None)).encode("utf-8"))
+    digest.update(b"|")
+    digest.update(repr(getattr(image, "size", None)).encode("utf-8"))
+    tobytes = getattr(image, "tobytes", None)
+    if callable(tobytes):
+        try:
+            digest.update(b"|")
+            digest.update(tobytes())
+        except Exception:
+            pass
+    return digest.hexdigest()
+
+
 class PytesseractOcrProvider:
+    provider_name = "pytesseract"
+
     def __init__(self, *, config: str = ""):
         self._config = config
         self._loaded: tuple[object, object] | None = None
@@ -192,6 +217,14 @@ class PytesseractOcrProvider:
         except Exception:
             return False
 
+    @property
+    def provider_version(self) -> str:
+        try:
+            pytesseract, _ = self._load()
+            return str(pytesseract.get_tesseract_version())
+        except Exception:
+            return "unavailable"
+
     def recognize(self, image: object, *, language: str) -> OcrFrame:
         try:
             pytesseract, output = self._load()
@@ -208,8 +241,79 @@ class PytesseractOcrProvider:
                 boxes.append(OcrBox(int(data["left"][index]), int(data["top"][index]), int(data["width"][index]), int(data["height"][index]), text, confidence))
             except (KeyError, IndexError, TypeError, ValueError):
                 continue
-        fingerprint = hashlib.sha256(repr(getattr(image, "size", None)).encode("utf-8") + b"|ocr-background").hexdigest()
-        return OcrFrame(tuple(boxes), fingerprint)
+        return OcrFrame(tuple(boxes), _image_fingerprint(image))
+
+
+class RapidOcrProvider:
+    """Optional Chinese/English OCR provider backed by RapidOCR ONNX Runtime."""
+
+    provider_name = "rapidocr-onnxruntime"
+
+    def __init__(self):
+        self._engine: object | None = None
+        self._version: str | None = None
+
+    def _load(self):
+        if self._engine is None:
+            import rapidocr_onnxruntime
+
+            self._engine = rapidocr_onnxruntime.RapidOCR()
+            try:
+                self._version = importlib.metadata.version(
+                    "rapidocr-onnxruntime"
+                )
+            except importlib.metadata.PackageNotFoundError:
+                self._version = "unknown"
+        return self._engine
+
+    def available(self) -> bool:
+        try:
+            self._load()
+            return True
+        except Exception:
+            return False
+
+    @property
+    def provider_version(self) -> str:
+        try:
+            self._load()
+        except Exception:
+            return "unavailable"
+        return self._version or "unknown"
+
+    def recognize(self, image: object, *, language: str) -> OcrFrame:
+        if not isinstance(language, str) or not language.strip():
+            raise ValueError("language must not be empty")
+        try:
+            result, _ = self._load()(image)
+        except Exception as exc:
+            raise RuntimeError("local RapidOCR provider is unavailable") from exc
+        boxes: list[OcrBox] = []
+        for item in result or ():
+            try:
+                points, text, confidence = item
+                text = str(text).strip()
+                xs = [float(point[0]) for point in points]
+                ys = [float(point[1]) for point in points]
+                left = math.floor(min(xs))
+                top = math.floor(min(ys))
+                right = math.ceil(max(xs))
+                bottom = math.ceil(max(ys))
+                confidence = max(0.0, min(1.0, float(confidence)))
+                if text and right > left and bottom > top:
+                    boxes.append(
+                        OcrBox(
+                            left,
+                            top,
+                            right - left,
+                            bottom - top,
+                            text,
+                            confidence,
+                        )
+                    )
+            except (IndexError, TypeError, ValueError):
+                continue
+        return OcrFrame(tuple(boxes), _image_fingerprint(image))
 
 
 class PillowScreenCapture:
@@ -297,6 +401,7 @@ __all__ = [
     "OverlayText",
     "PillowScreenCapture",
     "PytesseractOcrProvider",
+    "RapidOcrProvider",
     "TkOverlayWindow",
     "VisualReplacementEngine",
     "VisualReplacementSession",

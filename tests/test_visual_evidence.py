@@ -52,6 +52,9 @@ class FakeImageJudge:
 
 
 class FakeOcrProvider:
+    provider_name = "fake-ocr"
+    provider_version = "1.2.3"
+
     def __init__(self, reference: OcrFrame, candidate: OcrFrame):
         self.reference = reference
         self.candidate = candidate
@@ -343,7 +346,9 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
         self.assertEqual(judge.calls, 0)
         self.assertIn("ocr_candidate_residual_text", report.gate.hard_gate.failed_codes)
-        self.assertEqual(payload["schema_version"], "hanengine.visual-ocr-observation/v1")
+        self.assertEqual(payload["schema_version"], "hanengine.visual-ocr-observation/v2")
+        self.assertEqual(payload["provider"], "fake-ocr")
+        self.assertEqual(payload["provider_version"], "1.2.3")
         self.assertEqual(
             payload["samples"][0]["candidate"]["residual_texts"],
             ["Start game\nnow"],

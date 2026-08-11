@@ -40,7 +40,7 @@ from .visual_style import (
 VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION = "hanengine.visual-evidence-annotations/v1"
 VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION = "hanengine.visual-evidence-manifest/v2"
 VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION = "hanengine.visual-evidence-report/v2"
-VISUAL_OCR_OBSERVATION_SCHEMA_VERSION = "hanengine.visual-ocr-observation/v1"
+VISUAL_OCR_OBSERVATION_SCHEMA_VERSION = "hanengine.visual-ocr-observation/v2"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -160,6 +160,14 @@ def _ocr_frame_payload(
         ],
         "residual_texts": [box.text for box in residuals],
     }
+
+
+def _ocr_provider_metadata(provider: OcrProvider) -> tuple[str, str]:
+    name = getattr(provider, "provider_name", provider.__class__.__name__)
+    version = getattr(provider, "provider_version", "unknown")
+    if callable(version):
+        version = version()
+    return str(name), str(version)
 
 
 def _resolve_evidence_file(root: Path, relative_path: str) -> Path:
@@ -915,6 +923,9 @@ def run_visual_evidence(
                 }
             )
     if ocr_provider is not None:
+        ocr_provider_name, ocr_provider_version = _ocr_provider_metadata(
+            ocr_provider
+        )
         output_destination = output_path.expanduser().absolute().resolve(strict=False)
         ocr_path = (
             output_destination.with_name("ocr-observation.json")
@@ -945,6 +956,8 @@ def run_visual_evidence(
                 .replace(microsecond=0)
                 .isoformat()
                 .replace("+00:00", "Z"),
+                "provider": ocr_provider_name,
+                "provider_version": ocr_provider_version,
                 "language": ocr_language.strip(),
                 "minimum_confidence": ocr_minimum_confidence,
                 "allowlist": sorted(
