@@ -522,6 +522,36 @@ class StructuredPipelineTests(unittest.TestCase):
         self.assertIsInstance(incomplete, VerifyResult)
         self.assertFalse(incomplete.passed)
 
+    def test_renpy_extract_warns_when_dynamic_expressions_are_preserved(self):
+        source = self.root / "renpy-dynamic"
+        game = source / "game"
+        game.mkdir(parents=True)
+        script = game / "screens.rpy"
+        script.write_text(
+            'screen sample:\n    text _("Visible")\n    $ value = _(dynamic_label)\n',
+            encoding="utf-8",
+        )
+        before = snapshot_tree(source)
+        working = self.root / "renpy-dynamic-working"
+        working.mkdir()
+
+        result = RenPyAdapterV1().extract(
+            ExtractRequest(
+                source,
+                working,
+                (),
+                (),
+                "project-renpy-dynamic",
+                make_context("extract"),
+            )
+        )
+
+        self.assertIsInstance(result, ExtractResult)
+        self.assertEqual([item.source_text for item in result.segments], ["Visible"])
+        self.assertEqual(result.statistics["unhandled_items"], 1)
+        self.assertTrue(any("manual review" in item for item in result.warnings))
+        self.assertEqual(snapshot_tree(source), before)
+
     def test_renpy_validation_preserves_nested_interpolation_and_tag_order(self):
         source = self.root / "renpy-placeholders"
         game = source / "game"

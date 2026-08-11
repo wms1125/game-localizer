@@ -26,7 +26,13 @@ _FIELDS = (
     "speaker",
     "target_text",
 )
-_CATALOG_FIELDS = ("language", "project_fingerprint", "entries")
+_UNHANDLED_FIELDS = ("relative_path", "line", "expression", "reason")
+_CATALOG_FIELDS = (
+    "language",
+    "project_fingerprint",
+    "entries",
+    "unhandled_items",
+)
 _COMMANDS = frozenset(
     {
         "label",
@@ -215,10 +221,49 @@ class RenPySegment:
 
 
 @dataclass(frozen=True)
+class RenPyUnhandledItem:
+    relative_path: str
+    line: int
+    expression: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        for name in ("relative_path", "expression", "reason"):
+            object.__setattr__(self, name, _string(getattr(self, name), name))
+        if not isinstance(self.line, int) or isinstance(self.line, bool) or self.line < 1:
+            raise ValueError("line must be a positive integer")
+        if self.reason not in {
+            "dynamic_translation_argument",
+            "concatenated_translation_expression",
+        }:
+            raise ValueError("unsupported Ren'Py unhandled-item reason")
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "relative_path": self.relative_path,
+            "line": self.line,
+            "expression": self.expression,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, JsonValue]) -> "RenPyUnhandledItem":
+        values = _require_mapping(payload, cls.__name__)
+        _require_exact(values, _UNHANDLED_FIELDS, cls.__name__)
+        return cls(
+            relative_path=values["relative_path"],
+            line=values["line"],
+            expression=values["expression"],
+            reason=values["reason"],
+        )
+
+
+@dataclass(frozen=True)
 class RenPyCatalog:
     language: str
     project_fingerprint: str
     entries: tuple[RenPySegment, ...]
+    unhandled_items: tuple[RenPyUnhandledItem, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "language", _string(self.language, "language"))
@@ -231,12 +276,21 @@ class RenPyCatalog:
         if len({item.segment_id for item in entries}) != len(entries):
             raise ValueError("entries must have unique segment IDs")
         object.__setattr__(self, "entries", entries)
+        if isinstance(self.unhandled_items, (str, bytes)) or not isinstance(
+            self.unhandled_items, Iterable
+        ):
+            raise TypeError("unhandled_items must be an iterable")
+        unhandled_items = tuple(self.unhandled_items)
+        if any(not isinstance(item, RenPyUnhandledItem) for item in unhandled_items):
+            raise TypeError("unhandled_items must contain RenPyUnhandledItem values")
+        object.__setattr__(self, "unhandled_items", unhandled_items)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "language": self.language,
             "project_fingerprint": self.project_fingerprint,
             "entries": [entry.to_dict() for entry in self.entries],
+            "unhandled_items": [item.to_dict() for item in self.unhandled_items],
         }
 
     @classmethod
@@ -246,10 +300,18 @@ class RenPyCatalog:
         entries = values["entries"]
         if isinstance(entries, (str, bytes)) or not isinstance(entries, Iterable):
             raise TypeError("entries must be an iterable")
+        unhandled_items = values["unhandled_items"]
+        if isinstance(unhandled_items, (str, bytes)) or not isinstance(
+            unhandled_items, Iterable
+        ):
+            raise TypeError("unhandled_items must be an iterable")
         return cls(
             language=values["language"],
             project_fingerprint=values["project_fingerprint"],
             entries=tuple(RenPySegment.from_dict(item) for item in entries),
+            unhandled_items=tuple(
+                RenPyUnhandledItem.from_dict(item) for item in unhandled_items
+            ),
         )
 
     def translate(self, translations: Mapping[str, str]) -> RenPyCatalog:
@@ -518,27 +580,65 @@ def _significant_tokens(line: str) -> tuple[tokenize.TokenInfo, ...]:
     return tuple(token for token in _tokens_for_line(line) if token.type not in ignored)
 
 
-def _extract_translation_call_literals(line: str) -> tuple[str, ...]:
+def _extract_translation_calls(
+    line: str,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
     tokens = _significant_tokens(line)
     values: list[str] = []
-    for index in range(len(tokens) - 3):
+    unhandled: list[tuple[str, str]] = []
+    for index in range(len(tokens) - 1):
         if not (
             tokens[index].type == tokenize.NAME
             and tokens[index].string == "_"
             and tokens[index + 1].type == tokenize.OP
             and tokens[index + 1].string == "("
-            and tokens[index + 2].type == tokenize.STRING
-            and tokens[index + 3].type == tokenize.OP
-            and tokens[index + 3].string == ")"
         ):
             continue
-        try:
-            value = ast.literal_eval(tokens[index + 2].string)
-        except (SyntaxError, ValueError):
+        depth = 0
+        closing_index: int | None = None
+        for cursor in range(index + 1, len(tokens)):
+            token = tokens[cursor]
+            if token.type != tokenize.OP:
+                continue
+            if token.string in {"(", "[", "{"}:
+                depth += 1
+            elif token.string in {")", "]", "}"}:
+                depth -= 1
+                if depth == 0:
+                    closing_index = cursor
+                    break
+        if closing_index is None:
+            expression = line[tokens[index].start[1] :].strip()
+            if expression:
+                unhandled.append((expression, "dynamic_translation_argument"))
             continue
-        if isinstance(value, str) and value:
-            values.append(value)
-    return tuple(values)
+        argument_tokens = tokens[index + 2 : closing_index]
+        expression = line[
+            tokens[index].start[1] : tokens[closing_index].end[1]
+        ]
+        if len(argument_tokens) != 1 or argument_tokens[0].type != tokenize.STRING:
+            reason = (
+                "concatenated_translation_expression"
+                if any(
+                    token.type == tokenize.OP and token.string == "+"
+                    for token in argument_tokens
+                )
+                and any(token.type == tokenize.STRING for token in argument_tokens)
+                else "dynamic_translation_argument"
+            )
+            unhandled.append((expression, reason))
+            continue
+        try:
+            value = ast.literal_eval(argument_tokens[0].string)
+        except (SyntaxError, ValueError):
+            unhandled.append((expression, "dynamic_translation_argument"))
+            continue
+        if isinstance(value, str):
+            if value:
+                values.append(value)
+        else:
+            unhandled.append((expression, "dynamic_translation_argument"))
+    return tuple(values), tuple(unhandled)
 
 
 def _extract_line(line: str) -> tuple[str, str | None, str] | None:
@@ -609,6 +709,7 @@ class RenPyExtractor:
         root = project_root.resolve(strict=True)
         files = renpy_project_files(root)
         entries: list[RenPySegment] = []
+        unhandled_items: list[RenPyUnhandledItem] = []
         duplicate_counts: dict[str, int] = {}
         for path in files:
             relative = path.relative_to(root).as_posix()
@@ -625,7 +726,17 @@ class RenPyExtractor:
                 parsed = _extract_line(line)
                 if parsed is not None:
                     parsed_entries.append(parsed)
-                wrapped_sources = list(_extract_translation_call_literals(line))
+                wrapped_literals, unhandled_calls = _extract_translation_calls(line)
+                unhandled_items.extend(
+                    RenPyUnhandledItem(
+                        relative_path=relative,
+                        line=line_number,
+                        expression=expression,
+                        reason=reason,
+                    )
+                    for expression, reason in unhandled_calls
+                )
+                wrapped_sources = list(wrapped_literals)
                 if parsed is not None and parsed[2] in wrapped_sources:
                     wrapped_sources.remove(parsed[2])
                 parsed_entries.extend(
@@ -657,7 +768,12 @@ class RenPyExtractor:
                             speaker=speaker,
                         )
                     )
-        return RenPyCatalog(language, _project_fingerprint(root, files), tuple(entries))
+        return RenPyCatalog(
+            language,
+            _project_fingerprint(root, files),
+            tuple(entries),
+            tuple(unhandled_items),
+        )
 
 
 @dataclass(frozen=True)
@@ -718,20 +834,29 @@ class RenPyWriter:
             raise ValueError("catalog contains no translated entries")
         for item in translated:
             _validate_placeholders(item.source_text, item.target_text or "")
+        unique_translated: list[RenPySegment] = []
+        first_by_source: dict[str, RenPySegment] = {}
+        for item in translated:
+            previous = first_by_source.get(item.source_text)
+            if previous is None:
+                first_by_source[item.source_text] = item
+                unique_translated.append(item)
+                continue
+            if previous.target_text != item.target_text:
+                raise RenPyValidationError(
+                    f"conflicting translations for source {item.source_text!r}: "
+                    f"{previous.relative_path}:{previous.line} "
+                    f"[{previous.segment_id}] -> {previous.target_text!r}; "
+                    f"{item.relative_path}:{item.line} "
+                    f"[{item.segment_id}] -> {item.target_text!r}"
+                )
         language = renpy_language_identifier(catalog.language)
         path = output / "game" / "tl" / language / "hanengine_translations.rpy"
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = ["# Generated by HanEngine; source project remains unchanged.", ""]
         # Ren'Py indexes string translations by the old text globally. Repeating
         # an old value in separate blocks causes a runtime duplicate-translation
-        # error, so retain the first translated occurrence deterministically.
-        unique_translated: list[RenPySegment] = []
-        seen_sources: set[str] = set()
-        for item in translated:
-            if item.source_text in seen_sources:
-                continue
-            seen_sources.add(item.source_text)
-            unique_translated.append(item)
+        # error. Identical targets are deduplicated; conflicts fail above.
         dialogue = [item for item in unique_translated if item.kind == "dialogue"]
         strings = [item for item in unique_translated if item.kind != "dialogue"]
         for item in dialogue:
@@ -787,7 +912,7 @@ class RenPyWriter:
             hashlib.sha256(content).hexdigest(),
             activation_path,
             hashlib.sha256(activation_content).hexdigest(),
-            len(translated),
+            len(unique_translated),
             generated_paths,
         )
 
@@ -890,6 +1015,7 @@ __all__ = [
     "RenPyCatalog",
     "RenPyExtractor",
     "RenPySegment",
+    "RenPyUnhandledItem",
     "RenPyValidationError",
     "RenPyWriter",
     "renpy_language_identifier",

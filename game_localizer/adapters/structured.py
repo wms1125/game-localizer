@@ -984,14 +984,36 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 self._renpy_segment_to_draft(entry, relative_files)
                 for entry in catalog.entries
             )
-            warnings = ()
+            warning_items: list[str] = []
+            if catalog.unhandled_items:
+                warning_items.append(
+                    f"{len(catalog.unhandled_items)} dynamic Ren'Py translation "
+                    "expressions were preserved for runtime and require manual review"
+                )
+                request.context.warning(
+                    warning_items[-1],
+                    {
+                        "engine_id": self.engine_id,
+                        "unhandled_items": len(catalog.unhandled_items),
+                    },
+                )
             if request.filters:
-                warnings = ("Extraction filters are not applied by this adapter version",)
-                request.context.warning(warnings[0], {"engine_id": self.engine_id})
+                warning_items.append(
+                    "Extraction filters are not applied by this adapter version"
+                )
+                request.context.warning(
+                    warning_items[-1], {"engine_id": self.engine_id}
+                )
+            warnings = tuple(warning_items)
             request.context.progress(len(drafts), len(drafts), current_item=self.engine_id)
             request.context.log(
                 "Ren'Py plaintext resources extracted",
-                {"engine_id": self.engine_id, "files": len(files), "segments": len(drafts)},
+                {
+                    "engine_id": self.engine_id,
+                    "files": len(files),
+                    "segments": len(drafts),
+                    "unhandled_items": len(catalog.unhandled_items),
+                },
             )
             return ExtractResult(
                 segments=drafts,
@@ -999,7 +1021,11 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 read_files=relative_files,
                 skipped_files=(),
                 warnings=warnings,
-                statistics={"files": len(files), "segments": len(drafts)},
+                statistics={
+                    "files": len(files),
+                    "segments": len(drafts),
+                    "unhandled_items": len(catalog.unhandled_items),
+                },
             )
         except TaskCancelled as exc:
             return self._error(

@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,6 +102,10 @@ class RenPyPipelineTests(unittest.TestCase):
             separators=(",", ":"),
         )
         self.assertEqual(RenPyCatalog.from_dict(json.loads(encoded)), translated)
+        incomplete = dict(payload)
+        del incomplete["unhandled_items"]
+        with self.assertRaisesRegex(ValueError, "fields"):
+            RenPyCatalog.from_dict(incomplete)
         with self.assertRaisesRegex(RenPyValidationError, "placeholder"):
             catalog.translate({"Hello, [name]! {b}Welcome{/b}.": "你好！"})
 
@@ -249,6 +254,21 @@ class RenPyPipelineTests(unittest.TestCase):
         self.assertTrue(all(entry.speaker is None for entry in entries))
         self.assertEqual(entries[0].placeholders, ("{}",))
         self.assertEqual(entries[3].placeholders, ("{#file_time}",))
+        self.assertEqual(
+            [
+                (item.line, item.expression, item.reason)
+                for item in catalog.unhandled_items
+            ],
+            [
+                (4, "_(dynamic_label)", "dynamic_translation_argument"),
+                (
+                    5,
+                    '_("prefix" + suffix)',
+                    "concatenated_translation_expression",
+                ),
+            ],
+        )
+        self.assertEqual(RenPyCatalog.from_dict(catalog.to_dict()), catalog)
         translated = catalog.translate(
             {
                 "Page {}": "第 {} 页",
@@ -318,6 +338,45 @@ class RenPyPipelineTests(unittest.TestCase):
 
         self.assertEqual(rendered.count('old "A narration line."'), 1)
         self.assertEqual(validate_renpy_translation_text(rendered), 3)
+        self.assertEqual(result.entries_written, 3)
+
+    def test_writer_rejects_conflicting_targets_for_repeated_source(self):
+        temporary, root = self.make_project()
+        self.addCleanup(temporary.cleanup)
+        (root / "game" / "script.rpy").write_text(
+            SCRIPT + '\n    "A narration line."\n', encoding="utf-8"
+        )
+        catalog = RenPyExtractor().extract(root)
+        repeated = [
+            item for item in catalog.entries if item.source_text == "A narration line."
+        ]
+        conflicting = replace(
+            catalog,
+            entries=tuple(
+                replace(
+                    item,
+                    target_text=(
+                        "First target"
+                        if item.segment_id == repeated[0].segment_id
+                        else "Second target"
+                    ),
+                )
+                if item.source_text == "A narration line."
+                else item
+                for item in catalog.entries
+            ),
+        )
+        output = root / "localized-output"
+
+        with self.assertRaisesRegex(
+            RenPyValidationError,
+            "conflicting translations.*A narration line",
+        ) as captured:
+            RenPyWriter().build(conflicting, output, source_root=root)
+
+        self.assertIn(repeated[0].segment_id, str(captured.exception))
+        self.assertIn(repeated[1].segment_id, str(captured.exception))
+        self.assertFalse(output.exists())
 
     def test_writer_ships_fonts_and_generates_runtime_fallback_config(self):
         temporary, root = self.make_project()

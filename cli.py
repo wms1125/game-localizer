@@ -229,6 +229,12 @@ def run_renpy(argv: list[str]) -> int:
                 encoding="utf-8",
                 newline="\n",
             )
+            if catalog.unhandled_items:
+                print(
+                    f"Warning: preserved {len(catalog.unhandled_items)} dynamic "
+                    "Ren'Py translation expressions for runtime/manual review",
+                    file=sys.stderr,
+                )
             print(f"已提取 {len(catalog.entries)} 条文本: {output}")
             return 0
         payload = json.loads(Path(args.catalog).read_text(encoding="utf-8"))

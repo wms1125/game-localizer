@@ -272,7 +272,10 @@ class FeatureCliTests(unittest.TestCase):
             project = root / "project"
             game = project / "game"
             game.mkdir(parents=True)
-            (game / "script.rpy").write_text('e "Hello"\n"Start"\n', encoding="utf-8")
+            (game / "script.rpy").write_text(
+                'e "Hello"\n"Start"\n$ dynamic = _(runtime_label)\n',
+                encoding="utf-8",
+            )
             catalog = root / "catalog.json"
             output = root / "output"
             dictionary = root / "dictionary.json"
@@ -281,7 +284,8 @@ class FeatureCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with redirect_stdout(io.StringIO()):
+            errors = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(errors):
                 extract_code = cli.run_renpy(
                     ["extract", str(project), "--output", str(catalog), "--language", "zh_cn"]
                 )
@@ -301,6 +305,8 @@ class FeatureCliTests(unittest.TestCase):
             self.assertEqual(build_code, 0)
             payload = json.loads(catalog.read_text(encoding="utf-8"))
             self.assertEqual(len(payload["entries"]), 2)
+            self.assertEqual(len(payload["unhandled_items"]), 1)
+            self.assertIn("runtime/manual review", errors.getvalue())
             generated = output / "game" / "tl" / "zh_cn" / "hanengine_translations.rpy"
             self.assertIn("\u4f60\u597d", generated.read_text(encoding="utf-8"))
 
