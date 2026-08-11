@@ -17,6 +17,7 @@ from translator import ProcessingResult, TranslationError, process_resource
 from translator import load_translation_dictionary
 from game_localizer.hanengine import (
     CloudTranslationProvider,
+    CommandImageVisualJudge,
     DictionaryTranslationProvider,
     EvaluationStatus,
     HanStore,
@@ -39,7 +40,10 @@ from game_localizer.hanengine import (
     TtsRequest,
     WindowsSapiTts,
     ZipPackageModifier,
+    prepare_visual_evidence_manifest,
     renpy_sdk_validator,
+    run_renpy_capture_pair,
+    run_visual_evidence,
 )
 from game_localizer.hanengine.multiengine import LocalizationCatalog
 from game_localizer.hanengine.auth import AuthError, UserStore, auth_payload
@@ -696,6 +700,104 @@ def run_project(argv: list[str]) -> int:
         return 1
 
 
+def run_visual(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Verify paired localization screenshots with deterministic gates and an optional judge.\n"
+            f"{ETHICS}"
+        )
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    verify = commands.add_parser("verify", help="verify a visual evidence manifest")
+    verify.add_argument("--manifest", required=True)
+    verify.add_argument("--output", required=True)
+    verify.add_argument("--authorized", action="store_true")
+    verify.add_argument("--authorization-reference", required=True)
+    verify.add_argument("--judge-command")
+    verify.add_argument("--judge-arg", action="append", default=[])
+    verify.add_argument("--judge-timeout", type=int, default=120)
+    verify.add_argument("--judge-provider", default="external-command")
+    prepare = commands.add_parser(
+        "prepare",
+        help="prepare a manual visual evidence manifest from a verified Ren'Py capture report",
+    )
+    prepare.add_argument("--capture-report", required=True)
+    prepare.add_argument("--annotations", required=True)
+    prepare.add_argument("--output", required=True)
+    prepare.add_argument("--authorized", action="store_true")
+    capture = commands.add_parser(
+        "capture-renpy",
+        help="capture paired Ren'Py reference and candidate screenshots",
+    )
+    capture.add_argument("--renpy-sdk", required=True)
+    capture.add_argument("--reference-project", required=True)
+    capture.add_argument("--candidate-project", required=True)
+    capture.add_argument("--plan", required=True)
+    capture.add_argument("--output", required=True)
+    capture.add_argument("--authorized", action="store_true")
+    capture.add_argument("--authorization-reference", required=True)
+    capture.add_argument("--reference-game-language", choices=("source", "zh_cn"))
+    capture.add_argument("--candidate-game-language", choices=("source", "zh_cn"))
+    capture.add_argument("--reference-window-title")
+    capture.add_argument("--candidate-window-title")
+    args = _parse_args(parser, argv)
+    if isinstance(args, int):
+        return args
+    try:
+        if not args.authorized:
+            raise ValueError(f"visual {args.command} requires explicit --authorized confirmation")
+        if args.command == "prepare":
+            manifest = prepare_visual_evidence_manifest(
+                Path(args.capture_report),
+                Path(args.annotations),
+                Path(args.output),
+            )
+            print(f"Prepared samples: {len(manifest.samples)}")
+            print(f"Manifest: {Path(args.output).expanduser().absolute()}")
+            return 0
+        if args.command == "capture-renpy":
+            report = run_renpy_capture_pair(
+                Path(args.renpy_sdk),
+                Path(args.reference_project),
+                Path(args.candidate_project),
+                Path(args.plan),
+                Path(args.output),
+                authorization_reference=args.authorization_reference,
+                reference_game_language=args.reference_game_language,
+                candidate_game_language=args.candidate_game_language,
+                reference_window_title=args.reference_window_title,
+                candidate_window_title=args.candidate_window_title,
+            )
+            print(f"Capture status: {'passed' if report.passed else 'failed'}")
+            print(f"Report: {Path(args.output).expanduser().absolute() / 'capture-report.json'}")
+            return 0 if report.passed else 1
+        if args.judge_arg and not args.judge_command:
+            raise ValueError("--judge-arg requires --judge-command")
+        judge = None
+        if args.judge_command:
+            judge = CommandImageVisualJudge(
+                (args.judge_command, *args.judge_arg),
+                timeout_seconds=args.judge_timeout,
+                provider_name=args.judge_provider,
+            )
+        report = run_visual_evidence(
+            Path(args.manifest),
+            Path(args.output),
+            authorization_reference=args.authorization_reference,
+            judge=judge,
+        )
+        print(f"Visual decision: {report.decision.value}")
+        print(f"Report: {Path(args.output).expanduser().absolute()}")
+        if report.decision.value == "pass":
+            return 0
+        if report.decision.value == "blocked":
+            return 1
+        return 2
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
 def _task_progress_text(status) -> str:
     progress = status.progress
     if progress is None:
@@ -1047,6 +1149,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_engine(arguments[1:])
     if arguments and arguments[0] == "project":
         return run_project(arguments[1:])
+    if arguments and arguments[0] == "visual":
+        return run_visual(arguments[1:])
     if arguments and arguments[0] == "tasks":
         return run_tasks(arguments[1:])
     if arguments and arguments[0] == "package":

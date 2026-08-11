@@ -474,6 +474,37 @@ class VisualHardGatePolicy:
             raise ValueError("max_line_count_delta must be a non-negative integer")
         object.__setattr__(self, "require_font_resolution", _bool(self.require_font_resolution, "require_font_resolution"))
 
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "max_position_delta_px": self.max_position_delta_px,
+            "max_size_delta_px": self.max_size_delta_px,
+            "max_baseline_delta_px": self.max_baseline_delta_px,
+            "max_line_count_delta": self.max_line_count_delta,
+            "require_font_resolution": self.require_font_resolution,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "VisualHardGatePolicy":
+        payload = _mapping(payload, "visual_hard_gate_policy")
+        _exact_keys(
+            payload,
+            (
+                "max_position_delta_px",
+                "max_size_delta_px",
+                "max_baseline_delta_px",
+                "max_line_count_delta",
+                "require_font_resolution",
+            ),
+            "visual_hard_gate_policy",
+        )
+        return cls(
+            max_position_delta_px=payload["max_position_delta_px"],
+            max_size_delta_px=payload["max_size_delta_px"],
+            max_baseline_delta_px=payload["max_baseline_delta_px"],
+            max_line_count_delta=payload["max_line_count_delta"],
+            require_font_resolution=payload["require_font_resolution"],
+        )
+
 
 @dataclass(frozen=True)
 class VisualCheck:
