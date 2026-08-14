@@ -1,0 +1,25 @@
+{
+  "contract": "hanengine.benchmark/v1",
+  "renpy_versions": [
+    "8.5.3",
+    "8.4.1"
+  ],
+  "projects": [
+    {
+      "project_id": "rp_core_dialogue",
+      "expected_segments": 160
+    },
+    {
+      "project_id": "rp_screen_language",
+      "expected_segments": 120
+    },
+    {
+      "project_id": "rp_branching_context",
+      "expected_segments": 120
+    },
+    {
+      "project_id": "rp_packaged_smoke",
+      "expected_segments": 100
+    }
+  ]
+}

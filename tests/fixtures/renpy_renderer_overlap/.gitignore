@@ -1,0 +1,7 @@
+*.rpyc
+/reference/game/cache/
+/reference/game/saves/
+/reference/log.txt
+/candidate/game/cache/
+/candidate/game/saves/
+/candidate/log.txt
