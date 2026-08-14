@@ -1,0 +1,10 @@
+; Engine sample fixture inspired by Godot's official 2D demos.
+config_version=5
+
+[application]
+config/name="Dodge the Creeps Localization Fixture"
+run/main_scene="res://main.tscn"
+
+[display]
+window/size/viewport_width=480
+window/size/viewport_height=360

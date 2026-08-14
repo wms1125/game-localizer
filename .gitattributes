@@ -1,0 +1,2 @@
+/benchmarks/*.json text eol=lf
+/benchmarks/visual_judge_controlled/*.json text eol=lf

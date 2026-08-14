@@ -1,0 +1,11 @@
+{
+  "contract": "hanengine.benchmark/v1",
+  "counts": {
+    "renpy_projects": 4,
+    "renpy_segments": 500,
+    "player_static_cases": 120,
+    "player_dynamic_cases": 60,
+    "translation_gold_slots": 300,
+    "guard_risk_cases": 80
+  }
+}
