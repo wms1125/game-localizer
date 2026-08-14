@@ -43,10 +43,14 @@ from game_localizer.hanengine.tasks import TaskCancelled
 from .contract import (
     CONTRACT_VERSION,
     AdapterCapability,
+    AdapterCapabilityMatrix,
     AdapterError,
     AdapterErrorCode,
     AdapterMaturity,
     AdapterMetadata,
+    CapabilityArea,
+    CapabilityDeclaration,
+    CapabilityStatus,
     BuildManifestEntry,
     BuildRequest,
     BuildResult,
@@ -66,6 +70,7 @@ from .contract import (
     VerificationCheck,
     VerifyRequest,
     VerifyResult,
+    register_adapter_capability_matrix,
 )
 
 
@@ -84,6 +89,43 @@ _COMMON_LIMITATIONS = (
     "Encrypted and packaged binary assets are detection-only",
     "Rollback is managed by HanEngine BackupManager",
 )
+
+
+def _capability_matrix(
+    *,
+    native_status: CapabilityStatus,
+    native_reason: str,
+    native_evidence: tuple[str, ...] = (),
+    dynamic_status: CapabilityStatus = CapabilityStatus.DETECT_ONLY,
+    dynamic_reason: str = "Dynamic runtime text is preserved for manual review",
+    raster_status: CapabilityStatus = CapabilityStatus.UNSUPPORTED,
+    raster_reason: str = "Rasterized text is outside native structured resource replacement",
+) -> AdapterCapabilityMatrix:
+    return AdapterCapabilityMatrix(
+        (
+            CapabilityDeclaration(
+                CapabilityArea.NATIVE_TEXT_REPLACE,
+                native_status,
+                native_reason,
+                native_evidence,
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.DYNAMIC_TEXT,
+                dynamic_status,
+                dynamic_reason,
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.RASTER_TEXT,
+                raster_status,
+                raster_reason,
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.DETECT_ONLY,
+                CapabilityStatus.IMPLEMENTED,
+                "Engine markers and packaged resources are inspected without modifying them",
+            ),
+        )
+    )
 
 
 def _is_untranslated_natural_language(source: str, target: str, language: str) -> bool:
@@ -1740,6 +1782,38 @@ class UnrealAdapterV1(StructuredAdapterV1):
             if isinstance(association, str) and association:
                 return association
         return "unknown"
+
+
+# Keep capability claims separate from the workflow-operation capabilities above.
+# The registry is deliberately conservative until an engine has a real authorized
+# project record, compiler/build evidence, and runtime evidence.
+register_adapter_capability_matrix(
+    "hanengine.renpy",
+    _capability_matrix(
+        native_status=CapabilityStatus.VERIFIED,
+        native_reason="Plaintext .rpy extraction, native translate write-back, build, and runtime evidence are available",
+        native_evidence=(
+            "record-renpy-the-question-zhcn-client-language-v11-verified",
+            "record-heartfelt-moments-pristine-validation-final",
+        ),
+        dynamic_reason="Complex runtime parameters and string concatenation remain unhandled and require manual review",
+    ),
+)
+for _adapter_id in (
+    "hanengine.rpg-maker-mv",
+    "hanengine.rpg-maker-mz",
+    "hanengine.godot",
+    "hanengine.unity",
+    "hanengine.unreal",
+):
+    register_adapter_capability_matrix(
+        _adapter_id,
+        _capability_matrix(
+            native_status=CapabilityStatus.IMPLEMENTED,
+            native_reason="Plaintext structured resource extraction and native-format candidate writing are implemented",
+            dynamic_reason="Runtime-generated text is outside the static structured resource contract",
+        ),
+    )
 
 
 __all__ = [

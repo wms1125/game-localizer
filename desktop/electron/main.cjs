@@ -2,6 +2,13 @@ const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { normalizeAuthStatus } = require("./auth-status.cjs");
+const {
+  createVisualReviewProof,
+  readVisualImagePair,
+  readVisualReport,
+  readVisualReviewProof,
+} = require("./visual-report.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const BACKEND_ROOT = app.isPackaged
@@ -270,7 +277,7 @@ app.whenReady().then(() => {
     const user = await currentAuthenticatedUser(event);
     if (user) return { authenticated: true, needsSetup: false, user };
     const status = await runAuthRequest(event.sender, "status");
-    return { authenticated: false, ...status, user: null };
+    return normalizeAuthStatus(status);
   });
   ipcMain.handle("auth:register", async (event, credentials) => {
     if (await currentAuthenticatedUser(event)) throw new Error("当前会话已经登录");
@@ -310,6 +317,22 @@ app.whenReady().then(() => {
   ipcMain.handle("catalog:write", async (event, filePath, updates) => {
     await requireAuthenticated(event);
     return writeCatalog(path.resolve(filePath), updates);
+  });
+  ipcMain.handle("visual:read-report", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readVisualReport(filePath);
+  });
+  ipcMain.handle("visual:read-image-pair", async (event, filePath, sampleId) => {
+    await requireAuthenticated(event);
+    return readVisualImagePair(filePath, sampleId);
+  });
+  ipcMain.handle("visual:read-review-proof", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readVisualReviewProof(filePath);
+  });
+  ipcMain.handle("visual:create-review-proof", async (event, filePath, confirmedSampleIds) => {
+    const user = await requireAuthenticated(event);
+    return createVisualReviewProof(filePath, confirmedSampleIds, user);
   });
   ipcMain.handle("python:run", async (event, taskId, args) => {
     await requireAuthenticated(event);

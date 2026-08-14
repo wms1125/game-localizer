@@ -25,6 +25,7 @@ from game_localizer.hanengine.tasks import (
 
 
 CONTRACT_VERSION = "hanengine.adapter/v1"
+CAPABILITY_MATRIX_SCHEMA_VERSION = "hanengine.adapter-capabilities/v1"
 
 EnumType = TypeVar("EnumType", bound=Enum)
 
@@ -54,6 +55,22 @@ class AdapterCapability(str, Enum):
     BUILD = "build"
     VERIFY = "verify"
     ROLLBACK = "rollback"
+
+
+class CapabilityArea(str, Enum):
+    """User-facing localization capability dimensions."""
+
+    NATIVE_TEXT_REPLACE = "native_text_replace"
+    DYNAMIC_TEXT = "dynamic_text"
+    RASTER_TEXT = "raster_text"
+    DETECT_ONLY = "detect_only"
+
+
+class CapabilityStatus(str, Enum):
+    IMPLEMENTED = "implemented"
+    VERIFIED = "verified"
+    DETECT_ONLY = "detect_only"
+    UNSUPPORTED = "unsupported"
 
 
 class Operation(str, Enum):
@@ -359,6 +376,187 @@ def _validate_capability_gate(
         raise ValueError("capabilities do not satisfy the declared maturity")
 
 
+_CAPABILITY_AREAS = tuple(CapabilityArea)
+_CAPABILITY_MATRIX_REGISTRY: dict[str, "AdapterCapabilityMatrix"] = {}
+
+
+def _strict_mapping(value: object, field_name: str, expected_keys: set[str]) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{field_name} must be a JSON object")
+    actual_keys = set(value)
+    if actual_keys != expected_keys:
+        missing = sorted(expected_keys - actual_keys)
+        extra = sorted(actual_keys - expected_keys)
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if extra:
+            details.append(f"extra={','.join(extra)}")
+        raise ValueError(f"{field_name} has an invalid shape ({'; '.join(details)})")
+    return dict(value)
+
+
+@dataclass(frozen=True)
+class CapabilityDeclaration:
+    capability: CapabilityArea
+    status: CapabilityStatus
+    reason: str
+    evidence: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_enum(self.capability, CapabilityArea, "capability")
+        _require_enum(self.status, CapabilityStatus, "status")
+        object.__setattr__(self, "reason", _plain_string(self.reason, "reason"))
+        object.__setattr__(self, "evidence", _string_tuple(self.evidence, "evidence"))
+        if self.status is CapabilityStatus.VERIFIED and not self.evidence:
+            raise ValueError("verified capability declarations require evidence")
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "capability": self.capability.value,
+            "status": self.status.value,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "CapabilityDeclaration":
+        payload = _strict_mapping(
+            value,
+            "capability declaration",
+            {"capability", "status", "reason", "evidence"},
+        )
+        try:
+            capability = CapabilityArea(payload["capability"])
+            status = CapabilityStatus(payload["status"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("capability declaration contains an unknown enum value") from exc
+        return cls(
+            capability=capability,
+            status=status,
+            reason=payload["reason"],
+            evidence=payload["evidence"],
+        )
+
+    def as_detect_only(self, reason: str) -> "CapabilityDeclaration":
+        if self.capability is CapabilityArea.DETECT_ONLY:
+            return self
+        return CapabilityDeclaration(
+            capability=self.capability,
+            status=CapabilityStatus.DETECT_ONLY,
+            reason=reason,
+            evidence=self.evidence,
+        )
+
+
+@dataclass(frozen=True)
+class AdapterCapabilityMatrix:
+    declarations: tuple[CapabilityDeclaration, ...]
+    schema_version: str = CAPABILITY_MATRIX_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != CAPABILITY_MATRIX_SCHEMA_VERSION:
+            raise ValueError(
+                f"schema_version must equal {CAPABILITY_MATRIX_SCHEMA_VERSION}"
+            )
+        declarations = _typed_tuple(
+            self.declarations,
+            CapabilityDeclaration,
+            "declarations",
+        )
+        if tuple(item.capability for item in declarations) != _CAPABILITY_AREAS:
+            raise ValueError(
+                "declarations must contain each capability area exactly once in canonical order"
+            )
+        object.__setattr__(self, "declarations", declarations)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "schema_version": self.schema_version,
+            "capabilities": [item.to_dict() for item in self.declarations],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "AdapterCapabilityMatrix":
+        payload = _strict_mapping(
+            value,
+            "capability matrix",
+            {"schema_version", "capabilities"},
+        )
+        declarations = payload["capabilities"]
+        if (
+            isinstance(declarations, (str, bytes, Mapping))
+            or not isinstance(declarations, Iterable)
+        ):
+            raise TypeError("capability matrix capabilities must be an ordered collection")
+        return cls(
+            declarations=tuple(
+                CapabilityDeclaration.from_dict(item)
+                for item in declarations
+            ),
+            schema_version=payload["schema_version"],
+        )
+
+    def for_detection(self, capabilities: Iterable[AdapterCapability]) -> "AdapterCapabilityMatrix":
+        capability_set = _enum_frozenset(capabilities, AdapterCapability, "capabilities")
+        if capability_set != frozenset({AdapterCapability.DETECT}):
+            return self
+        return AdapterCapabilityMatrix(
+            tuple(
+                item.as_detect_only(
+                    "Only engine detection is authorized for this input; localization resources were not proven writable"
+                )
+                for item in self.declarations
+            )
+        )
+
+
+def register_adapter_capability_matrix(
+    adapter_id: str,
+    matrix: AdapterCapabilityMatrix,
+) -> None:
+    adapter_id = _plain_string(adapter_id, "adapter_id")
+    if not isinstance(matrix, AdapterCapabilityMatrix):
+        raise TypeError("matrix must be an AdapterCapabilityMatrix")
+    existing = _CAPABILITY_MATRIX_REGISTRY.get(adapter_id)
+    if existing is not None and existing != matrix:
+        raise ValueError(f"capability matrix already registered for {adapter_id}")
+    _CAPABILITY_MATRIX_REGISTRY[adapter_id] = matrix
+
+
+def _default_capability_matrix(metadata_capabilities: frozenset[AdapterCapability]) -> AdapterCapabilityMatrix:
+    native_status = (
+        CapabilityStatus.IMPLEMENTED
+        if AdapterCapability.EXTRACT in metadata_capabilities
+        and AdapterCapability.BUILD in metadata_capabilities
+        else CapabilityStatus.DETECT_ONLY
+    )
+    return AdapterCapabilityMatrix(
+        (
+            CapabilityDeclaration(
+                CapabilityArea.NATIVE_TEXT_REPLACE,
+                native_status,
+                "No engine-specific capability declaration was registered",
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.DYNAMIC_TEXT,
+                CapabilityStatus.DETECT_ONLY,
+                "Dynamic runtime text is not covered by the static adapter contract",
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.RASTER_TEXT,
+                CapabilityStatus.UNSUPPORTED,
+                "Rasterized text is outside the native resource replacement contract",
+            ),
+            CapabilityDeclaration(
+                CapabilityArea.DETECT_ONLY,
+                CapabilityStatus.IMPLEMENTED,
+                "Engine markers and packaged resources can be detected without modifying them",
+            ),
+        )
+    )
+
+
 @dataclass(frozen=True)
 class AdapterMetadata:
     adapter_id: str
@@ -412,6 +610,64 @@ class AdapterMetadata:
             "known_limitations",
             _string_tuple(self.known_limitations, "known_limitations"),
         )
+
+    @property
+    def capability_matrix(self) -> AdapterCapabilityMatrix:
+        return _CAPABILITY_MATRIX_REGISTRY.get(
+            self.adapter_id,
+            _default_capability_matrix(self.capabilities),
+        )
+
+    @property
+    def capability_declarations(self) -> tuple[CapabilityDeclaration, ...]:
+        return self.capability_matrix.declarations
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "adapter_id": self.adapter_id,
+            "contract_version": self.contract_version,
+            "adapter_version": self.adapter_version,
+            "engine_name": self.engine_name,
+            "supported_engine_versions": list(self.supported_engine_versions),
+            "capabilities": sorted(item.value for item in self.capabilities),
+            "maturity": self.maturity.value,
+            "platforms": list(self.platforms),
+            "known_limitations": list(self.known_limitations),
+            "capability_matrix": self.capability_matrix.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "AdapterMetadata":
+        payload = _strict_mapping(
+            value,
+            "adapter metadata",
+            {
+                "adapter_id",
+                "contract_version",
+                "adapter_version",
+                "engine_name",
+                "supported_engine_versions",
+                "capabilities",
+                "maturity",
+                "platforms",
+                "known_limitations",
+                "capability_matrix",
+            },
+        )
+        metadata = cls(
+            adapter_id=payload["adapter_id"],
+            contract_version=payload["contract_version"],
+            adapter_version=payload["adapter_version"],
+            engine_name=payload["engine_name"],
+            supported_engine_versions=payload["supported_engine_versions"],
+            capabilities=frozenset(AdapterCapability(item) for item in payload["capabilities"]),
+            maturity=AdapterMaturity(payload["maturity"]),
+            platforms=payload["platforms"],
+            known_limitations=payload["known_limitations"],
+        )
+        matrix = AdapterCapabilityMatrix.from_dict(payload["capability_matrix"])
+        register_adapter_capability_matrix(metadata.adapter_id, matrix)
+        return metadata
 
 
 @dataclass(frozen=True)
@@ -848,6 +1104,7 @@ class AdapterV1(Protocol):
 
 __all__ = [
     "AdapterCapability",
+    "AdapterCapabilityMatrix",
     "AdapterError",
     "AdapterErrorCode",
     "AdapterMaturity",
@@ -857,6 +1114,10 @@ __all__ = [
     "BuildManifestEntry",
     "BuildRequest",
     "BuildResult",
+    "CAPABILITY_MATRIX_SCHEMA_VERSION",
+    "CapabilityArea",
+    "CapabilityDeclaration",
+    "CapabilityStatus",
     "DeclaredMode",
     "DetectionRequest",
     "DetectionResult",
@@ -876,4 +1137,5 @@ __all__ = [
     "VerifyResult",
     "adapter_operations_for_route",
     "route_operations_for_capabilities",
+    "register_adapter_capability_matrix",
 ]

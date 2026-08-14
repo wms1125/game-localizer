@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
+import os
 import struct
 import subprocess
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,9 +43,10 @@ from .visual_style import (
 
 
 VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION = "hanengine.visual-evidence-annotations/v1"
-VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION = "hanengine.visual-evidence-manifest/v2"
+VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION = "hanengine.visual-evidence-manifest/v3"
 VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION = "hanengine.visual-evidence-report/v2"
 VISUAL_OCR_OBSERVATION_SCHEMA_VERSION = "hanengine.visual-ocr-observation/v2"
+_LEGACY_VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION = "hanengine.visual-evidence-manifest/v2"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -197,6 +202,8 @@ class VisualEvidenceSample:
     observation_reference: str
     reference_regions: tuple[TextRegionObservation, ...]
     candidate_regions: tuple[TextRegionObservation, ...]
+    reference_renderer_observation: RendererObservation | None = None
+    candidate_renderer_observation: RendererObservation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sample_id", _plain_string(self.sample_id, "sample_id"))
@@ -216,9 +223,22 @@ class VisualEvidenceSample:
             if not regions or any(not isinstance(item, TextRegionObservation) for item in regions):
                 raise ValueError(f"{name} must contain TextRegionObservation values")
             object.__setattr__(self, name, regions)
+        renderer_observations = (
+            self.reference_renderer_observation,
+            self.candidate_renderer_observation,
+        )
+        if any(item is None for item in renderer_observations) and any(
+            item is not None for item in renderer_observations
+        ):
+            raise ValueError("reference and candidate renderer observations must be paired")
+        if any(
+            item is not None and not isinstance(item, RendererObservation)
+            for item in renderer_observations
+        ):
+            raise TypeError("renderer observations must be RendererObservation values")
 
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
+        payload: dict[str, JsonValue] = {
             "sample_id": self.sample_id,
             "reference_image": self.reference_image,
             "candidate_image": self.candidate_image,
@@ -227,23 +247,33 @@ class VisualEvidenceSample:
             "reference_regions": [item.to_dict() for item in self.reference_regions],
             "candidate_regions": [item.to_dict() for item in self.candidate_regions],
         }
+        if self.reference_renderer_observation is not None:
+            payload["reference_renderer_observation"] = (
+                self.reference_renderer_observation.to_dict()
+            )
+            payload["candidate_renderer_observation"] = (
+                self.candidate_renderer_observation.to_dict()
+            )
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "VisualEvidenceSample":
         payload = _mapping(payload, "visual_evidence_sample")
-        _exact_keys(
-            payload,
-            (
-                "sample_id",
-                "reference_image",
-                "candidate_image",
-                "observation_source",
-                "observation_reference",
-                "reference_regions",
-                "candidate_regions",
-            ),
-            "visual_evidence_sample",
-        )
+        base_fields = {
+            "sample_id",
+            "reference_image",
+            "candidate_image",
+            "observation_source",
+            "observation_reference",
+            "reference_regions",
+            "candidate_regions",
+        }
+        renderer_fields = {
+            "reference_renderer_observation",
+            "candidate_renderer_observation",
+        }
+        if set(payload) not in (base_fields, base_fields | renderer_fields):
+            raise ValueError("visual_evidence_sample payload fields do not match schema")
         try:
             source = VisualObservationSource(payload["observation_source"])
         except (TypeError, ValueError) as exc:
@@ -258,6 +288,26 @@ class VisualEvidenceSample:
             observation_reference=payload["observation_reference"],
             reference_regions=tuple(TextRegionObservation.from_dict(item) for item in reference),
             candidate_regions=tuple(TextRegionObservation.from_dict(item) for item in candidate),
+            reference_renderer_observation=(
+                RendererObservation.from_dict(
+                    _mapping(
+                        payload["reference_renderer_observation"],
+                        "reference_renderer_observation",
+                    )
+                )
+                if "reference_renderer_observation" in payload
+                else None
+            ),
+            candidate_renderer_observation=(
+                RendererObservation.from_dict(
+                    _mapping(
+                        payload["candidate_renderer_observation"],
+                        "candidate_renderer_observation",
+                    )
+                )
+                if "candidate_renderer_observation" in payload
+                else None
+            ),
         )
 
 
@@ -269,8 +319,11 @@ class VisualEvidenceManifest:
     schema_version: str = VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION:
-            raise ValueError(f"schema_version must be {VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION}")
+        if self.schema_version not in {
+            VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+            _LEGACY_VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+        }:
+            raise ValueError("visual evidence manifest schema_version is unsupported")
         if not isinstance(self.profile, VisualStyleProfile):
             raise TypeError("profile must be VisualStyleProfile")
         if not isinstance(self.policy, VisualHardGatePolicy):
@@ -282,6 +335,14 @@ class VisualEvidenceManifest:
         if len(ids) != len(set(ids)):
             raise ValueError("samples must contain unique sample IDs")
         object.__setattr__(self, "samples", samples)
+        if self.schema_version == VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION and any(
+            item.reference_renderer_observation is None for item in samples
+        ):
+            raise ValueError("visual evidence manifest v3 requires renderer observations")
+        if self.schema_version == _LEGACY_VISUAL_EVIDENCE_MANIFEST_SCHEMA_VERSION and any(
+            item.reference_renderer_observation is not None for item in samples
+        ):
+            raise ValueError("visual evidence manifest v2 must not contain renderer observations")
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -427,6 +488,36 @@ class VisualImageEvidence:
     observation_source: VisualObservationSource
     observation_reference: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "sample_id", _plain_string(self.sample_id, "sample_id"))
+        object.__setattr__(
+            self, "reference_image", normalize_relative_path(self.reference_image)
+        )
+        object.__setattr__(
+            self, "candidate_image", normalize_relative_path(self.candidate_image)
+        )
+        if self.reference_image == self.candidate_image:
+            raise ValueError("reference_image and candidate_image must differ")
+        object.__setattr__(
+            self,
+            "reference_image_sha256",
+            _sha256_string(self.reference_image_sha256, "reference_image_sha256"),
+        )
+        object.__setattr__(
+            self,
+            "candidate_image_sha256",
+            _sha256_string(self.candidate_image_sha256, "candidate_image_sha256"),
+        )
+        object.__setattr__(self, "width", _positive_int(self.width, "width"))
+        object.__setattr__(self, "height", _positive_int(self.height, "height"))
+        if not isinstance(self.observation_source, VisualObservationSource):
+            raise TypeError("observation_source must be VisualObservationSource")
+        object.__setattr__(
+            self,
+            "observation_reference",
+            normalize_relative_path(self.observation_reference),
+        )
+
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "sample_id": self.sample_id,
@@ -439,6 +530,40 @@ class VisualImageEvidence:
             "observation_source": self.observation_source.value,
             "observation_reference": self.observation_reference,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "VisualImageEvidence":
+        payload = _mapping(payload, "visual_image_evidence")
+        _exact_keys(
+            payload,
+            (
+                "sample_id",
+                "reference_image",
+                "candidate_image",
+                "reference_image_sha256",
+                "candidate_image_sha256",
+                "width",
+                "height",
+                "observation_source",
+                "observation_reference",
+            ),
+            "visual_image_evidence",
+        )
+        try:
+            observation_source = VisualObservationSource(payload["observation_source"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("observation_source is invalid") from exc
+        return cls(
+            sample_id=payload["sample_id"],
+            reference_image=payload["reference_image"],
+            candidate_image=payload["candidate_image"],
+            reference_image_sha256=payload["reference_image_sha256"],
+            candidate_image_sha256=payload["candidate_image_sha256"],
+            width=payload["width"],
+            height=payload["height"],
+            observation_source=observation_source,
+            observation_reference=payload["observation_reference"],
+        )
 
 
 class ImageVisualJudge(Protocol):
@@ -507,6 +632,141 @@ class CommandImageVisualJudge:
         return VisualJudgeResult.from_dict(_mapping(payload, "visual_judge_result"))
 
 
+class ZhipuImageVisualJudge:
+    """Call a configured Zhipu GLM vision model for non-text visual review.
+
+    Residual-language OCR and deterministic layout gates run before this judge.
+    A model response can therefore only add an escalation/failure, never bypass
+    a hard gate. Screenshots are JPEG-compressed only for the remote request;
+    evidence hashes and local validation continue to use the original files.
+    """
+
+    DEFAULT_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    DEFAULT_MODEL = "glm-4.6v"
+    DEFAULT_KEY_ENV = "ZHIPU_API_KEY"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str = DEFAULT_MODEL,
+        endpoint: str = DEFAULT_ENDPOINT,
+        timeout_seconds: int = 180,
+        jpeg_quality: int = 90,
+    ) -> None:
+        self.model = _plain_string(model, "model")
+        self.endpoint = _plain_string(endpoint, "endpoint")
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 900:
+            raise ValueError("timeout_seconds must be between 1 and 900")
+        if isinstance(jpeg_quality, bool) or not isinstance(jpeg_quality, int) or not 60 <= jpeg_quality <= 100:
+            raise ValueError("jpeg_quality must be between 60 and 100")
+        key = os.environ.get(self.DEFAULT_KEY_ENV) if api_key is None else api_key
+        self._api_key = _plain_string(key, "api_key")
+        self.timeout_seconds = timeout_seconds
+        self.jpeg_quality = jpeg_quality
+        self.provider_name = f"zhipu:{self.model}"
+
+    @staticmethod
+    def _image_data_url(path: Path, quality: int) -> str:
+        try:
+            from PIL import Image
+
+            encoded = io.BytesIO()
+            with Image.open(path) as image:
+                image.convert("RGB").save(
+                    encoded,
+                    format="JPEG",
+                    quality=quality,
+                    optimize=True,
+                )
+        except (ImportError, OSError) as exc:
+            raise VisualEvidenceError("Pillow is required for the Zhipu visual judge") from exc
+        return "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+
+    def judge_images(
+        self,
+        profile: VisualStyleProfile,
+        comparison: VisualComparison,
+        reference_image: Path,
+        candidate_image: Path,
+    ) -> VisualJudgeResult:
+        prompt = (
+            "你是游戏本地化发布前的视觉复核器。第一张图是原文参考，第二张图是简体中文候选。\n"
+            "先独立观察候选图，再逐个文本区域与参考图对照。必须逐项检查截断、溢出、遮挡、缺字、乱码、"
+            "错误换行和明显破坏可读性的布局/视觉问题。两行文字的字形相互穿插、压住或无法分别阅读算 overlap；"
+            "把正常词语拆成孤立单字行算 bad_wrapping；正文相对参考图或同页标题明显过小、过淡、低对比度算 style_readability。"
+            "不要把 English、Español、日本語等语言名称或 Ren'Py/品牌名当成漏翻；不要根据截图之外的信息猜测。\n"
+            f"配置模型名必须原样写入 model：{self.model}。\n"
+            "只输出且只能输出以下 JSON 字段："
+            '{"decision":"pass|escalate|fail","style_score":0到1,"confidence":0到1,'
+            f'"model":"{self.model}","issues":["问题代码: 截图证据"]}}。'
+            "问题代码只使用 clipped、overflow、overlap、missing_glyphs、garbled_text、"
+            "bad_wrapping、style_readability。没有问题时 decision=pass 且 issues=[]。"
+        )
+        body = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": self._image_data_url(reference_image, self.jpeg_quality)}},
+                        {"type": "image_url", "image_url": {"url": self._image_data_url(candidate_image, self.jpeg_quality)}},
+                    ],
+                }
+            ],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            import requests
+        except ImportError as exc:
+            raise VisualEvidenceError("requests is required for the Zhipu visual judge") from exc
+        response_payload: Mapping[str, object] | None = None
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    self.endpoint,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=body,
+                    timeout=self.timeout_seconds,
+                )
+                if response.status_code == 429 and attempt < 2:
+                    last_error = VisualEvidenceError("Zhipu visual judge is rate limited")
+                    time.sleep((2, 5, 10)[attempt])
+                    continue
+                if not 200 <= response.status_code < 300:
+                    raise VisualEvidenceError(
+                        f"Zhipu visual judge HTTP {response.status_code}: {response.text[:500]}"
+                    )
+                parsed = response.json()
+                response_payload = _mapping(parsed, "zhipu_response")
+                break
+            except (OSError, requests.RequestException) as exc:
+                last_error = exc
+                if attempt == 2:
+                    raise VisualEvidenceError("Zhipu visual judge request failed") from exc
+                time.sleep((2, 5, 10)[attempt])
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise VisualEvidenceError("Zhipu visual judge returned invalid JSON") from exc
+        if response_payload is None:
+            raise VisualEvidenceError("Zhipu visual judge returned no response") from last_error
+        try:
+            text = response_payload["choices"][0]["message"]["content"]
+            result = VisualJudgeResult.from_dict(_mapping(json.loads(text), "visual_judge_result"))
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise VisualEvidenceError("Zhipu visual judge returned invalid JSON") from exc
+        # Do not trust a model's self-reported identity in the persisted report.
+        return VisualJudgeResult(
+            decision=result.decision,
+            style_score=result.style_score,
+            confidence=result.confidence,
+            model=self.model,
+            issues=result.issues,
+        )
+
+
 class _BoundImageJudge:
     def __init__(self, judge: ImageVisualJudge, images: Mapping[str, tuple[Path, Path]]) -> None:
         self.image_judge = judge
@@ -515,6 +775,344 @@ class _BoundImageJudge:
     def judge(self, profile: VisualStyleProfile, comparison: VisualComparison) -> VisualJudgeResult:
         reference, candidate = self.images[comparison.sample_id]
         return self.image_judge.judge_images(profile, comparison, reference, candidate)
+
+
+def _renderer_region_id(region: object, index: int) -> str:
+    region_id = getattr(region, "region_id", None)
+    return region_id if region_id is not None else f"legacy:{index}"
+
+
+def _renderer_rect(region: object) -> dict[str, JsonValue]:
+    return {
+        "x": round(region.x, 3),
+        "y": round(region.y, 3),
+        "width": round(region.width, 3),
+        "height": round(region.height, 3),
+    }
+
+
+def _renderer_intersection(left: object, right: object) -> dict[str, float] | None:
+    x = max(left.x, right.x)
+    y = max(left.y, right.y)
+    width = min(left.x + left.width, right.x + right.width) - x
+    height = min(left.y + left.height, right.y + right.height) - y
+    if width <= 0 or height <= 0:
+        return None
+    area = width * height
+    left_ratio = area / (left.width * left.height)
+    right_ratio = area / (right.width * right.height)
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "area": area,
+        "left_ratio": left_ratio,
+        "right_ratio": right_ratio,
+        "left_visible_ratio": 1.0 - left_ratio,
+        "right_visible_ratio": 1.0 - right_ratio,
+        "left_visible_area": left.width * left.height - area,
+        "right_visible_area": right.width * right.height - area,
+        "smaller_region_ratio": max(left_ratio, right_ratio),
+    }
+
+
+def _renderer_path_contains(left: object, right: object) -> bool:
+    left_path = getattr(left, "render_path", None)
+    right_path = getattr(right, "render_path", None)
+    if left_path is None or right_path is None or left_path == right_path:
+        return False
+    shorter, longer = sorted((left_path, right_path), key=len)
+    return len(shorter) < len(longer) and longer[: len(shorter)] == shorter
+
+
+def _renderer_duplicate_layer(left: object, right: object) -> bool:
+    if " ".join(left.text.split()) != " ".join(right.text.split()):
+        return False
+    geometry_delta = max(
+        abs(left.x - right.x),
+        abs(left.y - right.y),
+        abs(left.width - right.width),
+        abs(left.height - right.height),
+    )
+    if geometry_delta > 2.0:
+        return False
+    if left.baseline is None or right.baseline is None:
+        return True
+    return abs((left.y + left.baseline) - (right.y + right.baseline)) <= 2.0
+
+
+def _renderer_baselines_collide(
+    left: object,
+    right: object,
+    intersection: Mapping[str, float],
+) -> bool:
+    minimum_height = min(left.height, right.height)
+    vertical_ratio = intersection["height"] / minimum_height
+    if vertical_ratio < 0.25:
+        return False
+    if left.baseline is None or right.baseline is None:
+        left_center = left.y + left.height / 2
+        right_center = right.y + right.height / 2
+        estimated_line_height = min(minimum_height, 32.0)
+        return abs(left_center - right_center) <= max(3.0, estimated_line_height * 0.5)
+    left_baseline = left.y + left.baseline
+    right_baseline = right.y + right.baseline
+    estimated_line_height = min(left.baseline, right.baseline, 32.0)
+    return abs(left_baseline - right_baseline) <= max(4.0, estimated_line_height * 0.6)
+
+
+def _renderer_suspicious_overlap(
+    left: object,
+    right: object,
+    intersection: Mapping[str, float] | None,
+) -> bool:
+    return bool(
+        intersection is not None
+        and intersection["area"] >= 16.0
+        and intersection["smaller_region_ratio"] >= 0.20
+        and not _renderer_path_contains(left, right)
+        and not _renderer_duplicate_layer(left, right)
+        and _renderer_baselines_collide(left, right, intersection)
+    )
+
+
+def _renderer_pair_map(
+    observation: RendererObservation,
+    region_ids: Sequence[str] | None = None,
+) -> dict[tuple[str, str], dict[str, float]]:
+    regions = observation.text_regions
+    if region_ids is None:
+        region_ids = tuple(
+            _renderer_region_id(region, index) for index, region in enumerate(regions)
+        )
+    else:
+        region_ids = tuple(region_ids)
+        if len(region_ids) != len(regions):
+            raise ValueError("renderer region IDs must match text regions")
+    overlaps: dict[tuple[str, str], dict[str, float]] = {}
+    for left_index, left in enumerate(regions):
+        for right_index in range(left_index + 1, len(regions)):
+            right = regions[right_index]
+            intersection = _renderer_intersection(left, right)
+            if not _renderer_suspicious_overlap(left, right, intersection):
+                continue
+            pair = tuple(
+                sorted(
+                    (
+                        region_ids[left_index],
+                        region_ids[right_index],
+                    )
+                )
+            )
+            overlaps[pair] = intersection
+    return overlaps
+
+
+def _legacy_renderer_region_ids(
+    reference: RendererObservation,
+    candidate: RendererObservation,
+) -> tuple[str, ...]:
+    """Match v1 nodes to reference geometry without inventing hierarchy."""
+
+    reference_regions = reference.text_regions
+    candidate_regions = candidate.text_regions
+    unmatched_reference = set(range(len(reference_regions)))
+    unmatched_candidate = set(range(len(candidate_regions)))
+    assignments: dict[int, int] = {}
+
+    def normalized_text(region: object) -> str:
+        return " ".join(region.text.split())
+
+    def geometry_key(candidate_index: int, reference_index: int) -> tuple[float, float, int, int]:
+        source = reference_regions[reference_index]
+        target = candidate_regions[candidate_index]
+        position_delta = abs(source.x - target.x) + abs(source.y - target.y)
+        size_delta = abs(source.width - target.width) + abs(source.height - target.height)
+        return (position_delta, size_delta, candidate_index, reference_index)
+
+    for require_same_text in (True, False):
+        edges = []
+        for candidate_index in unmatched_candidate:
+            for reference_index in unmatched_reference:
+                if require_same_text and (
+                    not normalized_text(candidate_regions[candidate_index])
+                    or normalized_text(candidate_regions[candidate_index])
+                    != normalized_text(reference_regions[reference_index])
+                ):
+                    continue
+                edges.append(geometry_key(candidate_index, reference_index))
+        for _, _, candidate_index, reference_index in sorted(edges):
+            if (
+                candidate_index not in unmatched_candidate
+                or reference_index not in unmatched_reference
+            ):
+                continue
+            assignments[candidate_index] = reference_index
+            unmatched_candidate.remove(candidate_index)
+            unmatched_reference.remove(reference_index)
+
+    return tuple(
+        (
+            f"legacy:{assignments[index]}"
+            if index in assignments
+            else f"candidate:{index}"
+        )
+        for index in range(len(candidate_regions))
+    )
+
+
+def _renderer_region_details(region: object, region_id: str) -> dict[str, JsonValue]:
+    text = " ".join(region.text.split())
+    absolute_baseline = (
+        None if region.baseline is None else round(region.y + region.baseline, 3)
+    )
+    return {
+        "region_id": region_id,
+        "text": text[:80],
+        "rect": _renderer_rect(region),
+        "baseline": absolute_baseline,
+        "render_path": (
+            None if region.render_path is None else list(region.render_path)
+        ),
+        "render_depth": (
+            None if region.render_path is None else len(region.render_path)
+        ),
+        "z_index": region.z_index,
+    }
+
+
+def run_renderer_overlap_hard_gate(
+    sample_id: str,
+    reference: RendererObservation,
+    candidate: RendererObservation,
+    *,
+    allowed_pairs: Sequence[Sequence[str]] = (),
+) -> tuple[VisualCheck, ...]:
+    """Block new or materially worsened renderer text collisions."""
+
+    sample_id = _plain_string(sample_id, "sample_id")
+    if not isinstance(reference, RendererObservation) or not isinstance(
+        candidate, RendererObservation
+    ):
+        raise TypeError("renderer overlap gate requires RendererObservation values")
+    if (
+        reference.coordinate_space != candidate.coordinate_space
+        or reference.viewport_width != candidate.viewport_width
+        or reference.viewport_height != candidate.viewport_height
+    ):
+        return (
+            VisualCheck(
+                "renderer_observation_geometry",
+                False,
+                "reference and candidate renderer observation geometry differs",
+                details={"sample_id": sample_id},
+            ),
+        )
+    candidate_ids = (
+        _legacy_renderer_region_ids(reference, candidate)
+        if reference.text_regions
+        and candidate.text_regions
+        and reference.text_regions[0].region_id is None
+        and candidate.text_regions[0].region_id is None
+        else tuple(
+            _renderer_region_id(region, index)
+            for index, region in enumerate(candidate.text_regions)
+        )
+    )
+    candidate_regions = dict(zip(candidate_ids, candidate.text_regions, strict=True))
+    normalized_allowed = {
+        tuple(sorted(tuple(pair))) for pair in allowed_pairs
+    }
+    invalid_allowed = sorted(
+        pair
+        for pair in normalized_allowed
+        if len(pair) != 2 or not set(pair).issubset(candidate_regions)
+    )
+    if invalid_allowed:
+        return (
+            VisualCheck(
+                "renderer_overlap_allowlist",
+                False,
+                "renderer overlap allowlist references unknown regions",
+                details={
+                    "sample_id": sample_id,
+                    "unknown_pairs": [list(pair) for pair in invalid_allowed],
+                },
+            ),
+        )
+    reference_overlaps = _renderer_pair_map(reference)
+    candidate_overlaps = _renderer_pair_map(candidate, candidate_ids)
+    failures: list[VisualCheck] = []
+    for pair, intersection in sorted(candidate_overlaps.items()):
+        if pair in normalized_allowed:
+            continue
+        previous = reference_overlaps.get(pair)
+        materially_worse = previous is None or (
+            intersection["area"] >= previous["area"] + 16.0
+            and intersection["smaller_region_ratio"]
+            >= previous["smaller_region_ratio"] + 0.15
+        )
+        if not materially_worse:
+            continue
+        left = candidate_regions[pair[0]]
+        right = candidate_regions[pair[1]]
+        foreground = (
+            None
+            if all(candidate_regions[region_id].z_index is None for region_id in pair)
+            else max(
+                pair,
+                key=lambda region_id: (
+                    candidate_regions[region_id].z_index
+                    if candidate_regions[region_id].z_index is not None
+                    else -1
+                ),
+            )
+        )
+        overlap_details = {
+            key: round(value, 4) for key, value in intersection.items()
+        }
+        failures.append(
+            VisualCheck(
+                "renderer_text_overlap",
+                False,
+                (
+                    f"renderer text regions overlap in {sample_id}: "
+                    f"{pair[0]} and {pair[1]} "
+                    f"({intersection['smaller_region_ratio']:.1%} of smaller region)"
+                ),
+                region_id=pair[0],
+                details={
+                    "sample_id": sample_id,
+                    "regions": [
+                        _renderer_region_details(left, pair[0]),
+                        _renderer_region_details(right, pair[1]),
+                    ],
+                    "intersection": overlap_details,
+                    "reference_intersection": (
+                        None
+                        if previous is None
+                        else {key: round(value, 4) for key, value in previous.items()}
+                    ),
+                    "foreground_region_id": foreground,
+                },
+            )
+        )
+    if failures:
+        return tuple(failures)
+    return (
+        VisualCheck(
+            "renderer_text_overlap",
+            True,
+            f"renderer text overlap scan passed for {sample_id}",
+            details={
+                "sample_id": sample_id,
+                "candidate_pair_count": len(candidate_overlaps),
+                "reference_pair_count": len(reference_overlaps),
+                "renderer_schema_version": candidate.schema_version,
+            },
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -528,6 +1126,57 @@ class VisualEvidenceReport:
     gate: VisualGateResult
     judge_provider: str | None
     schema_version: str = VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION:
+            raise ValueError(
+                f"schema_version must be {VISUAL_EVIDENCE_REPORT_SCHEMA_VERSION}"
+            )
+        object.__setattr__(self, "created_at", _plain_string(self.created_at, "created_at"))
+        object.__setattr__(
+            self,
+            "authorization_reference",
+            _plain_string(self.authorization_reference, "authorization_reference"),
+        )
+        object.__setattr__(
+            self,
+            "manifest_sha256",
+            _sha256_string(self.manifest_sha256, "manifest_sha256"),
+        )
+        if not isinstance(self.profile, VisualStyleProfile):
+            raise TypeError("profile must be VisualStyleProfile")
+        if not isinstance(self.policy, VisualHardGatePolicy):
+            raise TypeError("policy must be VisualHardGatePolicy")
+        images = tuple(self.images)
+        if not images or any(not isinstance(item, VisualImageEvidence) for item in images):
+            raise ValueError("images must contain VisualImageEvidence values")
+        sample_ids = [item.sample_id for item in images]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("images must contain unique sample IDs")
+        object.__setattr__(self, "images", images)
+        if not isinstance(self.gate, VisualGateResult):
+            raise TypeError("gate must be VisualGateResult")
+        comparison_ids = [item.sample_id for item in self.gate.comparisons]
+        if tuple(sample_ids) != self.profile.scenarios or comparison_ids != sample_ids:
+            raise ValueError(
+                "report profile, images, and gate comparisons must contain the same ordered samples"
+            )
+        comparisons = {
+            item.sample_id: item for item in self.gate.comparisons
+        }
+        for image in images:
+            comparison = comparisons[image.sample_id]
+            if (
+                image.reference_image_sha256 != comparison.reference_image_sha256
+                or image.candidate_image_sha256 != comparison.candidate_image_sha256
+            ):
+                raise ValueError("report image hashes must match gate comparisons")
+        if self.judge_provider is not None:
+            object.__setattr__(
+                self,
+                "judge_provider",
+                _plain_string(self.judge_provider, "judge_provider"),
+            )
 
     @property
     def decision(self) -> VisualGateDecision:
@@ -545,6 +1194,37 @@ class VisualEvidenceReport:
             "gate": self.gate.to_dict(),
             "judge_provider": self.judge_provider,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "VisualEvidenceReport":
+        payload = _mapping(payload, "visual_evidence_report")
+        _exact_keys(
+            payload,
+            (
+                "schema_version",
+                "created_at",
+                "authorization_reference",
+                "manifest_sha256",
+                "profile",
+                "policy",
+                "images",
+                "gate",
+                "judge_provider",
+            ),
+            "visual_evidence_report",
+        )
+        images = _mapping_sequence(payload["images"], "images")
+        return cls(
+            schema_version=payload["schema_version"],
+            created_at=payload["created_at"],
+            authorization_reference=payload["authorization_reference"],
+            manifest_sha256=payload["manifest_sha256"],
+            profile=VisualStyleProfile.from_dict(_mapping(payload["profile"], "profile")),
+            policy=VisualHardGatePolicy.from_dict(_mapping(payload["policy"], "policy")),
+            images=tuple(VisualImageEvidence.from_dict(item) for item in images),
+            gate=VisualGateResult.from_dict(_mapping(payload["gate"], "gate")),
+            judge_provider=payload["judge_provider"],
+        )
 
 
 def load_visual_evidence_manifest(path: Path) -> VisualEvidenceManifest:
@@ -664,6 +1344,7 @@ def _verified_capture_variant(
             raise VisualEvidenceError(
                 f"capture report {variant} renderer viewport does not match screenshot"
             )
+        screenshot["renderer_observation"] = observation
     return source_sha256, tuple(screenshots)
 
 
@@ -769,6 +1450,12 @@ def prepare_visual_evidence_manifest(
                 observation_reference=annotations_reference,
                 reference_regions=annotation.reference_regions,
                 candidate_regions=annotation.candidate_regions,
+                reference_renderer_observation=reference_image[
+                    "renderer_observation"
+                ],
+                candidate_renderer_observation=candidate_image[
+                    "renderer_observation"
+                ],
             )
         )
     manifest = VisualEvidenceManifest(
@@ -822,6 +1509,8 @@ def run_visual_evidence(
     manifest_path = _regular_input_file(manifest_path, "manifest_path")
     root = manifest_path.parent.resolve(strict=True)
     manifest = load_visual_evidence_manifest(manifest_path)
+    if isinstance(judge, ZhipuImageVisualJudge) and ocr_provider is None:
+        raise ValueError("Zhipu visual judge requires a local OCR provider")
     if (
         isinstance(ocr_minimum_confidence, bool)
         or not isinstance(ocr_minimum_confidence, (int, float))
@@ -846,8 +1535,27 @@ def run_visual_evidence(
     comparisons: list[VisualComparison] = []
     image_records: list[VisualImageEvidence] = []
     image_paths: dict[str, tuple[Path, Path]] = {}
+    renderer_checks: list[VisualCheck] = []
     ocr_checks: list[VisualCheck] = []
     ocr_samples: list[dict[str, JsonValue]] = []
+    if isinstance(judge, ZhipuImageVisualJudge):
+        missing_renderer_samples = [
+            sample.sample_id
+            for sample in manifest.samples
+            if sample.reference_renderer_observation is None
+        ]
+        renderer_checks.append(
+            VisualCheck(
+                "renderer_observation_coverage",
+                not missing_renderer_samples,
+                (
+                    "all model-reviewed scenes contain renderer observations"
+                    if not missing_renderer_samples
+                    else "model review requires renderer observations for every scene"
+                ),
+                details={"missing_sample_ids": missing_renderer_samples},
+            )
+        )
     for sample in manifest.samples:
         reference = _resolve_evidence_file(root, sample.reference_image)
         candidate = _resolve_evidence_file(root, sample.candidate_image)
@@ -855,6 +1563,18 @@ def run_visual_evidence(
         candidate_size = _png_size(candidate)
         if reference_size != candidate_size:
             raise VisualEvidenceError(f"sample {sample.sample_id} images must have identical dimensions")
+        for observation in (
+            sample.reference_renderer_observation,
+            sample.candidate_renderer_observation,
+        ):
+            if observation is not None and (
+                observation.coordinate_space != "capture_pixels"
+                or (observation.viewport_width, observation.viewport_height)
+                != reference_size
+            ):
+                raise VisualEvidenceError(
+                    f"sample {sample.sample_id} renderer viewport does not match images"
+                )
         reference_hash = _sha256_file(reference)
         candidate_hash = _sha256_file(candidate)
         comparisons.append(
@@ -880,6 +1600,17 @@ def run_visual_evidence(
             )
         )
         image_paths[sample.sample_id] = (reference, candidate)
+        if sample.reference_renderer_observation is not None:
+            renderer_checks.extend(
+                run_renderer_overlap_hard_gate(
+                    sample.sample_id,
+                    sample.reference_renderer_observation,
+                    sample.candidate_renderer_observation,
+                    allowed_pairs=manifest.policy.allowed_renderer_overlap_pairs.get(
+                        sample.sample_id, ()
+                    ),
+                )
+            )
         if ocr_provider is not None:
             try:
                 reference_frame = ocr_provider.recognize(
@@ -1017,7 +1748,8 @@ def run_visual_evidence(
         comparisons,
         judge=bound_judge,
         policy=manifest.policy,
-        extra_hard_checks=ocr_checks,
+        judge_can_authorize_pass=not isinstance(judge, ZhipuImageVisualJudge),
+        extra_hard_checks=(*renderer_checks, *ocr_checks),
     )
     report = VisualEvidenceReport(
         created_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -1036,6 +1768,7 @@ def run_visual_evidence(
 __all__ = [
     "CommandImageVisualJudge",
     "ImageVisualJudge",
+    "ZhipuImageVisualJudge",
     "ManualVisualAnnotationSample",
     "ManualVisualAnnotations",
     "VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION",
@@ -1051,5 +1784,6 @@ __all__ = [
     "load_manual_visual_annotations",
     "load_visual_evidence_manifest",
     "prepare_visual_evidence_manifest",
+    "run_renderer_overlap_hard_gate",
     "run_visual_evidence",
 ]

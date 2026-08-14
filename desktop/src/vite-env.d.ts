@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 type ProjectNode = {
   name: string;
   relativePath: string;
@@ -31,6 +33,17 @@ type DetectionCandidate = {
   maturity?: string;
   limitations?: string[];
   evidence?: Array<Record<string, unknown>>;
+  capability_matrix?: CapabilityMatrix;
+};
+
+type CapabilityMatrix = {
+  schema_version: "hanengine.adapter-capabilities/v1";
+  capabilities: Array<{
+    capability: "native_text_replace" | "dynamic_text" | "raster_text" | "detect_only";
+    status: "implemented" | "verified" | "detect_only" | "unsupported";
+    reason: string;
+    evidence: string[];
+  }>;
 };
 
 type DetectionReport = {
@@ -39,6 +52,7 @@ type DetectionReport = {
   candidates?: DetectionCandidate[];
   candidate?: DetectionCandidate;
   capabilities?: string[];
+  capability_matrix?: CapabilityMatrix;
   allowed_operations?: string[];
   hanguard?: Record<string, unknown> | null;
   task_id?: string;
@@ -79,6 +93,33 @@ type PythonEvent = { taskId: string; channel?: "workflow" | "control"; type: str
 type AuthUser = { user_id: string; username: string; display_name: string };
 type AuthStatus = { authenticated: boolean; needsSetup: boolean; user: AuthUser | null; user_count?: number };
 type AuthCredentials = { username: string; password: string; display_name?: string };
+type VisualReportSummary = {
+  decision: "pass" | "blocked" | "escalate";
+  hardGatePassed: boolean;
+  hardGatePassedCount: number;
+  hardGateCount: number;
+  judgeProvider: string | null;
+  judgeModels: string[];
+  reasons: string[];
+  issues: string[];
+  scenes: Array<{ sampleId: string; width: number; height: number }>;
+};
+type VisualImagePair = {
+  sampleId: string;
+  width: number;
+  height: number;
+  referenceDataUrl: string;
+  candidateDataUrl: string;
+};
+type VisualReviewProof = {
+  schemaVersion: "hanengine.visual-review-proof/v1";
+  proofPath: string;
+  reviewedAt: string;
+  reviewer: AuthUser;
+  reportSha256: string;
+  sceneCount: number;
+  decision: "pass";
+};
 
 interface Window {
   hanengine: {
@@ -93,6 +134,10 @@ interface Window {
     scanProject: (rootPath: string) => Promise<ProjectNode[]>;
     readCatalog: (filePath: string) => Promise<CatalogPayload>;
     writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;
+    readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
+    readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
+    readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;
+    createVisualReviewProof: (filePath: string, confirmedSampleIds: string[]) => Promise<VisualReviewProof>;
     runPython: (taskId: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
     listTasks: (stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;
     showTask: (taskId: string, stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;

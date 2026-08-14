@@ -10,6 +10,7 @@ import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import cli
 from game_localizer.hanengine.visual import OcrBox, OcrFrame
@@ -18,11 +19,23 @@ from game_localizer.hanengine.visual_evidence import (
     VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION,
     VisualEvidenceError,
     VisualEvidenceManifest,
+    VisualEvidenceReport,
+    ZhipuImageVisualJudge,
     load_visual_evidence_manifest,
     prepare_visual_evidence_manifest,
+    run_renderer_overlap_hard_gate,
     run_visual_evidence,
 )
-from game_localizer.hanengine.visual_style import VisualGateDecision
+from game_localizer.hanengine.renpy_visual_capture import (
+    RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION,
+    RendererObservation,
+    RendererTextRegion,
+)
+from game_localizer.hanengine.visual_style import (
+    VisualComparison,
+    VisualGateDecision,
+    VisualGateResult,
+)
 
 
 HASH_A = "a" * 64
@@ -65,6 +78,40 @@ class FakeOcrProvider:
 
 
 class VisualEvidenceTests(unittest.TestCase):
+    def renderer_region(
+        self,
+        region_id,
+        text,
+        x,
+        y,
+        width,
+        height=20,
+        *,
+        baseline=15,
+        render_path=(0,),
+        z_index=0,
+    ):
+        return RendererTextRegion(
+            text=text,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            line_count=1,
+            baseline=baseline,
+            region_id=region_id,
+            render_path=render_path,
+            z_index=z_index,
+        )
+
+    def renderer_observation(self, *regions, viewport=(320, 180)):
+        return RendererObservation(
+            viewport_width=viewport[0],
+            viewport_height=viewport[1],
+            text_regions=regions,
+            schema_version=RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION,
+        )
+
     def manifest(self, *, missing=(), candidate_width=20):
         region = {
             "region_id": "primary-action",
@@ -266,6 +313,7 @@ class VisualEvidenceTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(VisualEvidenceManifest.from_dict(manifest.to_dict()), manifest)
+        self.assertEqual(VisualEvidenceReport.from_dict(payload), report)
         self.assertEqual(report.decision, VisualGateDecision.ESCALATE)
         self.assertEqual(payload["gate"]["reasons"], ["visual_judge_unavailable"])
         self.assertEqual(payload["images"][0]["width"], 32)
@@ -279,6 +327,32 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertNotIn(str(root), serialized)
         self.assertNotIn("image_bytes", serialized)
 
+        tampered = json.loads(json.dumps(payload))
+        tampered["gate"]["comparisons"][0]["candidate_image_sha256"] = HASH_A
+        with self.assertRaisesRegex(ValueError, "image hashes"):
+            VisualEvidenceReport.from_dict(tampered)
+
+    def test_manifest_versions_reject_mixed_renderer_shapes(self):
+        legacy_with_renderer = self.manifest()
+        observation = self.renderer_observation(
+            self.renderer_region("title", "开始", 20, 40, 80)
+        ).to_dict()
+        legacy_with_renderer["samples"][0][
+            "reference_renderer_observation"
+        ] = observation
+        legacy_with_renderer["samples"][0][
+            "candidate_renderer_observation"
+        ] = observation
+        with self.assertRaisesRegex(ValueError, "v2 must not contain"):
+            VisualEvidenceManifest.from_dict(legacy_with_renderer)
+
+        current_without_renderer = self.manifest()
+        current_without_renderer["schema_version"] = (
+            "hanengine.visual-evidence-manifest/v3"
+        )
+        with self.assertRaisesRegex(ValueError, "v3 requires"):
+            VisualEvidenceManifest.from_dict(current_without_renderer)
+
     def test_prepare_builds_manual_manifest_from_verified_capture_report(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -291,6 +365,172 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertEqual(len(manifest.samples), 1)
         self.assertEqual(payload["samples"][0]["observation_source"], "manual")
         self.assertEqual(payload["samples"][0]["observation_reference"], "annotations.json")
+        self.assertEqual(
+            payload["samples"][0]["reference_renderer_observation"]["schema_version"],
+            "hanengine.renpy-renderer-observation/v1",
+        )
+        self.assertEqual(
+            payload["samples"][0]["candidate_renderer_observation"]["text_regions"][0][
+                "text"
+            ],
+            "main_menu",
+        )
+        self.assertEqual(VisualEvidenceManifest.from_dict(payload), manifest)
+
+    def test_renderer_overlap_gate_ignores_normal_layout_layers(self):
+        parent = self.renderer_region(
+            "parent", "设置", 20, 20, 200, 100, render_path=(0,), z_index=0
+        )
+        child = self.renderer_region(
+            "child", "显示", 30, 25, 60, render_path=(0, 1), z_index=1
+        )
+        shadow = self.renderer_region(
+            "shadow", "显示", 31, 26, 60, render_path=(2,), z_index=2
+        )
+        allowed_left = self.renderer_region(
+            "allowed-left", "上一页", 180, 130, 60, render_path=(3,), z_index=3
+        )
+        allowed_right = self.renderer_region(
+            "allowed-right", "下一页", 220, 130, 60, render_path=(4,), z_index=4
+        )
+        observation = self.renderer_observation(
+            parent, child, shadow, allowed_left, allowed_right
+        )
+
+        checks = run_renderer_overlap_hard_gate(
+            "settings",
+            observation,
+            observation,
+            allowed_pairs=(("allowed-left", "allowed-right"),),
+        )
+
+        self.assertTrue(all(check.passed for check in checks))
+
+    def test_renderer_overlap_gate_ignores_unchanged_reference_overlap(self):
+        left = self.renderer_region("left", "保存", 40, 50, 80, render_path=(0,), z_index=0)
+        right = self.renderer_region("right", "读取", 100, 50, 80, render_path=(1,), z_index=1)
+        reference = self.renderer_observation(left, right)
+        candidate = self.renderer_observation(
+            self.renderer_region("left", "保存", 40, 50, 80, render_path=(0,), z_index=0),
+            self.renderer_region("right", "读取", 100, 50, 80, render_path=(1,), z_index=1),
+        )
+
+        checks = run_renderer_overlap_hard_gate("save", reference, candidate)
+
+        self.assertTrue(all(check.passed for check in checks))
+
+    def test_renderer_overlap_gate_ignores_different_text_baselines(self):
+        reference = self.renderer_observation(
+            self.renderer_region("heading", "设置", 20, 20, 200, 100, baseline=15),
+            self.renderer_region(
+                "option",
+                "显示",
+                30,
+                75,
+                180,
+                60,
+                baseline=45,
+                render_path=(1,),
+                z_index=1,
+            ),
+        )
+
+        checks = run_renderer_overlap_hard_gate("settings", reference, reference)
+
+        self.assertTrue(all(check.passed for check in checks))
+
+    def test_renderer_overlap_gate_honors_explicit_allowed_pair(self):
+        reference = self.renderer_observation(
+            self.renderer_region("left", "Previous", 20, 40, 80, render_path=(0,)),
+            self.renderer_region("right", "Next", 120, 40, 80, render_path=(1,), z_index=1),
+        )
+        candidate = self.renderer_observation(
+            self.renderer_region("left", "上一页", 20, 40, 100, render_path=(0,)),
+            self.renderer_region("right", "下一页", 90, 40, 100, render_path=(1,), z_index=1),
+        )
+
+        checks = run_renderer_overlap_hard_gate(
+            "save", reference, candidate, allowed_pairs=(("right", "left"),)
+        )
+
+        self.assertTrue(all(check.passed for check in checks))
+
+    def test_renderer_overlap_gate_blocks_new_same_baseline_overlap_with_details(self):
+        reference = self.renderer_observation(
+            self.renderer_region("left", "开始游戏", 20, 40, 80, render_path=(0,), z_index=0),
+            self.renderer_region("right", "读取游戏", 120, 40, 80, render_path=(1,), z_index=1),
+        )
+        candidate = self.renderer_observation(
+            self.renderer_region("left", "开始游戏", 20, 40, 100, render_path=(0,), z_index=0),
+            self.renderer_region("right", "读取游戏", 90, 40, 100, render_path=(1,), z_index=7),
+        )
+
+        checks = run_renderer_overlap_hard_gate("main-menu", reference, candidate)
+
+        self.assertEqual(len(checks), 1)
+        self.assertFalse(checks[0].passed)
+        self.assertEqual(checks[0].code, "renderer_text_overlap")
+        self.assertEqual(checks[0].details["sample_id"], "main-menu")
+        self.assertEqual(checks[0].details["foreground_region_id"], "right")
+        self.assertEqual(checks[0].details["regions"][0]["rect"]["x"], 20)
+        self.assertGreater(checks[0].details["intersection"]["smaller_region_ratio"], 0.2)
+        self.assertEqual(json.loads(json.dumps(checks[0].to_dict())), checks[0].to_dict())
+
+    def test_renderer_overlap_gate_blocks_materially_worsened_reference_overlap(self):
+        reference = self.renderer_observation(
+            self.renderer_region("left", "保存", 20, 40, 100, render_path=(0,)),
+            self.renderer_region("right", "读取", 100, 40, 100, render_path=(1,), z_index=1),
+        )
+        candidate = self.renderer_observation(
+            self.renderer_region("left", "保存", 20, 40, 100, render_path=(0,)),
+            self.renderer_region("right", "读取", 70, 40, 100, render_path=(1,), z_index=1),
+        )
+
+        checks = run_renderer_overlap_hard_gate("save", reference, candidate)
+
+        self.assertFalse(checks[0].passed)
+        self.assertIsNotNone(checks[0].details["reference_intersection"])
+
+    def test_renderer_overlap_gate_blocks_before_image_judge(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = self.manifest()
+            payload["schema_version"] = "hanengine.visual-evidence-manifest/v3"
+            sample = payload["samples"][0]
+            sample["reference_renderer_observation"] = self.renderer_observation(
+                self.renderer_region("left", "Start", 2, 2, 10, 8, baseline=6, render_path=(0,)),
+                self.renderer_region("right", "Load", 20, 2, 10, 8, baseline=6, render_path=(1,), z_index=1),
+                viewport=(32, 18),
+            ).to_dict()
+            sample["candidate_renderer_observation"] = self.renderer_observation(
+                self.renderer_region("left", "开始", 2, 2, 16, 8, baseline=6, render_path=(0,)),
+                self.renderer_region("right", "读取", 12, 2, 16, 8, baseline=6, render_path=(1,), z_index=1),
+                viewport=(32, 18),
+            ).to_dict()
+            manifest = self.write_fixture(root, payload)
+            judge = FakeImageJudge()
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                judge=judge,
+            )
+            restored = json.loads((root / "report.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
+        self.assertEqual(judge.calls, 0)
+        self.assertIn("renderer_text_overlap", report.gate.hard_gate.failed_codes)
+        overlap = next(
+            check
+            for check in restored["gate"]["hard_gate"]["checks"]
+            if check["code"] == "renderer_text_overlap"
+        )
+        self.assertEqual(overlap["details"]["sample_id"], "main-menu")
+        self.assertEqual(
+            json.loads(json.dumps(report.gate.to_dict())),
+            VisualGateResult.from_dict(restored["gate"]).to_dict(),
+        )
 
     def test_prepare_rejects_capture_without_semantic_alignment(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -567,6 +807,138 @@ class VisualEvidenceTests(unittest.TestCase):
         self.assertEqual(report.judge_provider, "fixture-command")
         self.assertEqual(report.gate.judge_results[0].model, "fixture-v1")
 
+    def test_zhipu_judge_reads_key_from_environment(self):
+        with patch.dict("os.environ", {"ZHIPU_API_KEY": "test-key"}):
+            judge = ZhipuImageVisualJudge()
+
+        self.assertEqual(judge.model, "glm-4.6v")
+        self.assertEqual(judge.provider_name, "zhipu:glm-4.6v")
+
+    def test_zhipu_judge_cannot_run_without_local_ocr_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            judge = ZhipuImageVisualJudge(api_key="test-key")
+
+            with self.assertRaisesRegex(ValueError, "requires a local OCR provider"):
+                run_visual_evidence(
+                    manifest,
+                    root / "report.json",
+                    authorization_reference="repository-owned-test-fixture",
+                    judge=judge,
+                )
+
+    def test_zhipu_judge_parses_response_and_overrides_model_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = self.write_fixture(root)
+            manifest = load_visual_evidence_manifest(manifest_path)
+            sample = manifest.samples[0]
+            comparison = VisualComparison(
+                sample_id=sample.sample_id,
+                reference_image_sha256=HASH_A,
+                candidate_image_sha256=HASH_B,
+                reference_regions=sample.reference_regions,
+                candidate_regions=sample.candidate_regions,
+            )
+            response = Mock(status_code=200)
+            response.json.return_value = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "decision": "pass",
+                                    "style_score": 0.95,
+                                    "confidence": 0.93,
+                                    "model": "untrusted-self-report",
+                                    "issues": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+            judge = ZhipuImageVisualJudge(api_key="test-key")
+            with patch("requests.post", return_value=response) as post:
+                result = judge.judge_images(
+                    manifest.profile,
+                    comparison,
+                    root / sample.reference_image,
+                    root / sample.candidate_image,
+                )
+
+        self.assertEqual(result.model, "glm-4.6v")
+        self.assertEqual(result.decision.value, "pass")
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "glm-4.6v")
+        prompt = post.call_args.kwargs["json"]["messages"][0]["content"][0]["text"]
+        self.assertNotIn(sample.sample_id, prompt)
+        self.assertIn("低对比度", prompt)
+
+    def test_zhipu_pass_requires_human_review_in_the_release_gate(self):
+        class PassingZhipu(ZhipuImageVisualJudge):
+            def judge_images(self, profile, comparison, reference_image, candidate_image):
+                from game_localizer.hanengine.visual_style import VisualJudgeDecision, VisualJudgeResult
+
+                return VisualJudgeResult(VisualJudgeDecision.PASS, 0.95, 0.93, self.model)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = self.manifest()
+            payload["schema_version"] = "hanengine.visual-evidence-manifest/v3"
+            observation = self.renderer_observation(
+                self.renderer_region("title", "开始", 2, 2, 10, 8, baseline=6),
+                viewport=(32, 18),
+            ).to_dict()
+            payload["samples"][0]["reference_renderer_observation"] = observation
+            payload["samples"][0]["candidate_renderer_observation"] = observation
+            manifest = self.write_fixture(root, payload)
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "开始", 0.99),), "bg")
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                judge=PassingZhipu(api_key="test-key"),
+                ocr_provider=FakeOcrProvider(frame, frame),
+                ocr_language="chi_sim+eng",
+                ocr_image_loader=lambda path: path,
+            )
+
+        self.assertEqual(report.decision, VisualGateDecision.ESCALATE)
+        self.assertIn("visual_judge_pass_requires_human_review", report.gate.reasons)
+
+    def test_zhipu_is_blocked_before_model_call_without_renderer_observation(self):
+        class CountingZhipu(ZhipuImageVisualJudge):
+            def __init__(self):
+                super().__init__(api_key="test-key")
+                self.calls = 0
+
+            def judge_images(self, profile, comparison, reference_image, candidate_image):
+                self.calls += 1
+                raise AssertionError("renderer coverage must block before GLM")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            frame = OcrFrame((OcrBox(1, 2, 10, 5, "开始", 0.99),), "bg")
+            judge = CountingZhipu()
+
+            report = run_visual_evidence(
+                manifest,
+                root / "report.json",
+                authorization_reference="repository-owned-test-fixture",
+                judge=judge,
+                ocr_provider=FakeOcrProvider(frame, frame),
+                ocr_language="chi_sim+eng",
+                ocr_image_loader=lambda path: path,
+            )
+
+        self.assertEqual(report.decision, VisualGateDecision.BLOCKED)
+        self.assertEqual(judge.calls, 0)
+        self.assertIn(
+            "renderer_observation_coverage", report.gate.hard_gate.failed_codes
+        )
+
     def test_runner_rejects_different_image_dimensions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -627,6 +999,29 @@ class VisualEvidenceTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn("require --ocr-language", stderr.getvalue())
+
+    def test_cli_requires_ocr_with_zhipu_judge(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.write_fixture(root)
+            arguments = [
+                "verify",
+                "--manifest",
+                str(manifest),
+                "--output",
+                str(root / "report.json"),
+                "--authorization-reference",
+                "repository-owned-test-fixture",
+                "--authorized",
+                "--zhipu-model",
+                "glm-4.6v",
+            ]
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                result = cli.run_visual(arguments)
+
+        self.assertEqual(result, 1)
+        self.assertIn("requires --ocr-language", stderr.getvalue())
 
     def test_cli_rejects_invalid_ocr_minimum_confidence(self):
         with tempfile.TemporaryDirectory() as temporary:

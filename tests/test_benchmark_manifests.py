@@ -284,7 +284,10 @@ class BenchmarkManifestTests(unittest.TestCase):
     def test_git_attributes_are_exact_and_pin_every_managed_json_to_lf(self):
         self.assertEqual(
             (ROOT / ".gitattributes").read_bytes(),
-            b"/benchmarks/*.json text eol=lf\n",
+            (
+                b"/benchmarks/*.json text eol=lf\n"
+                b"/benchmarks/visual_judge_controlled/*.json text eol=lf\n"
+            ),
         )
         paths = [f"benchmarks/{name}" for name in MANAGED_JSON]
         completed = subprocess.run(

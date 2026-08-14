@@ -230,6 +230,7 @@ def _adapter_payload(metadata: AdapterMetadata) -> dict[str, object]:
         "maturity": metadata.maturity.value,
         "platforms": list(metadata.platforms),
         "capabilities": sorted(item.value for item in metadata.capabilities),
+        "capability_matrix": metadata.capability_matrix.to_dict(),
         "known_limitations": list(metadata.known_limitations),
     }
 

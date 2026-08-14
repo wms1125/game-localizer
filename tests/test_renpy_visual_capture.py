@@ -12,6 +12,7 @@ from game_localizer.hanengine.renpy_visual_capture import (
     CaptureAction,
     RENPY_CAPTURE_PLAN_SCHEMA_VERSION,
     RENPY_CAPTURE_REPORT_SCHEMA_VERSION,
+    RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION,
     RenPyCapturePlan,
     RenPyVisualCaptureError,
     RendererObservation,
@@ -84,6 +85,7 @@ class FakeCaptureBackend:
                             else RendererObservation(
                                 viewport_width=width,
                                 viewport_height=24,
+                                schema_version="hanengine.renpy-renderer-observation/v1",
                                 text_regions=(
                                     RendererTextRegion(
                                         text=scenario.expected_screen,
@@ -106,6 +108,8 @@ class FakeCaptureBackend:
 
 
 class RenPyVisualCaptureTests(unittest.TestCase):
+    OVERLAP_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "renpy_renderer_overlap"
+
     def plan_payload(self):
         return {
             "schema_version": "hanengine.renpy-capture-plan/v1",
@@ -194,10 +198,31 @@ class RenPyVisualCaptureTests(unittest.TestCase):
                 }
             )
 
+    def test_renderer_overlap_runtime_fixture_has_one_controlled_layout_change(self):
+        root = self.OVERLAP_FIXTURE_ROOT
+        plan = load_renpy_capture_plan(root / "capture-plan.json")
+        reference = (root / "reference" / "game" / "script.rpy").read_text(
+            encoding="utf-8"
+        )
+        candidate = (root / "candidate" / "game" / "script.rpy").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(plan.schema_version, RENPY_CAPTURE_PLAN_SCHEMA_VERSION)
+        self.assertEqual(len(plan.scenarios), 1)
+        self.assertEqual(plan.scenarios[0].sample_id, "main-menu")
+        self.assertEqual(plan.scenarios[0].expected_screen, "main_menu")
+        self.assertIn('xpos 650 ypos 220 size 40', reference)
+        self.assertEqual(
+            reference.replace("xpos 650 ypos 220 size 40", "xpos 250 ypos 220 size 40"),
+            candidate,
+        )
+
     def test_renderer_observation_round_trip_rejects_unknown_fields(self):
         observation = RendererObservation(
             viewport_width=1280,
             viewport_height=720,
+            schema_version="hanengine.renpy-renderer-observation/v1",
             text_regions=(
                 RendererTextRegion(
                     text="开始游戏",
@@ -219,10 +244,72 @@ class RenPyVisualCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fields"):
             RendererObservation.from_dict(invalid)
 
+    def test_renderer_observation_v2_round_trip_preserves_hierarchy(self):
+        observation = RendererObservation(
+            viewport_width=1280,
+            viewport_height=720,
+            schema_version=RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION,
+            text_regions=(
+                RendererTextRegion(
+                    text="开始游戏",
+                    x=44,
+                    y=244,
+                    width=96,
+                    height=31,
+                    line_count=1,
+                    baseline=24,
+                    region_id="render:0.2:text:0",
+                    render_path=(0, 2),
+                    z_index=7,
+                ),
+            ),
+        )
+
+        restored = RendererObservation.from_dict(observation.to_dict())
+
+        self.assertEqual(restored, observation)
+        self.assertEqual(restored.text_regions[0].render_path, (0, 2))
+        self.assertEqual(restored.text_regions[0].z_index, 7)
+
+    def test_renderer_observation_v2_requires_complete_hierarchy(self):
+        with self.assertRaisesRegex(ValueError, "metadata"):
+            RendererTextRegion(
+                text="开始游戏",
+                x=44,
+                y=244,
+                width=96,
+                height=31,
+                line_count=1,
+                baseline=24,
+                region_id="render:0:text:0",
+            )
+
+    def test_renderer_observation_v2_requires_unique_ids_and_z_indices(self):
+        first = RendererTextRegion(
+            "开始", 10, 10, 40, 20, 1, 15, "render:0:text:0", (0,), 0
+        )
+        duplicate_id = RendererTextRegion(
+            "读取", 60, 10, 40, 20, 1, 15, "render:0:text:0", (1,), 1
+        )
+        duplicate_z = RendererTextRegion(
+            "读取", 60, 10, 40, 20, 1, 15, "render:1:text:0", (1,), 0
+        )
+
+        with self.assertRaisesRegex(ValueError, "unique region IDs"):
+            RendererObservation(320, 180, (first, duplicate_id))
+        with self.assertRaisesRegex(ValueError, "unique z-index"):
+            RendererObservation(320, 180, (first, duplicate_z))
+
+    def test_legacy_renderer_text_region_still_round_trips_independently(self):
+        region = RendererTextRegion("Start", 44, 244, 96, 31, 1, 24)
+
+        self.assertEqual(RendererTextRegion.from_dict(region.to_dict()), region)
+
     def test_renderer_observation_maps_client_area_to_capture_pixels(self):
         observation = RendererObservation(
             viewport_width=1280,
             viewport_height=720,
+            schema_version="hanengine.renpy-renderer-observation/v1",
             coordinate_space="renpy_virtual_pixels",
             text_regions=(
                 RendererTextRegion(
@@ -267,6 +354,7 @@ class RenPyVisualCaptureTests(unittest.TestCase):
         observation = RendererObservation(
             viewport_width=1280,
             viewport_height=720,
+            schema_version="hanengine.renpy-renderer-observation/v1",
             coordinate_space="renpy_virtual_pixels",
             text_regions=(
                 RendererTextRegion("Start", 44, 244, 96, 31, 1, 24),

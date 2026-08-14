@@ -1,6 +1,6 @@
 # HanEngine 当前项目状态
 
-更新时间：2026-08-12
+更新时间：2026-08-14
 
 本文是当前工作树的阶段性状态摘要。它补充并更新 `docs/project-status.md`，重点记录最近的真实 Ren'Py 项目验证和“无感汉化”目标。这里的“已验证”表示工程流水线、编译、字体和运行冒烟证据完整，不代表机器翻译质量已经达到发布标准。
 
@@ -19,6 +19,7 @@
 
 - Electron + React 桌面端已替代旧 Tkinter 入口。
 - 已实现本地账户数据库、登录/退出、PBKDF2-SHA256 密码哈希和会话门控。
+- 已修复 Python `needs_setup` 与渲染端 `needsSetup` 的首次启动字段映射，全新本地配置可正确进入创建账户流程。
 - 普通模式映射为 `player`，专业模式映射为 `studio`；未认证渲染进程不能访问项目和任务 IPC。
 - 任务中心支持查看、取消、重试和重启恢复。
 - 客户端设置现承载游戏启动语言（简体中文/原文）和游戏启动程序；设置保存在本地，并由受认证的 Electron IPC 以 `HANENGINE_GAME_LANGUAGE` 传给游戏进程。游戏候选不添加语言菜单。
@@ -72,14 +73,23 @@
 
 ### 视觉证据与真实截图采集
 
-- 已建立 `VisualStyleProfile`、`VisualComparison`、硬性排版门槛和可插拔 `VisualJudge` 的严格 JSON 往返契约；`VisualEvidenceManifest` 和 `VisualEvidenceReport` 已升级到 v2，报告只保存相对路径、截图尺寸、SHA-256、观察来源/引用和结构化判定，不嵌入图片二进制。
+- 已建立 `VisualStyleProfile`、`VisualComparison`、硬性排版门槛和可插拔 `VisualJudge` 的严格 JSON 往返契约；`VisualEvidenceManifest` 已升级到 `hanengine.visual-evidence-manifest/v3` 并独立保存参考/候选 renderer observation，`VisualEvidenceReport` 保持 `hanengine.visual-evidence-report/v2`。manifest、报告和硬门 `details` 均支持严格 JSON 对象往返；报告只保存相对路径、截图尺寸、SHA-256、观察来源/引用和结构化判定，不嵌入图片二进制。
 - 已新增 `visual_evidence.py`、`cli.py visual prepare` 和 `cli.py visual verify`。`prepare` 从 v3 Ren'Py 采集报告和严格 `hanengine.visual-evidence-annotations/v1` 人工标注生成受控 manifest，重新校验 screen 语义、场景顺序、源指纹、PNG 尺寸/哈希、renderer observation viewport 和区域 ID，并固定写入 `observation_source=manual`；`verify` 按 `blocked -> escalate -> pass` 顺序执行确定性硬门和可选外部判官。
 - `visual verify` 已支持 Tesseract 或 RapidOCR 本地自动观察：`--ocr-provider` 选择实现，`--ocr-language` 启用观察，`--ocr-allowlist` 扩展默认允许的 `English`/`Ren'Py` 名称，`--ocr-min-confidence` 默认 `0.80`，`--ocr-report` 指定证据目录内的 sidecar。`hanengine.visual-ocr-observation/v2` 会记录 provider/version、真实像素指纹以及每个 OCR 框的位置、尺寸、文本、换行数和置信度；达到阈值的候选框若含英文自然语言残留或参考有文字而候选无有效文字，会触发硬门并在判官前短路。
 - 已新增 `renpy_visual_capture.py` 和 `cli.py visual capture-renpy`：同一声明式交互计划分别运行原文和候选项目，项目先复制到临时影子目录，记录源树是否保持不变、窗口几何、截图哈希和运行状态。
-- Ren'Py 采集报告已升级到 `hanengine.renpy-capture-report/v3`。每个场景除 `expected_screen` 语义断言外，还必须带 `hanengine.renpy-renderer-observation/v1`：只读探针递归观察 `renpy.game.interface.surftree`，累加 Render 子节点坐标，记录 Text 文本区域、行数和可用 baseline，并把 Windows client 坐标映射到完整 PNG 的 `capture_pixels`。缺少 renderer observation 或 viewport 与截图不一致都会失败；旧 layout cache 无行指标时明确记录 `line_count=0`、`baseline=null`，不伪造数据。
+- Ren'Py 采集报告保持 `hanengine.renpy-capture-report/v3`。新采集写 `hanengine.renpy-renderer-observation/v2`：只读探针递归观察 `renpy.game.interface.surftree`，累加 Render 子节点坐标，并为每个 Text 节点记录文本、区域、行数、可用 baseline、稳定 `region_id`、child-index `render_path` 和绘制顺序 `z_index`，再把 Windows client 坐标映射到完整 PNG 的 `capture_pixels`。历史 `renderer-observation/v1` 继续严格读取，但不伪造其不存在的层级和绘制顺序；缺少 observation 或 viewport 与截图不一致仍会失败，旧 layout cache 无行指标时明确记录 `line_count=0`、`baseline=null`。
+- renderer 文本相交硬门已在 GLM 前接入。规则不是“矩形相交即失败”，而是比较候选相对参考新增或显著恶化的关系，同时检查交叠面积、双向覆盖/可见比例、文本基线、父子 render path、绘制顺序、重复阴影层和按场景允许区域对。异常直接 `blocked`，报告的严格 JSON `details` 记录场景、两个区域 ID/文本摘要、坐标、基线、路径、层级、前景区域、交叠面积和比例。配置智谱判官时，缺少任一场景 renderer observation 会先触发覆盖硬门，模型调用次数保持 0。
+- 历史 v14 六场景用 v3 manifest 重新持久化两侧 v1 renderer observation 并完成零费用回归：manifest SHA-256 为 `a58d0ff58fe15d778dabdb894c38406b73fcd40563464a2240aef76c741e99ce`，报告 SHA-256 为 `f1ea629c3fab0f6a46eb67ce5813806f76c42406ed22e1503a079ddac2616377`。六个 renderer 检查均通过、失败 0；设置页参考/候选各保留 26 个同构可疑布局关系而未误报，其余五场景为 0。整份报告 133/133 硬门通过；最终为 `escalate` 仅因本次刻意未调用 GLM，不能写成模型通过。
+- 已用新探针对官方 `The Question` 原文和 v11 中文候选连续完成两次真实 v2 六场景采集。两份 capture report SHA-256 分别为 `e5f778b5ffae31c7b531aaa172853bf54d566950d1218c45c76488d76793fc47` 和 `111f7df6272b752c5789abe04a1521c3f6fe390c5cc52ce71c411af9b3e60f2e`；12 组 observation 的 `region_id`、`render_path`、`z_index`、文本、坐标、尺寸、行数和 baseline 跨次逐项一致，不稳定项 0，PNG 哈希也全部一致。新 v2 数据的六场景相交误报为 0，设置页 26 个正常同构关系仍不误报。
+- 仓库自有真实运行 fixture `tests/fixtures/renpy_renderer_overlap/` 已通过 SDK 8.5.3 的 `capture -> prepare -> verify` 全链路。候选只把第二段文字移动到第一段上方，最终唯一失败码为 `renderer_text_overlap`，交叠面积 `18528 px²`、较小区域覆盖 `69.42%`；报告严格 JSON 往返通过。最终采集使用只含受控 `.rpy` 的干净临时树，capture/manifest/report SHA-256 分别为 `817f61221bc6bb2e901e0ebc6ad62eed6518d9fc791ce37f6fd876319307048b`、`5750ad1f8f109540884825709d764cf5f458ad12a200cdf25a936b634980b13b`、`ef11cded850d03eb5d01f2dcf751074a305908fa9499b47b44b99fb09f66afd8`。另用启用本地 OCR 的 `ZhipuImageVisualJudge` 计数子类复验，报告提供方为 `zhipu:glm-4.6v`，GLM 调用为 0且未发网络请求；短路报告 SHA-256 为 `d2e5e9699fc24c9f5a27a2a113ebabf8163133ca725093e4bf69908ef9cc80f8`。
+- renderer v2 真实验收汇总已写入 `.tmp/renderer-v2-milestone-report.json`，schema 为 `hanengine.renderer-v2-milestone-report/v1`，SHA-256 为 `62056f6bc2de15ed4d521cb3369b64ce2282d52ff0bbc12cdb04956711b3145b`。该报告绑定六份底层证据哈希，并记录 12/12 场景侧稳定、正常误报 0、真实覆盖坐标/比例反算通过、智谱调用 0，以及本轮 Python 549/549、Electron 10/10 和正式构建通过。
 - 官方 `The Question` v14 证据位于 `.tmp/visual-evidence-renpy-the-question-v14-renderer-zhcn-six/`。原文和候选在主菜单、对白、分支、设置、保存和读取页面均为 `6/6 + 6/6` screen 断言通过，12 张 PNG 均为 `1296x759`，两棵源树保持不变；capture report SHA-256 为 `59123a175dd6b6a2c66aa3f691bc79ec370232dd661a2af7b139f2e45f8f3b59`。原文和候选各记录 125 个 renderer 文本区域；v14 图片与已人工核验的 v11 图片逐字节一致，因此布局几何标注可追溯复用。
 - v14 使用隔离的 RapidOCR 1.4.4 对六场景真实像素完成 `chi_sim+eng` 复验。manifest SHA-256 为 `36319fe6fac7c89223988f3fa374e614ad2e10280df35850fb9d49b1c876d588`，OCR sidecar SHA-256 为 `168eb7dd8236b492c7d863f3b02d86b542c063696ad53408786ce1d2b5a7389a`，visual report SHA-256 为 `313483ae0d9d2465681d35f7d0132c48285b5984ed34e66a3f5e1b4254e9754c`。6/6 候选场景均检测到文字，英文自然语言残留为 0；布局、字体、OCR 覆盖和残留共 140/140 项确定性硬门通过。设置页拉丁文本只允许登记的语言名称，品牌名沿用默认允许规则。
-- 当前未配置外部视觉判官，所以 v14 最终决定按设计为 `escalate`，唯一原因为 `visual_judge_unavailable`；这不能表述为视觉判官 `pass`，也不否定已通过的确定性硬门。完整 P1.1 相关窄回归现为 127 项通过。全量工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误：两项 compliance 用例受本地 `.tmp/sdk/unpacked` 和不可枚举 `.pytest_cache` 影响，一项因工作区 Python 缺少 `fontTools`，一项为 Windows 重解析点错误文案与 `Symlink loop` 预期不一致；这些环境问题未归入本轮功能结论。
+- 已接入智谱原生 `ZhipuImageVisualJudge`，API Key 只从 `ZHIPU_API_KEY` 读取，远端只接收内存 JPEG 压缩副本，原始 PNG/哈希/硬门证据不变；API 错误、超时、非法 JSON 和低置信度均升级为 `escalate`，模型不能绕过硬门。CLI 使用 `--zhipu-model` 时强制同时启用本地 OCR。
+- 同一历史 r6 六场景盲测中，付费 `glm-4.6v-flashx` 请求成功率和 JSON 合规率均为 100%，但已知缺陷漏检率为 100%；付费 `glm-4.6v` 请求成功率 100%、JSON 合规率 100%、漏检率 0%、误报率 0%，因此选为当前质量优先辅助模型。v14 历史路径的 140/140 硬门和 6/6 GLM 复核均通过，旧报告最终决定为 `pass`；当前策略不再允许 GLM 单独授权自动通过。
+- 已新增仓库自有的 36 场景受控视觉缺陷集：4 个正常对照，漏翻、截断、溢出、重叠、缺字、乱码、错误换行和样式/可读性八类缺陷各 4 个变体；固定 960x540 画布、生成器版本、字体记录和机器真值，72 张 PNG 总计约 2 MB，可由 `tools/generate_visual_judge_dataset.py` 重现。生成器 v2 已确保中文候选固定 UI 文本全部汉化，基准请求不向模型泄露含类别的场景 ID。
+- 修正前提后的 v2 门槛复测覆盖上一轮漏掉的 8 个缺陷和 4 个正常对照：`glm-4.6v` 请求与 JSON 合规均为 12/12，正常误报 0/4，但缺陷漏检 7/8；错误换行检出 1/1，文字重叠 0/3，样式/可读性 0/4。P50 为 13.16 秒、P95 为 20.56 秒，API 返回总计 26,285 tokens。该结果不满足全量重跑门槛，因此未继续产生 36 次调用。
+- Electron 普通/专业模式均新增“视觉验收”入口，固定组合 `glm-4.6v`、RapidOCR 和 `chi_sim+eng`，显示检查中、已通过、已阻断和人工复核四态；执行/配置错误单独显示失败。确定性硬门失败直接阻断，GLM 结果只作辅助；即使 GLM 返回高置信 `pass`，最终也升级为人工复核。Key 不进入 React 状态、IPC 参数、日志或 localStorage，Python 子进程只继承本机环境变量。主进程只读取严格 v2 视觉报告并返回裁剪摘要，且客户端仅在当前命令明确写出报告后读取，避免旧报告假通过。客户端现可按报告场景读取经过 PNG 签名、大小、目录边界和 SHA-256 校验的原文/候选证据图；全部场景确认后，主进程重新校验报告及所有证据图，并原子写入独立的 `hanengine.visual-review-proof/v1` sidecar。证明绑定完整报告 SHA-256、机器结论、场景图片哈希、确认时间和当前本地账户；已有有效证明不会被另一会话覆盖。
 
 ## 2. 当前代码结构
 
@@ -110,7 +120,8 @@ game-localizer/
 |     |- visual_evidence.py         A/B 截图清单、哈希校验、OCR sidecar、视觉报告和外部判官边界
 |     `- renpy_visual_capture.py    Ren'Py 影子项目成对截图采集和运行报告
 |- desktop/
-|  |- electron/main.cjs             窗口、登录会话、Python 子进程和 IPC
+|  |- electron/main.cjs             窗口、登录会话、Python 子进程和受控 IPC
+|  |- electron/visual-report.cjs    严格视觉报告/图片校验、客户端摘要和人工复核证明
 |  |- electron/preload.cjs          最小化 contextBridge
 |  `- src/App.tsx                   登录、普通/专业工作区和任务中心
 |- examples/engine_samples/         多引擎合成样例
@@ -175,7 +186,7 @@ python cli.py project validate renpy <project> `
 - `The Question` 已通过 `visual capture-renpy` 确认主菜单、对白、分支、设置、保存和读取页面；旧的固定坐标一次性脚本不再承担本轮证据。
 - v11 正式记录携带构建、编译、字体以及原文/中文双模式六场景运行时引用；v14 在相同 PNG 像素上补充 renderer observation 和 RapidOCR 复验。截图文件名不单独承担页面语义断言，证据由报告中的 `expected_screen`、renderer viewport/区域、PNG 哈希、报告哈希和候选树哈希共同约束。
 - `visual capture-renpy` 已用 Ren'Py 引擎级 screen 探针阻止错页截图被误判为对齐，并用 `PrintWindow` 降低桌面前台程序干扰。声明式动作仍使用相对坐标，计划需要为目标项目校准并由 `expected_screen` 验收；renderer observation 验证自动采集区域和坐标空间，受控人工区域继续承担布局比较，RapidOCR 承担候选文字覆盖和英文残留硬门。
-- 当前没有配置实际 AI 服务；`CommandImageVisualJudge` 只提供无 shell 的外部命令边界，v14 报告因此按设计为 `escalate`，而不是视觉质量 `pass`。
+- 本机已配置智谱服务并验证 `glm-4.6v` 鉴权；生产代码仍只从 `ZHIPU_API_KEY` 读取。聊天中出现过 Key，因此当前 Key 只能视为开发期本机凭据，发布前仍需轮换并由用户直接写入系统密钥存储或环境变量。
 
 ### 文本覆盖和语境
 
@@ -194,12 +205,13 @@ python cli.py project validate renpy <project> `
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
 - 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：目录覆盖率为 242/242，v11 内部验证通过且仅剩 2 个非阻断告警（作者署名、语言名称），Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；字体已实际打包且联合覆盖通过。原文/中文客户端模式均完成六场景 runtime smoke，候选树与验证记录一致。
-- 本轮最终执行 Ren'Py pipeline、结构化适配、CLI、golden corpus、Ren'Py 视觉采集、视觉、视觉证据和视觉样式八个相关测试模块，共 127 项通过；其中包含客户端语言环境传递、动态表达式未处理清单、重复源文冲突、renderer observation、长文本行数预算、动态字体探针、多字体回退、RapidOCR provider/version、OCR 置信度过滤、英文残留硬门、判官短路和 sidecar 路径冲突回归。相关 Python 编译检查通过。完整工作区 Python `python -m unittest discover -s tests` 此前已完成 479 项，其中 475 项通过、3 项失败、1 项错误。
+- P1.1 基线相关八个测试模块此前共 127 项通过；后续新增 GLM 基准、图像压缩、Key/默认模型配置、响应契约、模型标识覆盖、OCR 强制组合、受控数据集、人工复核报告读取、renderer 相交阴性/阳性样本、GLM 前短路、v1/v2 兼容、严格报告往返和真实运行 fixture 契约。完整工作区 Python `python -m unittest discover -s tests` 当前为 549/549 项通过，Electron 为 10/10 项通过，TypeScript 检查与 Vite 正式构建通过。
 
 ### 桌面端和发布
 
 - 封包页面、单文件结果统计和部分高级工作流仍需补齐。
 - Electron 任务取消、重试、恢复、错误状态和多尺寸窗口仍需端到端回归。
+- 人工复核证明已用真实 v14 六场景证据完成端到端验证：`1440x920` 首次窗口从 `0/6` 逐场景确认后写入 sidecar 并显示通过，`1120x720` 新窗口通过“打开已有报告”恢复 `6/6`、复核人和锁定状态；两个尺寸均无水平溢出且成对截图加载成功。生成、恢复截图 SHA-256 分别为 `65d374f283e96909131506deec047e7ba48f70f08d40bce575be222ff3b9448c`、`65bf03c5b5c5b44400b14d6b7635834afe3eef37885b45e920a21087bc9808e0`，本机证明文件 SHA-256 为 `7ffefff78faafd12dfc3ef735004a71d3da9078182e4654e77a279893d596f20`。证明不修改机器报告；报告变化会使旧哈希命名的证明不再匹配，图片篡改会在恢复时失败。当前证明没有操作系统签名，只提供本机流程审计，不对拥有证据目录写权限的攻击者提供密码学防伪。
 - Windows 安装包尚未完成干净机器安装测试，npm 依赖版本也需要固定。
 
 ## 5. 下一步建议
@@ -211,15 +223,24 @@ python cli.py project validate renpy <project> `
 3. [已完成] 在现有 Segment/SegmentDraft metadata 中冻结 Segment V2 最小契约：`schema_version=2`、占位符、富文本标签、原始换行序列和 speaker/kind/文本上下文键/前后语境；契约会校验 metadata 与段字段一致，Ren'Py `{#...}` 文本上下文键已纳入提取。官方文档未发现独立通用的 Ren'Py 复数翻译语法，因此不虚构支持。
 4. [已完成] 已建立文件型 Ren'Py golden corpus manifest、4 个仓库自有合成 fixture，以及官方 `The Question` 本地参考源登记；四个 fixture 均通过 Ren'Py SDK 8.5.3 编译（退出码 0、无 traceback）。官方样例中文候选已完成真实运行时启动和主菜单、对白、分支、保存、读取、设置页面的截图回归，动态 UI 文本显示正常；v8 记录的稳定运行时引用中包含 r7 报告 SHA-256 和候选指纹。
 5. [已完成] Ren'Py 候选继续打包多字体并生成 `FontGroup`；新增按场景/区域最大行数的长文本质量门、运行时动态字符字体探针、探针缺字失败和多字体显式范围回退测试。无法安全翻译的动态表达式保留源行为并显式报告，重复原文的目标冲突在写出前失败。
-6. [已完成] 视觉档案、截图比较、硬门报告和判定结果已支持严格 JSON 往返；A/B PNG 清单、哈希校验、外部判官边界、Ren'Py 影子项目成对采集器、renderer observation、受控人工标注和 RapidOCR/Tesseract OCR 均已接入。官方样例 v14 已完成原文/中文六场景 `6/6 + 6/6` 语义对齐、250 个 renderer 区域记录和真实 OCR 复验，140/140 项确定性硬门通过、候选英文自然语言残留为 0。外部视觉判官尚未配置，因此最终决定仍为 `escalate`。
+6. [已完成] 视觉档案、截图比较、硬门报告和判定结果已支持严格 JSON 往返；A/B PNG 清单、哈希校验、Ren'Py 影子项目成对采集器、renderer observation、受控人工标注和 RapidOCR/Tesseract OCR 均已接入。智谱 `glm-4.6v` 已作为当前默认辅助复核模型接入，CLI 强制与本地 OCR 硬门组合；受控集证明其不能自动放行，因此当前 GLM `pass` 固定升级为人工复核。
+7. [已完成] 新增 36 场景可复现受控缺陷集和客户端视觉验收入口；客户端显示发布判定摘要和严格校验后的逐场景原文/候选截图，要求逐场景确认后才能人工放行，并持久化绑定报告、图片和本地复核人的独立证明；Key 保持在渲染进程之外，并完成首次生成与新窗口恢复的双尺寸真实 Electron 检查。
 
-P1.1 在已声明的 Ren'Py 明文项目范围内完成。完成含义是客户端语言控制、静态文本覆盖、未处理项可见、冲突安全、字体交付、编译/运行、六场景 renderer/OCR/布局硬门形成闭环；不含复杂动态表达式自动求值、图片/视频文字识别或外部 AI 视觉裁决。
+P1.1 在已声明的 Ren'Py 明文项目范围内完成。完成含义是客户端语言控制、静态文本覆盖、未处理项可见、冲突安全、字体交付、编译/运行、六场景 renderer/OCR/布局硬门、GLM 视觉复核、受控缺陷集和客户端验收入口形成闭环；不含复杂动态表达式自动求值、图片/视频文字重绘或大规模跨游戏视觉泛化证明。
 
-### P1.2：统一“原生渲染替换”能力
+### P1.2.1：统一“原生渲染替换”能力（已完成）
 
-1. 为每个适配器定义 `native_text_replace`、`dynamic_text`、`raster_text`、`detect_only` 能力。
-2. 所有引擎优先写回原生本地化格式，不使用字幕叠加或进程注入。
-3. 对无法原生替换的内容生成清晰的未处理清单和原因。
+1. 已为 Ren'Py、RPG Maker MV/MZ、Godot、Unity、Unreal 定义 `native_text_replace`、`dynamic_text`、`raster_text`、`detect_only` 四个能力维度。
+2. 统一 schema 为 `hanengine.adapter-capabilities/v1`，每个声明包含 `implemented`、`verified`、`detect_only`、`unsupported` 状态、原因和证据引用，并支持严格 JSON 往返。
+3. `AdapterMetadata`、CLI `engines`/`engine inspect` 和 Electron 检测模型共享同一矩阵；封包或二进制输入的写回维度会自动降级为 `detect_only`。
+4. Ren'Py 原生文本替换以 The Question 与 Heartfelt Moments 的真实验证记录为 `verified`；其余引擎保持 `implemented`，直到取得真实授权项目证据。
+5. 已补充六个内置 AdapterV1 的能力契约测试；完整 Python 回归为 `553/553`，Electron 为 `10/10`，Vite 正式构建通过。
+
+### P1.2.2：跨引擎真实项目认证
+
+1. 所有引擎优先写回原生本地化格式，不使用字幕叠加或进程注入。
+2. 对无法原生替换的内容生成清晰的未处理清单和原因。
+3. 为 RPG Maker、Godot、Unity、Unreal 准备合规的真实项目、官方工具和运行冒烟证据。
 
 ### P2：扩展真实项目认证
 
@@ -235,4 +256,4 @@ P1.1 在已声明的 Ren'Py 明文项目范围内完成。完成含义是客户�
 
 ## 当前结论
 
-HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、客户端语言控制和字体随候选包交付的第一版实现。P1.1 已完成：静态文本覆盖、动态未处理项、重复源文冲突、字体、编译、双模式运行、renderer 观测、六场景布局和 RapidOCR 英文残留硬门均有实现与证据。v14 的确定性硬门 140/140 通过，候选英文自然语言残留为 0；由于未配置外部视觉判官，最终视觉决定仍是 `escalate`，不能写成外部判官通过。下一阶段进入 P1.2，统一各引擎的原生渲染替换能力和无法处理原因契约。
+HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、客户端语言控制和字体随候选包交付的第一版实现。P1.1 已完成：静态文本覆盖、动态未处理项、重复源文冲突、字体、编译、双模式运行、renderer v2 观测、RapidOCR 英文残留硬门、确定性文本相交硬门、智谱辅助复核、36 场景受控缺陷集、客户端逐场景验收和独立人工复核证明均有实现与证据。v14 历史报告的 140/140 硬门和 6/6 `glm-4.6v` 复核通过；历史相交回归为 133/133 本地硬门通过、renderer 误报 0。新探针的两次真实 v2 六场景采集跨次不稳定项为 0、正常误报为 0；仓库真实覆盖 fixture 被 `renderer_text_overlap` 单独阻断，模型调用为 0。受控门槛复测证明模型会漏检重叠和低对比度，当前不再自动授权 `pass`。P1.1 不再保留 renderer v2 实证缺口，下一阶段进入 P1.2 的跨引擎能力声明统一。

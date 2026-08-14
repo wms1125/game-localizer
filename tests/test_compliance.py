@@ -164,16 +164,20 @@ class ComplianceTests(unittest.TestCase):
         self.assertIn("RESTRICTED_MATERIAL_TRACKED", [finding.code for finding in report.errors])
 
     def test_skipped_path_segments_are_case_insensitive(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            self.make_repository(root)
-            skipped = root / ".GIT" / "embedded-scripts"
-            skipped.mkdir(parents=True)
-            (skipped / "ignored.rpy").write_text("synthetic", encoding="utf-8")
+        for segment in (".GIT", ".PyTeSt_CaChE", ".TMP", "NoDe_MoDuLeS"):
+            with self.subTest(segment=segment), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                self.make_repository(root)
+                skipped = root / segment / "embedded-scripts"
+                skipped.mkdir(parents=True)
+                (skipped / "ignored.rpy").write_text("synthetic", encoding="utf-8")
 
-            report = check_repository(root)
+                report = check_repository(root)
 
-        self.assertNotIn("RESTRICTED_MATERIAL_TRACKED", [finding.code for finding in report.errors])
+            self.assertNotIn(
+                "RESTRICTED_MATERIAL_TRACKED",
+                [finding.code for finding in report.errors],
+            )
 
     def test_registered_recovery_archive_name_is_blocked_case_insensitively(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

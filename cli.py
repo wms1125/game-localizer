@@ -42,6 +42,7 @@ from game_localizer.hanengine import (
     TtsRequest,
     WindowsSapiTts,
     ZipPackageModifier,
+    ZhipuImageVisualJudge,
     prepare_visual_evidence_manifest,
     renpy_sdk_validator,
     run_renpy_capture_pair,
@@ -182,6 +183,11 @@ def run_engines(argv: list[str]) -> int:
                 else None
             ),
             "structured_resource_pipeline": adapter.engine_id in v1_by_engine,
+            "capability_matrix": (
+                v1_by_engine[adapter.engine_id].metadata.capability_matrix.to_dict()
+                if adapter.engine_id in v1_by_engine
+                else None
+            ),
         }
         for adapter in get_adapters()
     ]
@@ -450,6 +456,9 @@ def run_engine(
                 detection = selection.detection
                 capabilities = sorted(item.value for item in detection.capabilities)
                 allowed = sorted(item.value for item in selection.final_route.allowed_operations)
+                capability_matrix = adapter.metadata.capability_matrix.for_detection(
+                    detection.capabilities
+                ).to_dict()
                 required = {"extract", "validate", "build", "verify"}
                 localize_ready = required.issubset(set(capabilities)) and required.issubset(set(allowed))
                 payload = {
@@ -472,8 +481,10 @@ def run_engine(
                             }
                             for item in detection.evidence
                         ],
+                        "capability_matrix": capability_matrix,
                     },
                     "capabilities": capabilities,
+                    "capability_matrix": capability_matrix,
                     "allowed_operations": allowed,
                     "hanguard": selection.final_route.to_dict(),
                     "task_id": selection.detection_task.task_id,
@@ -733,6 +744,14 @@ def run_visual(argv: list[str]) -> int:
     verify.add_argument("--judge-timeout", type=int, default=120)
     verify.add_argument("--judge-provider", default="external-command")
     verify.add_argument(
+        "--zhipu-model",
+        help=(
+            "use the configured Zhipu GLM vision judge with this model "
+            f"(recommended: {ZhipuImageVisualJudge.DEFAULT_MODEL})"
+        ),
+    )
+    verify.add_argument("--zhipu-timeout", type=int, default=180)
+    verify.add_argument(
         "--ocr-language",
         help="enable local OCR observation, for example chi_sim+eng",
     )
@@ -812,12 +831,21 @@ def run_visual(argv: list[str]) -> int:
             return 0 if report.passed else 1
         if args.judge_arg and not args.judge_command:
             raise ValueError("--judge-arg requires --judge-command")
+        if args.zhipu_model and args.judge_command:
+            raise ValueError("--zhipu-model cannot be combined with --judge-command")
+        if args.zhipu_model and not args.ocr_language:
+            raise ValueError("--zhipu-model requires --ocr-language")
         judge = None
         if args.judge_command:
             judge = CommandImageVisualJudge(
                 (args.judge_command, *args.judge_arg),
                 timeout_seconds=args.judge_timeout,
                 provider_name=args.judge_provider,
+            )
+        elif args.zhipu_model:
+            judge = ZhipuImageVisualJudge(
+                model=args.zhipu_model,
+                timeout_seconds=args.zhipu_timeout,
             )
         ocr_provider = None
         if args.ocr_language:

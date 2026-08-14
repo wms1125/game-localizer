@@ -466,6 +466,9 @@ class VisualHardGatePolicy:
     max_line_count_delta: int = 1
     require_font_resolution: bool = True
     max_line_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    allowed_renderer_overlap_pairs: dict[str, tuple[tuple[str, str], ...]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "max_position_delta_px", _nonnegative(self.max_position_delta_px, "max_position_delta_px"))
@@ -490,6 +493,34 @@ class VisualHardGatePolicy:
                 regions[region_id] = maximum
             budgets[sample_id] = regions
         object.__setattr__(self, "max_line_counts", budgets)
+        raw_allowed_pairs = self.allowed_renderer_overlap_pairs
+        if not isinstance(raw_allowed_pairs, Mapping):
+            raise TypeError("allowed_renderer_overlap_pairs must be a mapping")
+        allowed_pairs: dict[str, tuple[tuple[str, str], ...]] = {}
+        for sample_id, raw_pairs in raw_allowed_pairs.items():
+            sample_id = _plain_string(sample_id, "allowed overlap sample ID")
+            if isinstance(raw_pairs, (str, bytes)) or not isinstance(
+                raw_pairs, Sequence
+            ):
+                raise TypeError("allowed renderer overlap pairs must be sequences")
+            pairs: list[tuple[str, str]] = []
+            for raw_pair in raw_pairs:
+                if isinstance(raw_pair, (str, bytes)) or not isinstance(
+                    raw_pair, Sequence
+                ):
+                    raise TypeError("allowed renderer overlap pair must be a sequence")
+                pair = tuple(raw_pair)
+                if len(pair) != 2:
+                    raise ValueError("allowed renderer overlap pair must contain two region IDs")
+                left = _plain_string(pair[0], "allowed overlap region ID")
+                right = _plain_string(pair[1], "allowed overlap region ID")
+                if left == right:
+                    raise ValueError("allowed renderer overlap pair must contain distinct IDs")
+                pairs.append(tuple(sorted((left, right))))
+            if len(pairs) != len(set(pairs)):
+                raise ValueError("allowed renderer overlap pairs must be unique")
+            allowed_pairs[sample_id] = tuple(sorted(pairs))
+        object.__setattr__(self, "allowed_renderer_overlap_pairs", allowed_pairs)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -501,6 +532,10 @@ class VisualHardGatePolicy:
             "max_line_counts": {
                 sample_id: dict(regions)
                 for sample_id, regions in self.max_line_counts.items()
+            },
+            "allowed_renderer_overlap_pairs": {
+                sample_id: [list(pair) for pair in pairs]
+                for sample_id, pairs in self.allowed_renderer_overlap_pairs.items()
             },
         }
 
@@ -514,8 +549,9 @@ class VisualHardGatePolicy:
             "max_line_count_delta",
             "require_font_resolution",
         )
+        optional_fields = {"max_line_counts", "allowed_renderer_overlap_pairs"}
         fields = set(payload)
-        if fields != set(legacy_fields) and fields != {*legacy_fields, "max_line_counts"}:
+        if not set(legacy_fields).issubset(fields) or fields - set(legacy_fields) - optional_fields:
             raise ValueError("visual_hard_gate_policy payload fields do not match schema")
         return cls(
             max_position_delta_px=payload["max_position_delta_px"],
@@ -524,6 +560,9 @@ class VisualHardGatePolicy:
             max_line_count_delta=payload["max_line_count_delta"],
             require_font_resolution=payload["require_font_resolution"],
             max_line_counts=payload.get("max_line_counts", {}),
+            allowed_renderer_overlap_pairs=payload.get(
+                "allowed_renderer_overlap_pairs", {}
+            ),
         )
 
 
@@ -533,6 +572,7 @@ class VisualCheck:
     passed: bool
     message: str
     region_id: str | None = None
+    details: dict[str, JsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "code", _plain_string(self.code, "code"))
@@ -540,6 +580,7 @@ class VisualCheck:
         object.__setattr__(self, "message", _plain_string(self.message, "message"))
         if self.region_id is not None:
             object.__setattr__(self, "region_id", _plain_string(self.region_id, "region_id"))
+        object.__setattr__(self, "details", _json_object(self.details, "details"))
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -547,17 +588,22 @@ class VisualCheck:
             "passed": self.passed,
             "message": self.message,
             "region_id": self.region_id,
+            "details": self.details,
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "VisualCheck":
         payload = _mapping(payload, "visual_check")
-        _exact_keys(payload, ("code", "passed", "message", "region_id"), "visual_check")
+        fields = set(payload)
+        legacy_fields = {"code", "passed", "message", "region_id"}
+        if fields not in (legacy_fields, {*legacy_fields, "details"}):
+            raise ValueError("visual_check payload fields do not match schema")
         return cls(
             code=payload["code"],
             passed=payload["passed"],
             message=payload["message"],
             region_id=payload["region_id"],
+            details=payload.get("details", {}),
         )
 
 
@@ -711,8 +757,9 @@ def _check(
     passed: bool,
     message: str,
     region_id: str | None = None,
+    details: Mapping[str, JsonValue] | None = None,
 ) -> VisualCheck:
-    return VisualCheck(code, passed, message, region_id)
+    return VisualCheck(code, passed, message, region_id, {} if details is None else dict(details))
 
 
 def run_visual_hard_gates(
@@ -847,6 +894,7 @@ def evaluate_visual_gate(
     policy: VisualHardGatePolicy | None = None,
     minimum_style_score: float = 0.85,
     minimum_confidence: float = 0.80,
+    judge_can_authorize_pass: bool = True,
     extra_hard_checks: Sequence[VisualCheck] = (),
 ) -> VisualGateResult:
     """Apply hard gates first, then ask an optional style judge for escalation decisions."""
@@ -908,6 +956,7 @@ def evaluate_visual_gate(
         )
     minimum_style_score = _unit(minimum_style_score, "minimum_style_score")
     minimum_confidence = _unit(minimum_confidence, "minimum_confidence")
+    judge_can_authorize_pass = _bool(judge_can_authorize_pass, "judge_can_authorize_pass")
     results: list[VisualJudgeResult] = []
     reasons: list[str] = []
     for comparison in comparisons:
@@ -940,6 +989,14 @@ def evaluate_visual_gate(
             comparisons,
             tuple(results),
             tuple(reasons),
+        )
+    if not judge_can_authorize_pass:
+        return VisualGateResult(
+            VisualGateDecision.ESCALATE,
+            hard_gate,
+            comparisons,
+            tuple(results),
+            ("visual_judge_pass_requires_human_review",),
         )
     return VisualGateResult(
         VisualGateDecision.PASS,

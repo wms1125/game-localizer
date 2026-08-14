@@ -284,6 +284,20 @@ class VisualStyleTests(unittest.TestCase):
         self.assertNotIn("image_bytes", json.dumps(payload, sort_keys=True))
         self.assertEqual(json.loads(json.dumps(payload)), payload)
 
+    def test_gate_can_require_human_review_after_a_clean_judge_pass(self):
+        result = evaluate_visual_gate(
+            self.profile(),
+            (self.comparison(),),
+            judge=FakeJudge(
+                VisualJudgeResult(VisualJudgeDecision.PASS, 0.92, 0.88, "fake-v1")
+            ),
+            judge_can_authorize_pass=False,
+        )
+
+        self.assertEqual(result.decision, VisualGateDecision.ESCALATE)
+        self.assertEqual(result.reasons, ("visual_judge_pass_requires_human_review",))
+        self.assertEqual(result.judge_results[0].decision, VisualJudgeDecision.PASS)
+
     def test_gate_escalates_on_style_rejection_low_confidence_or_judge_error(self):
         rejected = evaluate_visual_gate(
             self.profile(),

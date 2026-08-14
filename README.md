@@ -51,7 +51,7 @@ python cli.py detect "C:\Games\AuthorizedProject"
 python cli.py detect "C:\Games\AuthorizedProject" --json
 ```
 
-传统 `detect` 命令只扫描文件名和目录结构，用于快速识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。`engine inspect` 会进一步创建只读的 AdapterV1 检测任务，并返回引擎、证据、能力、HanGuard 允许操作和 `ready`/`detect_only` 状态。
+传统 `detect` 命令只扫描文件名和目录结构，用于快速识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。`engine inspect` 会进一步创建只读的 AdapterV1 检测任务，并返回引擎、证据、工作流能力、统一 `hanengine.adapter-capabilities/v1` 能力矩阵、HanGuard 允许操作和 `ready`/`detect_only` 状态。矩阵分别说明原生文本替换、动态文本、栅格文字和仅检测能力，并为每项提供 `implemented`、`verified`、`detect_only` 或 `unsupported` 状态及原因。
 
 AdapterV1 当前为以下**明文原始项目**提供结构化提取、翻译、校验、独立构建与验证链路：Ren'Py 的 `.rpy`，RPG Maker MV/MZ 的 JSON，Godot 的 PO/CSV，Unity 的 XLIFF/CSV，以及 Unreal 的 PO。旧的 `renpy extract/build` 命令继续保留兼容。Unity Player、Unreal Pak/IoStore、Godot PCK、Ren'Py 归档及其他加密或二进制封装资源均为仅检测，绝不会被自动解包或修改。
 
@@ -99,7 +99,14 @@ python cli.py tasks cancel <task-id>
 
 使用自定义状态目录时，为上述命令追加 `--state-root <path>`。取消是跨进程的协作式请求，运行任务会在检查点停止；应用异常退出后，`tasks retry` 会把没有有效项目租约的遗留运行任务标记为中断并从已持久化段继续。云端点和令牌环境变量名可以进入重试描述，但令牌值不会持久化；恢复云任务时会从当前进程环境重新读取。每个项目只有一个结构化工作流写入租约，因此两个 CLI/GUI 构建不能同时写入同一项目。
 
-视觉替换需要本机安装 Pillow、pytesseract 和 Tesseract OCR；缺少依赖时会停止并显示错误，不会降级为底部字幕。
+视觉替换需要本机安装 Pillow、pytesseract 和 Tesseract OCR；也可选择 RapidOCR。智谱视觉判官还需要 `requests`，API Key 只从 `ZHIPU_API_KEY` 环境变量读取。发布验证必须同时启用本地 OCR 硬门和 GLM 视觉复核；缺少依赖、Key 或 OCR 配置时会停止或升级人工复核。受控缺陷集表明 `glm-4.6v` 会漏检文字重叠和低对比度，因此即使模型返回 `pass` 也必须人工确认，不能自动放行。
+
+桌面端“视觉验收”会显示报告声明的原文/候选成对截图。全部场景确认后，Electron 主进程重新校验机器报告和每张 PNG，并在报告旁写入独立的 `hanengine.visual-review-proof/v1` 证明；证明绑定报告 SHA-256、场景图片哈希、确认时间和当前本地账户。之后可用“打开已有报告”恢复已通过状态；报告或图片变化时旧证明不会继续生效。该证明用于本机工作流审计，不是数字签名，不能抵抗拥有证据目录写权限的本机用户手工伪造。
+
+```powershell
+$env:ZHIPU_API_KEY = "runtime-only-key"
+python cli.py visual verify --manifest evidence/visual-manifest.json --output evidence/visual-report.json --authorized --authorization-reference internal-ticket-1234 --zhipu-model glm-4.6v --ocr-language chi_sim+eng --ocr-provider rapidocr
+```
 
 可运行以下发布门禁：
 

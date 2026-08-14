@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
+    "test:electron": "node --test electron/*.test.cjs",
     "start": "electron .",
     "preview": "vite preview --host 127.0.0.1",
     "dist": "npm run build && electron-builder"
@@ -19,6 +20,8 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "concurrently": "latest",
     "electron": "latest",
     "electron-builder": "latest",

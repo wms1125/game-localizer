@@ -22,6 +22,9 @@ from .segments import JsonValue
 RENPY_CAPTURE_PLAN_SCHEMA_VERSION = "hanengine.renpy-capture-plan/v2"
 RENPY_CAPTURE_REPORT_SCHEMA_VERSION = "hanengine.renpy-capture-report/v3"
 RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION = (
+    "hanengine.renpy-renderer-observation/v2"
+)
+_LEGACY_RENDERER_OBSERVATION_SCHEMA_VERSION = (
     "hanengine.renpy-renderer-observation/v1"
 )
 _LEGACY_CAPTURE_PLAN_SCHEMA_VERSION = "hanengine.renpy-capture-plan/v1"
@@ -306,6 +309,9 @@ class RendererTextRegion:
     height: float
     line_count: int
     baseline: float | None
+    region_id: str | None = None
+    render_path: tuple[int, ...] | None = None
+    z_index: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "text", _string(self.text, "text"))
@@ -337,9 +343,30 @@ class RendererTextRegion:
                 "baseline",
                 _number(self.baseline, "baseline", minimum=0, maximum=100_000),
             )
+        metadata = (self.region_id, self.render_path, self.z_index)
+        if any(value is not None for value in metadata) and any(
+            value is None for value in metadata
+        ):
+            raise ValueError(
+                "renderer text region metadata must contain region_id, render_path, and z_index"
+            )
+        if self.region_id is not None:
+            object.__setattr__(self, "region_id", _string(self.region_id, "region_id"))
+            path = tuple(self.render_path)
+            if any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in path
+            ):
+                raise ValueError("render_path must contain non-negative integers")
+            object.__setattr__(self, "render_path", path)
+            object.__setattr__(
+                self,
+                "z_index",
+                _integer(self.z_index, "z_index", minimum=0, maximum=100_000),
+            )
 
-    def to_dict(self) -> dict[str, JsonValue]:
-        return {
+    def to_dict(self, *, include_hierarchy: bool | None = None) -> dict[str, JsonValue]:
+        payload: dict[str, JsonValue] = {
             "text": self.text,
             "x": self.x,
             "y": self.y,
@@ -348,13 +375,42 @@ class RendererTextRegion:
             "line_count": self.line_count,
             "baseline": self.baseline,
         }
+        if include_hierarchy is None:
+            include_hierarchy = self.region_id is not None
+        if include_hierarchy:
+            if self.region_id is None:
+                raise ValueError("renderer v2 text regions require hierarchy metadata")
+            payload.update(
+                {
+                    "region_id": self.region_id,
+                    "render_path": list(self.render_path),
+                    "z_index": self.z_index,
+                }
+            )
+        return payload
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "RendererTextRegion":
+    def from_dict(
+        cls,
+        payload: Mapping[str, object],
+        *,
+        schema_version: str | None = None,
+    ) -> "RendererTextRegion":
         payload = _mapping(payload, "renderer_text_region")
+        fields = ("text", "x", "y", "width", "height", "line_count", "baseline")
+        if schema_version is None:
+            schema_version = (
+                RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
+                if {"region_id", "render_path", "z_index"}.intersection(payload)
+                else _LEGACY_RENDERER_OBSERVATION_SCHEMA_VERSION
+            )
+        if schema_version == RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION:
+            fields += ("region_id", "render_path", "z_index")
+        elif schema_version != _LEGACY_RENDERER_OBSERVATION_SCHEMA_VERSION:
+            raise ValueError("renderer observation schema_version is unsupported")
         _exact_keys(
             payload,
-            ("text", "x", "y", "width", "height", "line_count", "baseline"),
+            fields,
             "renderer_text_region",
         )
         return cls(
@@ -365,6 +421,9 @@ class RendererTextRegion:
             height=payload["height"],
             line_count=payload["line_count"],
             baseline=payload["baseline"],
+            region_id=payload.get("region_id"),
+            render_path=payload.get("render_path"),
+            z_index=payload.get("z_index"),
         )
 
 
@@ -377,7 +436,10 @@ class RendererObservation:
     schema_version: str = RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION:
+        if self.schema_version not in {
+            RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION,
+            _LEGACY_RENDERER_OBSERVATION_SCHEMA_VERSION,
+        }:
             raise ValueError("renderer observation schema_version is unsupported")
         if self.coordinate_space not in {
             "capture_pixels",
@@ -409,10 +471,27 @@ class RendererObservation:
             raise TypeError("text_regions must contain RendererTextRegion values")
         for region in regions:
             if (
+                self.schema_version == RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
+                and region.region_id is None
+            ):
+                raise ValueError("renderer v2 text regions require hierarchy metadata")
+            if (
+                self.schema_version == _LEGACY_RENDERER_OBSERVATION_SCHEMA_VERSION
+                and region.region_id is not None
+            ):
+                raise ValueError("renderer v1 text regions must not contain hierarchy metadata")
+            if (
                 region.x + region.width > self.viewport_width + 0.001
                 or region.y + region.height > self.viewport_height + 0.001
             ):
                 raise ValueError("renderer text region must fit inside the viewport")
+        if self.schema_version == RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION:
+            region_ids = [region.region_id for region in regions]
+            z_indices = [region.z_index for region in regions]
+            if len(region_ids) != len(set(region_ids)):
+                raise ValueError("renderer v2 text regions must have unique region IDs")
+            if len(z_indices) != len(set(z_indices)):
+                raise ValueError("renderer v2 text regions must have unique z-index values")
         object.__setattr__(self, "text_regions", regions)
 
     def to_dict(self) -> dict[str, JsonValue]:
@@ -421,7 +500,14 @@ class RendererObservation:
             "coordinate_space": self.coordinate_space,
             "viewport_width": self.viewport_width,
             "viewport_height": self.viewport_height,
-            "text_regions": [item.to_dict() for item in self.text_regions],
+            "text_regions": [
+                item.to_dict(
+                    include_hierarchy=(
+                        self.schema_version == RENPY_RENDERER_OBSERVATION_SCHEMA_VERSION
+                    )
+                )
+                for item in self.text_regions
+            ],
         }
 
     def to_capture_space(
@@ -480,6 +566,9 @@ class RendererObservation:
                     if region.baseline is not None
                     else None
                 ),
+                region_id=region.region_id,
+                render_path=region.render_path,
+                z_index=region.z_index,
             )
             for region in self.text_regions
         )
@@ -488,6 +577,7 @@ class RendererObservation:
             viewport_height=capture_height,
             text_regions=regions,
             coordinate_space="capture_pixels",
+            schema_version=self.schema_version,
         )
 
     @classmethod
@@ -510,7 +600,13 @@ class RendererObservation:
             coordinate_space=payload["coordinate_space"],
             viewport_width=payload["viewport_width"],
             viewport_height=payload["viewport_height"],
-            text_regions=tuple(RendererTextRegion.from_dict(item) for item in regions),
+            text_regions=tuple(
+                RendererTextRegion.from_dict(
+                    item,
+                    schema_version=payload["schema_version"],
+                )
+                for item in regions
+            ),
         )
 
 
@@ -606,16 +702,16 @@ class WindowsRenPyCaptureBackend:
             "        if _viewport_width < 1 or _viewport_height < 1:\n"
             "            return None\n"
             "        _regions = []\n"
-            "        _region_keys = set()\n"
-            "        _pending = [(_root, 0.0, 0.0, ())]\n"
+            "        _pending = [(_root, 0.0, 0.0, (), ())]\n"
             "        _visited = 0\n"
+            "        _draw_order = 0\n"
             "        while _pending and _visited < 10000:\n"
-            "            _node, _x, _y, _ancestors = _pending.pop()\n"
+            "            _node, _x, _y, _ancestors, _render_path = _pending.pop()\n"
             "            if id(_node) in _ancestors:\n"
             "                continue\n"
             "            _visited += 1\n"
             "            _render_of = getattr(_node, 'render_of', ())\n"
-            "            for _displayable in _render_of:\n"
+            "            for _text_index, _displayable in enumerate(_render_of):\n"
             "                if not isinstance(_displayable, renpy.text.text.Text):\n"
             "                    continue\n"
             "                _text = _displayable.get_all_text()\n"
@@ -637,13 +733,14 @@ class WindowsRenPyCaptureBackend:
             "                        _baseline = None\n"
             "                _line_count = len(getattr(_layout, 'lines', ()))\n"
             "                _values = (round(_left, 3), round(_top, 3), round(_right - _left, 3), round(_bottom - _top, 3))\n"
-            "                _key = (_text,) + _values + (_line_count, _baseline)\n"
-            "                if _key in _region_keys:\n"
-            "                    continue\n"
-            "                _region_keys.add(_key)\n"
-            "                _regions.append({'text': _text, 'x': _values[0], 'y': _values[1], 'width': _values[2], 'height': _values[3], 'line_count': _line_count, 'baseline': _baseline})\n"
+            "                _path_text = '.'.join(str(_part) for _part in _render_path) or 'root'\n"
+            "                _region_id = 'render:' + _path_text + ':text:' + str(_text_index)\n"
+            "                _regions.append({'region_id': _region_id, 'render_path': list(_render_path), 'z_index': _draw_order, 'text': _text, 'x': _values[0], 'y': _values[1], 'width': _values[2], 'height': _values[3], 'line_count': _line_count, 'baseline': _baseline})\n"
+            "                _draw_order += 1\n"
             "            _next_ancestors = _ancestors + (id(_node),)\n"
-            "            for _child in getattr(_node, 'children', ()):\n"
+            "            _children = tuple(getattr(_node, 'children', ()))\n"
+            "            for _child_index in range(len(_children) - 1, -1, -1):\n"
+            "                _child = _children[_child_index]\n"
             "                if not isinstance(_child, tuple) or len(_child) < 3:\n"
             "                    continue\n"
             "                try:\n"
@@ -652,8 +749,9 @@ class WindowsRenPyCaptureBackend:
             "                except (TypeError, ValueError):\n"
             "                    continue\n"
             "                if _hanengine_math.isfinite(_child_x) and _hanengine_math.isfinite(_child_y):\n"
-            "                    _pending.append((_child[0], _x + _child_x, _y + _child_y, _next_ancestors))\n"
-            "        _regions.sort(key=lambda _item: (_item['y'], _item['x'], _item['text']))\n"
+            "                    _child_path = _render_path + (_child_index,)\n"
+            "                    _pending.append((_child[0], _x + _child_x, _y + _child_y, _next_ancestors, _child_path))\n"
+            "        _regions.sort(key=lambda _item: (_item['z_index'], _item['region_id']))\n"
             "        return {'schema_version': _hanengine_renderer_schema, 'coordinate_space': 'renpy_virtual_pixels', 'viewport_width': _viewport_width, 'viewport_height': _viewport_height, 'text_regions': _regions}\n"
             "    def _hanengine_write_screen_state():\n"
             "        try:\n"

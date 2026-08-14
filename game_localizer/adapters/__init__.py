@@ -4,7 +4,13 @@ from .renpy import RenPyAdapter
 from .rpgmaker import RpgMakerMVAdapter, RpgMakerMZAdapter
 from .unity import UnityAdapter
 from .unreal import UnrealAdapter
-from .contract import AdapterV1
+from .contract import (
+    AdapterCapabilityMatrix,
+    AdapterV1,
+    CapabilityArea,
+    CapabilityDeclaration,
+    CapabilityStatus,
+)
 from .structured import (
     GodotAdapterV1,
     RenPyAdapterV1,
@@ -44,7 +50,11 @@ def get_adapters_v1() -> tuple[AdapterV1, ...]:
 
 
 __all__ = [
+    "AdapterCapabilityMatrix",
     "EngineAdapter",
+    "CapabilityArea",
+    "CapabilityDeclaration",
+    "CapabilityStatus",
     "GodotAdapterV1",
     "RenPyAdapterV1",
     "RpgMakerMVAdapterV1",

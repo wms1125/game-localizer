@@ -20,7 +20,14 @@ FORBIDDEN_PATH_SEGMENTS = frozenset({
     "decompiled-native", "decompiled-dotnet", "runtime-dump-raw",
     "embedded-scripts", "unpacked", "injector-source", "ghidra-scripts", "recovered-source",
 })
-SKIPPED_PATH_SEGMENTS = frozenset({".git", ".superpowers", "__pycache__"})
+SKIPPED_PATH_SEGMENTS = frozenset({
+    ".git",
+    ".pytest_cache",
+    ".superpowers",
+    ".tmp",
+    "__pycache__",
+    "node_modules",
+})
 COMPONENT_FIELDS = frozenset({
     "name", "version", "source_url", "sha256", "license_spdx", "usage", "redistributed",
 })

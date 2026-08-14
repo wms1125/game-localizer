@@ -5,6 +5,7 @@ import {
   ArrowDownToLine,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   CircleCheck,
@@ -27,6 +28,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  ScanSearch,
   Settings2,
   ShieldCheck,
   ShieldAlert,
@@ -39,7 +41,7 @@ import {
 } from "lucide-react";
 
 type Mode = "professional" | "normal";
-type View = "workspace" | "single" | "package" | "tasks";
+type View = "workspace" | "single" | "package" | "tasks" | "visual";
 
 const statusLabel: Record<TranslationRow["status"], string> = {
   translated: "已完成",
@@ -76,6 +78,25 @@ function selectedDetectionCandidate(report: DetectionReport | null) {
 function capabilityNames(candidate: DetectionCandidate | null) {
   if (!candidate) return [];
   return Array.isArray(candidate.capability) ? candidate.capability : candidate.capability ? [candidate.capability] : [];
+}
+
+function capabilityMatrixLabel(matrix: CapabilityMatrix | undefined) {
+  if (!matrix) return "";
+  const labels: Record<string, string> = {
+    native_text_replace: "原生文本",
+    dynamic_text: "动态文本",
+    raster_text: "栅格文字",
+    detect_only: "仅检测",
+  };
+  const statuses: Record<string, string> = {
+    implemented: "已实现",
+    verified: "已验证",
+    detect_only: "仅检测",
+    unsupported: "不支持",
+  };
+  return matrix.capabilities
+    .map((item) => `${labels[item.capability] || item.capability}：${statuses[item.status] || item.status}`)
+    .join(" · ");
 }
 
 function isPathInside(root: string, target: string) {
@@ -156,6 +177,16 @@ function App() {
   const [taskDetails, setTaskDetails] = useState<TaskStatus | null>(null);
   const [taskActionId, setTaskActionId] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [visualManifestPath, setVisualManifestPath] = useState("");
+  const [visualReportPath, setVisualReportPath] = useState("");
+  const [visualStatus, setVisualStatus] = useState<"idle" | "checking" | "passed" | "blocked" | "review" | "failed">("idle");
+  const [visualSummary, setVisualSummary] = useState<VisualReportSummary | null>(null);
+  const [visualReviewProof, setVisualReviewProof] = useState<VisualReviewProof | null>(null);
+  const [visualProofSaving, setVisualProofSaving] = useState(false);
+  const [visualSceneId, setVisualSceneId] = useState("");
+  const [visualImagePair, setVisualImagePair] = useState<VisualImagePair | null>(null);
+  const [visualConfirmedScenes, setVisualConfirmedScenes] = useState<Set<string>>(new Set());
+  const [visualImageLoading, setVisualImageLoading] = useState(false);
 
   useEffect(() => {
     void initializeAuth();
@@ -497,6 +528,126 @@ function App() {
     if (result?.code === 0) setView("tasks");
   }
 
+  async function chooseVisualManifest() {
+    const result = await window.hanengine?.selectFile({ title: "选择视觉证据清单", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (result && !result.canceled && result.filePaths[0]) {
+      setVisualManifestPath(result.filePaths[0]);
+      resetVisualReview();
+    }
+  }
+
+  async function chooseVisualReport() {
+    const result = await window.hanengine?.saveFile({ title: "保存视觉验收报告", defaultPath: "visual-report.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (result && !result.canceled && result.filePath) {
+      setVisualReportPath(result.filePath);
+      resetVisualReview();
+    }
+  }
+
+  async function openVisualReport() {
+    const result = await window.hanengine?.selectFile({ title: "打开视觉验收报告", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selectedPath = result.filePaths[0];
+    resetVisualReview();
+    setVisualReportPath(selectedPath);
+    await loadVisualReport(selectedPath);
+  }
+
+  function resetVisualReview() {
+    setVisualStatus("idle");
+    setVisualSummary(null);
+    setVisualReviewProof(null);
+    setVisualProofSaving(false);
+    setVisualSceneId("");
+    setVisualImagePair(null);
+    setVisualConfirmedScenes(new Set());
+    setVisualImageLoading(false);
+  }
+
+  async function selectVisualScene(sampleId: string, reportPath = visualReportPath) {
+    if (!sampleId || !reportPath) return;
+    setVisualSceneId(sampleId);
+    setVisualImagePair(null);
+    setVisualImageLoading(true);
+    try {
+      setVisualImagePair(await window.hanengine.readVisualImagePair(reportPath, sampleId));
+    } catch (error) {
+      appendLog(`视觉证据读取失败：${String(error)}`);
+    } finally {
+      setVisualImageLoading(false);
+    }
+  }
+
+  function toggleVisualSceneConfirmation(sampleId: string, confirmed: boolean) {
+    if (visualReviewProof || visualProofSaving) return;
+    setVisualConfirmedScenes((current) => {
+      const next = new Set(current);
+      if (confirmed) next.add(sampleId); else next.delete(sampleId);
+      return next;
+    });
+  }
+
+  async function completeVisualReview() {
+    if (!visualSummary || visualStatus !== "review") return;
+    if (visualSummary.scenes.some((scene) => !visualConfirmedScenes.has(scene.sampleId))) return;
+    setVisualProofSaving(true);
+    try {
+      const proof = await window.hanengine.createVisualReviewProof(visualReportPath, [...visualConfirmedScenes]);
+      setVisualReviewProof(proof);
+      setVisualStatus("passed");
+      appendLog(`人工复核证明已保存：${proof.proofPath}`);
+    } catch (error) {
+      appendLog(`人工复核证明保存失败：${String(error)}`);
+    } finally {
+      setVisualProofSaving(false);
+    }
+  }
+
+  async function loadVisualReport(reportPath: string) {
+    try {
+      const summary = await window.hanengine.readVisualReport(reportPath);
+      setVisualSummary(summary);
+      const proof = await window.hanengine.readVisualReviewProof(reportPath);
+      setVisualReviewProof(proof);
+      setVisualConfirmedScenes(proof ? new Set(summary.scenes.map((scene) => scene.sampleId)) : new Set());
+      const nextStatus = summary.decision === "blocked" ? "blocked" : proof ? "passed" : "review";
+      setVisualStatus(nextStatus);
+      if (nextStatus !== "blocked" && summary.scenes[0]) await selectVisualScene(summary.scenes[0].sampleId, reportPath);
+    } catch (error) {
+      setVisualStatus("failed");
+      appendLog(`视觉报告读取失败：${String(error)}`);
+    }
+  }
+
+  async function runVisualVerification() {
+    if (!visualManifestPath || !visualReportPath || running) return;
+    setVisualStatus("checking");
+    setVisualSummary(null);
+    setVisualReviewProof(null);
+    setVisualProofSaving(false);
+    setVisualSceneId("");
+    setVisualImagePair(null);
+    setVisualConfirmedScenes(new Set());
+    const result = await runPython(
+      [
+        "visual", "verify", "--manifest", visualManifestPath, "--output", visualReportPath,
+        "--authorized", "--authorization-reference", "client-owner-authorized-visual-check",
+        "--zhipu-model", "glm-4.6v", "--zhipu-timeout", "180",
+        "--ocr-language", "chi_sim+eng", "--ocr-provider", "rapidocr",
+      ],
+      "视觉验收",
+    );
+    if (!result) {
+      setVisualStatus("failed");
+      return;
+    }
+    if (!result.stdout.includes("Report:")) {
+      setVisualStatus("failed");
+      return;
+    }
+    await loadVisualReport(visualReportPath);
+  }
+
   async function saveCatalog() {
     if (!catalogPath || !window.hanengine) return appendLog("请先加载或提取翻译目录。");
     try {
@@ -532,10 +683,11 @@ function App() {
     { id: "workspace" as View, label: "工作台", icon: <LayoutPanelLeft size={16} /> },
     { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
     { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
+    { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
     { id: "tasks" as View, label: "任务中心", icon: <ListChecks size={16} /> },
   ];
   const visibleNavItems = mode === "normal"
-    ? navItems.filter((item) => item.id === "workspace" || item.id === "tasks")
+    ? navItems.filter((item) => item.id === "workspace" || item.id === "visual" || item.id === "tasks")
     : navItems;
 
   if (!authReady) return <AuthLoadingScreen />;
@@ -590,6 +742,26 @@ function App() {
 
           {view === "single" && <OperationView title="单文件翻译" description="使用现有 translator.py 处理 TXT、KS、RPY、SCRIPT、CSV 或 JSON 资源。" primaryLabel="执行汉化" onPrimary={() => resourcePath && dictionaryPath && runPython([resourcePath, dictionaryPath], "单文件汉化")}><PathField label="资源文件" value={resourcePath} onPick={async () => { const result = await window.hanengine?.selectFile(); if (result && !result.canceled) setResourcePath(result.filePaths[0]); }} /><PathField label="翻译字典" value={dictionaryPath} onPick={chooseDictionary} /></OperationView>}
           {view === "package" && <OperationView title="封包输出" description="生成独立 ZIP 副本，保留原始项目不被覆盖。" primaryLabel="生成 ZIP 副本" onPrimary={() => appendLog("封包参数已保留，请在工作室模式选择源包和补丁文件。")}><div className="notice-card"><Archive size={20} /><div><strong>安全输出边界</strong><span>Electron 仅负责选择路径和展示结果，实际 ZIP 校验与写入仍由 Python `cli.py package` 执行。</span></div></div></OperationView>}
+          {view === "visual" && <VisualVerificationView
+            manifestPath={visualManifestPath}
+            reportPath={visualReportPath}
+            status={visualStatus}
+            summary={visualSummary}
+            reviewProof={visualReviewProof}
+            proofSaving={visualProofSaving}
+            selectedSceneId={visualSceneId}
+            imagePair={visualImagePair}
+            imageLoading={visualImageLoading}
+            confirmedScenes={visualConfirmedScenes}
+            running={running}
+            onChooseManifest={chooseVisualManifest}
+            onChooseReport={chooseVisualReport}
+            onOpenReport={() => void openVisualReport()}
+            onRun={runVisualVerification}
+            onSelectScene={(sampleId) => void selectVisualScene(sampleId)}
+            onConfirmScene={toggleVisualSceneConfirmation}
+            onCompleteReview={() => void completeVisualReview()}
+          />}
           {view === "tasks" && <TaskView
             tasks={tasks}
             selectedTask={selectedTask}
@@ -713,6 +885,71 @@ function OperationView({ title, description, primaryLabel, onPrimary, children }
   return <section className="operation-view"><div className="operation-heading"><div><span className="eyebrow">HanEngine / 工具</span><h2>{title}</h2><p>{description}</p></div><button className="primary-button" onClick={onPrimary}><Play size={15} />{primaryLabel}</button></div><div className="operation-content">{children}</div></section>;
 }
 
+function VisualVerificationView({
+  manifestPath, reportPath, status, summary, reviewProof, proofSaving, selectedSceneId, imagePair, imageLoading,
+  confirmedScenes, running, onChooseManifest, onChooseReport, onRun, onSelectScene,
+  onOpenReport, onConfirmScene, onCompleteReview,
+}: {
+  manifestPath: string;
+  reportPath: string;
+  status: "idle" | "checking" | "passed" | "blocked" | "review" | "failed";
+  summary: VisualReportSummary | null;
+  reviewProof: VisualReviewProof | null;
+  proofSaving: boolean;
+  selectedSceneId: string;
+  imagePair: VisualImagePair | null;
+  imageLoading: boolean;
+  confirmedScenes: Set<string>;
+  running: boolean;
+  onChooseManifest: () => void;
+  onChooseReport: () => void;
+  onOpenReport: () => void;
+  onRun: () => void;
+  onSelectScene: (sampleId: string) => void;
+  onConfirmScene: (sampleId: string, confirmed: boolean) => void;
+  onCompleteReview: () => void;
+}) {
+  const stateCopy = {
+    idle: ["等待检查", "选择视觉证据清单和报告输出位置。"],
+    checking: ["检查中", "正在运行本地 OCR、硬门禁和 GLM 视觉判官。"],
+    passed: ["已通过", "确定性硬门禁与人工复核均已确认无阻断问题。"],
+    blocked: ["已阻断", "硬门禁发现不可自动放行的问题，请先修复并重新验收。"],
+    review: ["人工复核", "硬门禁未发现问题；GLM 结果仅作辅助，请由人工查看截图与报告。"],
+    failed: ["执行失败", "未能生成或读取有效报告，请查看任务日志。"],
+  }[status];
+  const selectedIndex = summary?.scenes.findIndex((scene) => scene.sampleId === selectedSceneId) ?? -1;
+  const reviewComplete = Boolean(summary?.scenes.length) && summary!.scenes.every((scene) => confirmedScenes.has(scene.sampleId));
+  return <section className="operation-view visual-view">
+    <div className="operation-heading"><div><span className="eyebrow">HanEngine / 发布前检查</span><h2>视觉验收</h2><p>客户端统一管理验收入口；游戏内不增加语言菜单。Key 仅由本机 Python 进程从环境变量读取。</p></div><button className="primary-button" onClick={onRun} disabled={!manifestPath || !reportPath || running}>{status === "checking" ? <LoaderCircle size={15} className="spin" /> : <ScanSearch size={15} />}{status === "checking" ? "检查中" : "开始验收"}</button></div>
+    <div className="visual-controls">
+      <PathField label="证据清单" value={manifestPath} onPick={onChooseManifest} />
+      <PathField label="报告输出" value={reportPath} onPick={onChooseReport} />
+      <button className="secondary-button" onClick={onOpenReport}><FolderOpen size={15} />打开已有报告</button>
+      <div className="visual-settings"><span>视觉模型</span><strong>GLM-4.6V</strong><span>本地 OCR</span><strong>RapidOCR · chi_sim+eng</strong></div>
+    </div>
+    <div className={`visual-state ${status}`}><div className="visual-state-heading"><span className="visual-state-icon">{status === "checking" ? <LoaderCircle size={18} className="spin" /> : status === "passed" ? <CircleCheck size={18} /> : status === "blocked" || status === "failed" ? <ShieldAlert size={18} /> : <CircleAlert size={18} />}</span><div><strong>{stateCopy[0]}</strong><span>{stateCopy[1]}</span></div></div>{summary && <div className="visual-summary"><span>硬门禁 <b>{summary.hardGatePassedCount}/{summary.hardGateCount}</b></span><span>判官 <b>{summary.judgeModels.join("、") || "未运行"}</b></span><span>问题 <b>{summary.issues.length}</b></span>{reviewProof && <span title={reviewProof.proofPath}>人工证明 <b>{reviewProof.reviewer.display_name}</b></span>}</div>}</div>
+    {summary && (summary.issues.length > 0 || summary.reasons.length > 0) && <div className="visual-findings"><strong>报告摘要</strong><ul>{[...summary.issues, ...summary.reasons].slice(0, 8).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div>}
+    {summary && status !== "blocked" && status !== "failed" && summary.scenes.length > 0 && <div className="visual-review">
+      <div className="visual-review-toolbar">
+        <div><strong>逐场景人工复核</strong><span>{confirmedScenes.size}/{summary.scenes.length} 已确认</span></div>
+        <div className="visual-review-nav">
+          <button className="icon-button" title="上一个场景" disabled={selectedIndex <= 0} onClick={() => onSelectScene(summary.scenes[selectedIndex - 1].sampleId)}><ChevronLeft size={16} /></button>
+          <select aria-label="复核场景" value={selectedSceneId} onChange={(event) => onSelectScene(event.target.value)}>{summary.scenes.map((scene) => <option key={scene.sampleId} value={scene.sampleId}>{scene.sampleId}</option>)}</select>
+          <button className="icon-button" title="下一个场景" disabled={selectedIndex < 0 || selectedIndex >= summary.scenes.length - 1} onClick={() => onSelectScene(summary.scenes[selectedIndex + 1].sampleId)}><ChevronRight size={16} /></button>
+        </div>
+      </div>
+      <div className="visual-pair">
+        <figure><figcaption>原文参考</figcaption>{imagePair?.sampleId === selectedSceneId ? <img src={imagePair.referenceDataUrl} alt={`${selectedSceneId} 原文参考`} /> : <div className="visual-image-loading">{imageLoading ? <LoaderCircle size={18} className="spin" /> : <CircleAlert size={18} />}</div>}</figure>
+        <figure><figcaption>中文候选</figcaption>{imagePair?.sampleId === selectedSceneId ? <img src={imagePair.candidateDataUrl} alt={`${selectedSceneId} 中文候选`} /> : <div className="visual-image-loading">{imageLoading ? <LoaderCircle size={18} className="spin" /> : <CircleAlert size={18} />}</div>}</figure>
+      </div>
+      <div className="visual-review-actions">
+        <label><input type="checkbox" checked={confirmedScenes.has(selectedSceneId)} disabled={Boolean(reviewProof) || proofSaving || !selectedSceneId || imagePair?.sampleId !== selectedSceneId} onChange={(event) => onConfirmScene(selectedSceneId, event.target.checked)} /><span>{reviewProof ? "该场景已写入人工复核证明" : "已检查该场景，未发现阻断发布的问题"}</span></label>
+        {status === "review" && <button className="primary-button" disabled={!reviewComplete || proofSaving} onClick={onCompleteReview}>{proofSaving ? <LoaderCircle size={15} className="spin" /> : <ShieldCheck size={15} />}{proofSaving ? "保存证明中" : "确认人工验收"}</button>}
+      </div>
+    </div>}
+  </section>;
+}
+
 function QuickLocalizationView({
   projectPath,
   detection,
@@ -757,7 +994,7 @@ function QuickLocalizationView({
     </div>
     {detection && <div className={`capability-card ${ready ? "allowed" : "blocked"}`}>
       {ready ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
-      <div><strong>{ready ? "可以执行一键汉化" : "当前项目仅允许检测"}</strong><span>{ready ? `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}` : (candidate?.limitations?.join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")}</span></div>
+      <div><strong>{ready ? "可以执行一键汉化" : "当前项目仅允许检测"}</strong><span>{ready ? `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}` : (candidate?.limitations?.join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")}</span>{candidate?.capability_matrix && <small className="capability-matrix-summary">{capabilityMatrixLabel(candidate.capability_matrix)}</small>}</div>
       <span className="capability-state">{detection.status}</span>
     </div>}
     <div className="quick-actions"><button className="primary-button" disabled={!ready || !dictionaryPath || !outputPath || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">原项目不会被覆盖，所有产物写入独立目录。</span></div>

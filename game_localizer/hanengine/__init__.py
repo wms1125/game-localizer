@@ -124,6 +124,7 @@ from .visual_style import (
 from .visual_evidence import (
     CommandImageVisualJudge,
     ImageVisualJudge,
+    ZhipuImageVisualJudge,
     ManualVisualAnnotationSample,
     ManualVisualAnnotations,
     VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION,
@@ -352,6 +353,7 @@ __all__ = [
     "run_visual_hard_gates",
     "CommandImageVisualJudge",
     "ImageVisualJudge",
+    "ZhipuImageVisualJudge",
     "ManualVisualAnnotationSample",
     "ManualVisualAnnotations",
     "VISUAL_EVIDENCE_ANNOTATIONS_SCHEMA_VERSION",
