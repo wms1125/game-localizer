@@ -4,13 +4,13 @@
 
 - 仓库：`C:/Users/23256/Documents/汉化/.worktrees/game-localizer`
 - 分支：`codex/game-localizer`
-- HEAD：`e0efb56 feat: complete visual gates and adapter capability contracts`
-- 远端关系：相对 `origin/codex/game-localizer-checkpoint` 超前 7 个提交。
-- 工作树：存在大量未提交和未跟踪改动；本摘要只记录检查到的现状，不表示这些改动已经提交、推送或全部通过验证。
+- 验收基线：`441fd7f fix: preserve English table in Addressables builds`
+- 阶段检查点：此前 8 个提交已推送到 `origin/codex/game-localizer-checkpoint`；本地上游跟踪指针与验收基线一致。
+- 工作树：存在大量未提交和未跟踪改动；本摘要只记录检查到的现状，不表示这些改动已经提交、推送或全部通过验证。v17 验收报告和截图保存在本机 `.tmp/`，不包含在本次文档提交中。
 
 ## 状态概览
 
-HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、本地模型翻译接口、任务状态持久化、质量报告和候选验证能力。Ren'Py 与部分 Godot 项目有真实项目验证证据，RPG Maker MV 有固定项目的 `build_ready` 候选。
+HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、本地模型翻译接口、任务状态持久化、质量报告和候选验证能力。Ren'Py 与部分 Godot 项目有真实项目验证证据；RPG Maker MV 的 Apache-2.0 Hello Underworld 固定样本已完成 v17 文本、字体和 NW.js 冒烟验收，记录结论为范围限定的 `verified`。本轮也修正了 NW.js 启动冒烟必须绑定栅格清单的限制：纯文本候选可以独立检查标题、开局地图、运行错误和截图；视频检查仍只在显式提供栅格清单时启用。
 
 当前最大的用户流程缺口转为：尚无真实打包 Unity 项目的端到端验收。当前代码已把限定格式的 Unity Localization Addressables 接入标准 Unity AdapterV1：只有英文/简体中文 String Table bundle、两侧条目 ID 一致且 `catalog.bin` 含对应 bundle CRC 时，才开放提取、构建和验证；合成 AdapterV1/HanGuard 流程测试通过。未知布局仍为 `detect_only`。这证明了代码路径已接入，不代表已在《How to Fish》或其他真实游戏 bundle 上验证；前序 `.tmp` 日志、候选和报告本次仍无法复核。
 
@@ -37,7 +37,7 @@ HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、�
 | 引擎/项目 | 当前证据 | 边界 |
 | --- | --- | --- |
 | Ren'Py | 明文 `.rpy` 支持对白、菜单、静态 screen 文本、部分动态表达式、语言激活与字体构建；官方 The Question 和 Heartfelt Moments 有 `verified` 记录。 | `.rpa`、`.rpyc` 不在明文结构化写回范围。机械测试字典证明工程闭环，不等于语言质量认证。 |
-| RPG Maker MV | Hello Underworld v15 有仅含结构化文字和字体的 `build_ready` 候选，覆盖地图事件、角色、物品、技能、菜单等文本。 | 没有真实项目 `verified` 结论；图片和视频资源保持源版本。 |
+| RPG Maker MV | Hello Underworld Apache-2.0 v15 样本的 v17 候选已记录为 `verified`：审校目录 1,954/1,954 条匹配，未处理项为 0，字体缺失码位为 0，NW.js 0.29.4 检查 23/23 通过。 | 仅覆盖结构化文本、字体和启动冒烟；没有完整游玩、视频或栅格资源验收，标题图仍显示英文 “ASPHODEL”，地图截图为全黑。此结论不代表译文质量认证。 |
 | RPG Maker MZ | 支持明文 `data/*.json` 的结构化提取、构建和内部验证。 | 尚无真实授权项目 `verified` 记录。 |
 | Godot | 支持 PO/CSV 资源、语言标识规范化、CJK 字体注入及窄范围静态名称发现；Dodge the Creeps 派生项目的 PO 路径有 `verified` 记录。 | `.pck` 只检测；Open RPG 在指定 Godot 4.6.2 下因上游 Dialogic 脚本错误保持 `failed`，不归因于汉化候选。 |
 | Unity | 原始工程 XLIFF/CSV；一个严格识别的 Unity Localization 英文/简体中文 Addressables 字符串表 profile 已进入标准 AdapterV1。 | Addressables 合成测试覆盖 HanGuard 路由、提取、项目外简体中文 bundle 构建、英文 bundle 保留、catalog CRC 更新门、表回读和文件哈希；没有真实打包游戏认证或运行冒烟。其他 Player/Addressables 布局仍仅检测。 |
@@ -52,10 +52,13 @@ HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、�
 
 ### 最近记录的测试
 
-- Python 测试：现有 2026-08-22 状态摘要记录，R.E.P.O. 本地模型实现后的回归为 `609/609` 通过（该摘要另有更早的 `585/585` 记录）；本次未重新运行。
+- Python 定向测试：2026-10-13 使用 Python 3.12 重新运行 NW.js 与项目验证模块，`23/23` 通过，其中新增纯文本、无栅格清单运行冒烟路径测试。
+- 完整 Python 回归：2026-10-13，`622/622` 通过。
+- Electron 质量报告测试：2026-10-13，`3/3` 通过。
+- Python 测试：现有 2026-08-22 状态摘要记录，R.E.P.O. 本地模型实现后的回归为 `609/609` 通过（该摘要另有更早的 `585/585` 记录）；这不是本轮完整回归结果。
 - Electron 测试、TypeScript 检查和 Vite 构建：2026-08-22 项目状态记录为通过，其中 Electron 为 `13/13`。
-- 上一轮 Addressables AdapterV1 与 HanGuard/AdapterRuntime 定向回归记录为 `89 passed`、`12 subtests passed`（地址表适配器、能力矩阵、结构化适配器、AdapterRuntime 和 feature CLI）；使用合成文件和 UnityPy 边界替身，没有读取真实游戏 bundle。本轮因环境未安装 Python 解释器，未能重跑。
-- 上述回归数字来自已有记录，不代表 2026-10-13 当天重新验证。
+- 上一轮 Addressables AdapterV1 与 HanGuard/AdapterRuntime 定向回归记录为 `89 passed`、`12 subtests passed`（地址表适配器、能力矩阵、结构化适配器、AdapterRuntime 和 feature CLI）；使用合成文件和 UnityPy 边界替身，没有读取真实游戏 bundle，本轮未重跑。
+- Electron 测试、TypeScript 检查和 Vite 构建未在本轮重跑。
 
 ## 当前代码结构
 
@@ -116,8 +119,11 @@ game-localizer/
 
 - 限定 Addressables profile 已注册在标准 Unity AdapterV1，HanGuard 的 `player` 模式对它开放 Adapter 能力范围内的操作；合成 runtime 测试已验证提取进入 HanStore。
 - Adapter 只支持标准目录形态下配对的 `localization-string-tables-english*.bundle` 与 `localization-string-tables-chinese(simplified)*.bundle`；会检查表后缀/ID、两个源 bundle CRC 与 `catalog.bin`，构建时只写简体中文 bundle 并保留英文 bundle，候选在源目录外生成并回读。
-- 对可访问的 `.tmp/how-to-fish-qwen25-3b-v1` 做过只读 catalog 探测：文件为 73,284 字节，简体中文 bundle CRC `0x4676f30b` 的小端值只出现一次（偏移 14602）；前序只读探测记录的英文 bundle CRC `0xca6e6605` 未在 catalog 中找到，因此该样本不满足严格 profile，必须保持 `detect_only`。本轮环境缺少 Python/UnityPy，未重新计算 bundle CRC。
+- 对可访问的 `.tmp/how-to-fish-qwen25-3b-v1` 做过只读 catalog 探测：文件为 73,284 字节，简体中文 bundle CRC `0x4676f30b` 的小端值只出现一次（偏移 14602）；前序只读探测记录的英文 bundle CRC `0xca6e6605` 未在 catalog 中找到，因此该样本不满足严格 profile，必须保持 `detect_only`。本轮没有重新计算 bundle CRC，也没有 UnityPy 真实 bundle 读写证据。
 - 仍没有真实 bundle 的 UnityPy 读取/写回验证，也没有《How to Fish》端到端任务日志、候选报告或图形启动验收。不能把合成测试写成真实项目 `verified`。
+- Hello Underworld v16 记录失败的原因是验收命令传入了仓库外层目录；检测到了 MV 标记，但该目录没有游戏所需的 `data/`，提取返回 `UNSUPPORTED_INPUT`。实际游戏根目录为源项目的 `Main/`，这是输入路径错误，不是适配器缺陷。保留 v16 记录用于诊断。
+- v17 在正确的 `Main/` 根目录完成，验证记录结论为 `verified`：审校目录匹配 `1,954/1,954`，未处理项为 0，字体缺失码位为 0；NW.js 0.29.4 检查 `23/23` 通过，源树和候选树指纹在运行前后保持一致，运行错误数为 0。标题场景的游戏标题及菜单文本为中文；静态标题图仍含英文 “ASPHODEL”。地图场景读到地图 12、坐标 `(1,1)`，但源版和候选版截图均为全黑。
+- 本次未配置栅格资源清单，视频检查为 0；没有进行完整游戏流程或译文质量认证。因此 `verified` 只适用于这条记录中的文本、字体和 NW.js 启动冒烟范围，不能作为整款游戏完整汉化验收。
 
 ### P1：模型翻译稳定性和断点恢复
 
@@ -143,11 +149,11 @@ game-localizer/
 2. **补齐 Addressables 失败诊断和模型质量门。** 当前适配器已使用 HanPipeline/HanStore 的段级检查点，并报告表/条目进度；下一步应暴露模型校验错误类别、重试信息，并验证失败恢复可从已保存段继续。
 3. **补齐原子构建与 Unity 校验。** 在项目外候选中只回写简体中文表、保留英文表、更新 `catalog.bin` 中对应 bundle CRC、重新读取表并验证占位符/富文本/换行，然后做候选启动冒烟；任何阶段失败都保留诊断报告，不触及源目录。
 4. **增加模型输出质量门。** 记录原始错误类别与重试次数；拒绝上下文污染、丢失控制符、非法换行和标签顺序破坏；将低置信或疑似直译项目进入人工审校目录。
-5. **完成普通用户端到端验收。** 桌面普通模式选择《How to Fish》时应展示适配器支持范围、翻译进度、断点恢复、质量报告和候选打开入口；继续用不支持资源测试 `detect_only` 提示。
-6. **刷新发布证据。** 在文档化的工作树状态上重新运行 Python、Electron、TypeScript/Vite 检查；完成普通模式 E2E、桌面安装包、升级和回滚验证后，再更新发布结论。
+5. **完成普通用户端到端验收并刷新发布证据。** 桌面普通模式展示适配器范围、进度、断点恢复、质量报告和候选入口；然后重跑完整 Python、Electron、TypeScript/Vite 检查及干净环境安装、升级和回滚验证。
 
 ## 证据与结论说明
 
-- 本文日期和仓库分支/工作树状态在 2026-10-13 检查；项目文档中的若干验证结果来自 2026-08-21 至 2026-08-24 的测试记录。
+- 本文项目分支状态、NW.js 纯文本验收改动和定向测试结果在 2026-10-13 检查；较早的跨引擎回归结果仍来自 2026-08-21 至 2026-08-24。
+- Hello Underworld v16/v17 验收记录位于本地 `.tmp/rpg-maker-hello-underworld-validation-record-v16-e2e.json` 和 `.tmp/rpg-maker-hello-underworld-validation-record-v17-e2e.json`。v17 记录 SHA-256 为 `6c6be2f1853d9c007ea64b77bcdf5ea59c714d71c18fb87eddd8fb03e5fb72b4`；NW.js 报告 SHA-256 为 `7e5ce516161389cdb6df4ee71db48ef0e9e4707778f1c7c3c8385e5706768b89`。运行截图在 `.tmp/rpg-maker-hello-underworld-nwjs-evidence-v17-e2e/`，这些 `.tmp` 文件未纳入 Git。
 - 《How to Fish》普通用户流程和 Addressables 专项测试的路径来自前序操作记录；本次检查未找到 `.tmp/how-to-fish-player-run-v1/`、`.tmp/htf-v4/` 或 `.tmp/how-to-fish-qwen25-3b-report-v3.json`。若要将该结论作为可复现项目证据，应重跑并将日志、候选验证报告保存在可访问位置。
 - `build_ready` 表示结构化构建和内部验证达到候选状态；`verified` 只对记录中的固定项目、版本和资源范围有效。两者都不自动代表译文通过出版级语言审校。
