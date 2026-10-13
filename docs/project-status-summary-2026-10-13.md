@@ -5,8 +5,8 @@
 - 仓库：`C:/Users/23256/Documents/汉化/.worktrees/game-localizer`
 - 分支：`codex/game-localizer`
 - 验收基线：`441fd7f fix: preserve English table in Addressables builds`
-- 当前 HEAD：`f0f5f53 fix: route Unity workflows through Addressables adapter`
-- 远端关系：验收基线上的 8 个提交已推送；本轮 `1ecca7d` 与 `f0f5f53` 两个检查点已本地提交，但推送到 `origin/codex/game-localizer-checkpoint` 时 GitHub HTTPS 连接低速超时，远端目前落后 2 个提交。
+- 最新代码检查点：`f0f5f53 fix: route Unity workflows through Addressables adapter`
+- 远端关系：验收基线上的 8 个提交已推送；`1ecca7d`、`f0f5f53` 和后续状态文档更正均已本地提交，但推送到 `origin/codex/game-localizer-checkpoint` 时 GitHub HTTPS 连接超时，远端跟踪指针仍停留在验收基线。工作树中本任务以外的改动未纳入这些提交。
 - 工作树：仍有本任务以外的大量未提交和未跟踪改动；本摘要只记录检查到的现状，不表示其余改动已提交、推送或全部通过验证。Hello Underworld 与 Unity 往返证据保存在本机 `.tmp/`，不包含在 Git 中。
 
 ## 状态概览
