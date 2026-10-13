@@ -623,7 +623,11 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                     raise UnityAddressablesError("output root already exists and is not empty")
                 removed_placeholder = True
             output.parent.mkdir(parents=True, exist_ok=True)
-            temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.addressables.", dir=str(output.parent)))
+            # Keep the copied tree under the system temp directory.  A Unity
+            # Addressables path plus a user-chosen candidate name can exceed
+            # Windows' legacy MAX_PATH limit when the staging tree sits next
+            # to the output directory.
+            temporary = Path(tempfile.mkdtemp(prefix="hnu-addr-"))
             _copy_project_tree(request.source_root.resolve(strict=True), temporary, request.context)
             candidate_profile = _profile(temporary)
             if candidate_profile is None:
@@ -747,7 +751,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
             request.context.checkpoint()
             profile = _profile(request.staging_root)
             if profile is None:
-                raise UnityAddressablesError("candidate does not contain a supported Addressables profile")
+                return super().verify(request)
             checks: list[VerificationCheck] = []
             hashes: dict[str, str] = {}
             issues: list[ValidationIssue] = []

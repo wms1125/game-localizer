@@ -368,6 +368,10 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
             patch("game_localizer.adapters.unity_addressables._profile", side_effect=self._profile),
             patch("game_localizer.adapters.unity_addressables._replace_bundle", side_effect=write_translations),
             patch("game_localizer.adapters.unity_addressables._update_catalog", side_effect=update_catalog),
+            patch(
+                "game_localizer.adapters.unity_addressables.tempfile.mkdtemp",
+                wraps=tempfile.mkdtemp,
+            ) as make_temporary,
         ):
             built = adapter.build(
                 BuildRequest(
@@ -392,6 +396,7 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
 
         self.assertIsInstance(verified, VerifyResult)
         self.assertTrue(verified.passed)
+        self.assertEqual(make_temporary.call_args.kwargs, {"prefix": "hnu-addr-"})
         self.assertEqual(len(built.modified_files), 2)
         self.assertEqual(built.statistics["english_entries_preserved"], 1)
         self.assertEqual(built.statistics["chinese_entries"], 1)
