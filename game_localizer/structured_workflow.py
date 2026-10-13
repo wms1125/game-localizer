@@ -11,9 +11,9 @@ from game_localizer.adapters.structured import (
     RenPyAdapterV1,
     RpgMakerMVAdapterV1,
     RpgMakerMZAdapterV1,
-    UnityAdapterV1,
     UnrealAdapterV1,
 )
+from game_localizer.adapters.unity_addressables import UnityAddressablesAdapterV1
 from game_localizer.adapters.contract import (
     BuildRequest,
     BuildResult,
@@ -66,7 +66,7 @@ _ADAPTER_TYPES = {
     "rpg_maker_mv": RpgMakerMVAdapterV1,
     "rpg_maker_mz": RpgMakerMZAdapterV1,
     "godot": GodotAdapterV1,
-    "unity": UnityAdapterV1,
+    "unity": UnityAddressablesAdapterV1,
     "unreal": UnrealAdapterV1,
 }
 

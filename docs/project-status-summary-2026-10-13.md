@@ -12,7 +12,7 @@
 
 HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、本地模型翻译接口、任务状态持久化、质量报告和候选验证能力。Ren'Py 与部分 Godot 项目有真实项目验证证据；RPG Maker MV 的 Apache-2.0 Hello Underworld 固定样本已完成 v17 文本、字体和 NW.js 冒烟验收，记录结论为范围限定的 `verified`。本轮也修正了 NW.js 启动冒烟必须绑定栅格清单的限制：纯文本候选可以独立检查标题、开局地图、运行错误和截图；视频检查仍只在显式提供栅格清单时启用。
 
-当前最大的用户流程缺口转为：尚无真实打包 Unity 项目的端到端验收。当前代码已把限定格式的 Unity Localization Addressables 接入标准 Unity AdapterV1：只有英文/简体中文 String Table bundle、两侧条目 ID 一致且 `catalog.bin` 含对应 bundle CRC 时，才开放提取、构建和验证；合成 AdapterV1/HanGuard 流程测试通过。未知布局仍为 `detect_only`。这证明了代码路径已接入，不代表已在《How to Fish》或其他真实游戏 bundle 上验证；前序 `.tmp` 日志、候选和报告本次仍无法复核。
+当前最大的用户流程缺口仍是：没有真实打包 Unity 游戏的模型翻译和完整图形运行验收。2026-10-13 的标准工作流已在当前《How to Fish》安装版上识别并提取 646 条；从实际 Addressables bundles 建立的轻量外部夹具也已通过 HanPipeline、候选构建和完整回读验证。该夹具使用游戏现有简中表作为确定性测试数据，并为一条占位符不匹配记录回退英文；它不代表模型翻译，也不包含可启动的完整游戏。模型服务当前未运行，完整安装版候选及游戏内启动尚未验收。
 
 ## 已完成内容
 
@@ -40,19 +40,24 @@ HanEngine 已有多引擎结构化文本工作流、Electron 桌面工作台、�
 | RPG Maker MV | Hello Underworld Apache-2.0 v15 样本的 v17 候选已记录为 `verified`：审校目录 1,954/1,954 条匹配，未处理项为 0，字体缺失码位为 0，NW.js 0.29.4 检查 23/23 通过。 | 仅覆盖结构化文本、字体和启动冒烟；没有完整游玩、视频或栅格资源验收，标题图仍显示英文 “ASPHODEL”，地图截图为全黑。此结论不代表译文质量认证。 |
 | RPG Maker MZ | 支持明文 `data/*.json` 的结构化提取、构建和内部验证。 | 尚无真实授权项目 `verified` 记录。 |
 | Godot | 支持 PO/CSV 资源、语言标识规范化、CJK 字体注入及窄范围静态名称发现；Dodge the Creeps 派生项目的 PO 路径有 `verified` 记录。 | `.pck` 只检测；Open RPG 在指定 Godot 4.6.2 下因上游 Dialogic 脚本错误保持 `failed`，不归因于汉化候选。 |
-| Unity | 原始工程 XLIFF/CSV；一个严格识别的 Unity Localization 英文/简体中文 Addressables 字符串表 profile 已进入标准 AdapterV1。 | Addressables 合成测试覆盖 HanGuard 路由、提取、项目外简体中文 bundle 构建、英文 bundle 保留、catalog CRC 更新门、表回读和文件哈希；没有真实打包游戏认证或运行冒烟。其他 Player/Addressables 布局仍仅检测。 |
+| Unity | 原始工程 XLIFF/CSV；一个严格识别的 Unity Localization 英文/简体中文 Addressables 字符串表 profile 已进入标准 AdapterV1。当前安装版《How to Fish》已提取 646 条；用实际 bundle 文件创建的轻量夹具已通过标准 HanPipeline、候选构建和表/CRC 回读。 | 夹具使用游戏现有简中表作为测试输入，不是机器翻译或完整游戏候选；其中一条缺 `{0}` 的简中值回退英文，需人工审阅。完整安装版候选、真实模型翻译和图形启动仍未验收。旧 v4 专项候选改写了英文表，且 594 条目录指纹已过期。其他 Player/Addressables 布局仍仅检测。 |
 | Unreal | 原始工程 PO 有结构化能力和合成样例验证。 | `.pak`、`.ucas`、`.utoc` 只检测；暂无真实项目 `verified` 记录。 |
 
 ### 本地模型与游戏试验
 
 - 已建立 `LocalModelTranslationProvider` 和 Ollama 回环桥接；基线模型为 `qwen2.5:3b`，本机服务地址 `127.0.0.1:11434`，HanEngine 桥接地址 `127.0.0.1:8080`。
 - R.E.P.O. 曾通过 HanEngine `player` 工作流完成 603/603 条 Unity TSV 文本翻译，候选在源目录外构建；质量报告要求少量人工复核。
-- 《How to Fish》有 Unity Addressables 专项实验工具 `tools/unity_addressables_localize.py`。前序测试记录曾提到 `.tmp/htf-v4` 候选和 594/594 条翻译结果；但候选目录及关联报告当前未找到，因此完成数、bundle 回读和启动检查均待重新运行确认。专项路径也不是标准普通用户流程结果，不能代替有图形环境的人工视觉验收。
-- 前序测试记录引用了 `.tmp/how-to-fish-player-run-v1/hanengine-player-flow.log`，并报告 `extract`、`localize auto` 和显式 `localize unity` 因 `route does not authorize extract` 被阻断，专项诊断在第 264/594 条遇到 `TranslationProviderError`。该日志当前不存在于工作树，建议重跑并保存原始日志；断点续跑能力也需重新核实。
+- 《How to Fish》有 Unity Addressables 专项实验工具 `tools/unity_addressables_localize.py`。重新检查外层 `.tmp` 后找到了 v4 候选与报告：报告显示 594/594 条已翻译，但也记录英文 bundle 被改写 594 条、CRC 从 `dd831fb6` 变为 `edd7c6e0`，简中 bundle CRC 从 `4676f30b` 变为 `32e6bb3a`。源/候选哈希也确认两个 bundle 都不同。因此该候选破坏“保留英文表”要求，不能作为合格验收；专项工具已修正为只写简中 bundle，且新的聚焦回归测试验证英文 bundle 字节保持不变。旧候选报告标记 `review_required`，仍要求人工译文复核。该报告记载的输入路径是 `D:\steammm\steamapps\common\How to Fish\How to Fish`；它与下述 `.tmp/how-to-fish-qwen25-3b-v1` 探测目录的二进制来源关系尚未核实，不应合并成同一份真实项目验收记录。
+- v4 Unity 启动日志来自 Null Gfx 运行，包含 Steam 初始化异常；它不能证明图形游戏运行成功。报告和旧 catalog 记录 594 条，但 2026-10-13 对同一安装路径提取到 646 条，旧 catalog 的源项目指纹不匹配，不能安全复用。初次标准 CLI 检查发现工作流注册表误用了纯 Unity 检测适配器；已改为 Addressables AdapterV1 并加入回归测试。当前 `player` 模式成功提取 646 条。基于真实 Addressables 文件的夹具往返已通过，但使用的是现存简中表而非模型输出，且一条占位符不匹配文本回退了英文；因此翻译质量仍待审阅。Python 3.12 环境没有 UnityPy；使用 Python 3.11.3 + UnityPy 完成。`127.0.0.1:8080/healthz` 和 Ollama `127.0.0.1:11434/api/tags` 均拒绝连接；本机有 qwen2.5:3b 模型清单，但常见安装路径没有 Ollama 可执行文件。没有构建完整安装版候选或执行图形启动。
+- 前序状态摘要引用了 `.tmp/how-to-fish-player-run-v1/hanengine-player-flow.log`，并报告旧工作流中的 `extract`、`localize auto` 和显式 `localize unity` 因 `route does not authorize extract` 被阻断，专项诊断在第 264/594 条遇到 `TranslationProviderError`。本次没有找到该旧 HanEngine Player 日志；注册表修正后的标准 extract 已成功，但本地模型不可用，标准 Player 全流程和断点续跑仍需模型服务支持后复核。
 
 ### 最近记录的测试
 
 - Python 定向测试：2026-10-13 使用 Python 3.12 重新运行 NW.js 与项目验证模块，`23/23` 通过，其中新增纯文本、无栅格清单运行冒烟路径测试。
+- Unity 真实 profile 只读检测：2026-10-13 使用 Python 3.11.3 + UnityPy 1.25.3，标准 AdapterV1 对安装版 How to Fish 返回 `matched=true`、`maturity=build_ready`；英文和简中表均为 646 条且条目 ID、catalog CRC 匹配。未构建候选。
+- Unity 标准 CLI 验收：`engine inspect` 在 `player/H1_OFFLINE` 下放行五项结构化操作；`engine extract` 成功输出 646 条、任务 ID `cf0aa9a6-e9d4-45a9-b504-b1f51623c93b`。外部 catalog 位于 `.tmp/how-to-fish-current-standard-catalog-v2.json`，source fingerprint 为 `c639abcdd0d252c402b5c4de3cf19daa85f944a93fa35c3f31d77adda104ac53`；HanStore 在 `.tmp/how-to-fish-current-standard-state-v2`。这些本机证据未纳入 Git。
+- Unity Addressables 真实 bundle 往返：646 条通过标准 HanPipeline；使用现有游戏简中表作离线输入，1 条占位符不匹配改为保留源英文后，完整候选验证通过、0 个验证问题。候选只修改简中 bundle 与 `catalog.bin`；英文 bundle SHA-256 前后均为 `27c2bd8b0878f3ee159877d419512cf9d127b5b47ed9a83022caff0ffefa0d28`。候选 profile 重新读取通过，英文/简中表各 646 条，catalog CRC 匹配；游戏安装 bundle/catalog 与构建前夹具副本哈希相同。
+- Unity Addressables 回归：Python 3.11.3，`tests/test_unity_addressables_localize.py` 与 `tests/test_unity_addressables_adapter.py` 共 `11/11` 通过，覆盖英文表保持、标准 AdapterV1 构建回读及 StructuredWorkflowSession 普通模式提取路由。
 - 完整 Python 回归：2026-10-13，`622/622` 通过。
 - Electron 质量报告测试：2026-10-13，`3/3` 通过。
 - Python 测试：现有 2026-08-22 状态摘要记录，R.E.P.O. 本地模型实现后的回归为 `609/609` 通过（该摘要另有更早的 `585/585` 记录）；这不是本轮完整回归结果。
@@ -119,8 +124,8 @@ game-localizer/
 
 - 限定 Addressables profile 已注册在标准 Unity AdapterV1，HanGuard 的 `player` 模式对它开放 Adapter 能力范围内的操作；合成 runtime 测试已验证提取进入 HanStore。
 - Adapter 只支持标准目录形态下配对的 `localization-string-tables-english*.bundle` 与 `localization-string-tables-chinese(simplified)*.bundle`；会检查表后缀/ID、两个源 bundle CRC 与 `catalog.bin`，构建时只写简体中文 bundle 并保留英文 bundle，候选在源目录外生成并回读。
-- 对可访问的 `.tmp/how-to-fish-qwen25-3b-v1` 做过只读 catalog 探测：文件为 73,284 字节，简体中文 bundle CRC `0x4676f30b` 的小端值只出现一次（偏移 14602）；前序只读探测记录的英文 bundle CRC `0xca6e6605` 未在 catalog 中找到，因此该样本不满足严格 profile，必须保持 `detect_only`。本轮没有重新计算 bundle CRC，也没有 UnityPy 真实 bundle 读写证据。
-- 仍没有真实 bundle 的 UnityPy 读取/写回验证，也没有《How to Fish》端到端任务日志、候选报告或图形启动验收。不能把合成测试写成真实项目 `verified`。
+- 对外层 `.tmp/how-to-fish-qwen25-3b-v1` 这个独立快照做过只读 catalog 探测：文件为 73,284 字节，简体中文 bundle CRC `0x4676f30b` 的小端值只出现一次（偏移 14602）；前序只读探测记录的英文 bundle CRC `0xca6e6605` 未在该快照的 catalog 中找到，因此该快照不满足标准 AdapterV1 的严格 profile，必须保持 `detect_only`。它与当前 Steam 安装目录不是同一个检查结果。
+- 当前 Steam 安装目录 `D:\steammm\steamapps\common\How to Fish\How to Fish` 的标准 AdapterV1 检测成功，英文和简中表各 646 条、catalog CRC 匹配。已修复普通结构化工作流注册适配器错误，标准 CLI `player/H1_OFFLINE` 能从真实 Addressables bundle 提取 646 条。基于当前安装文件构建的轻量夹具经 HanPipeline 处理后成功完成候选构建和回读；候选仅改简中 bundle 与 `catalog.bin`，英文 bundle 字节保持不变，安装源文件与夹具原始副本哈希相同。该测试使用游戏内已有简中值且有一条占位符安全回退，不能当作模型翻译或完整游戏验收。外部记录：`.tmp/how-to-fish-addressables-roundtrip-record-v1.json`，SHA-256 `3466cf2285057a55a6549d4a862513d17706dc3863a012537d075e18325e3191`。候选在 `.tmp/how-to-fish-addressables-roundtrip-v1/`，使用的夹具不含完整游戏运行文件。旧 v4 专项候选不合格，且其 Null Gfx 启动日志有 Steam 初始化异常。
 - Hello Underworld v16 记录失败的原因是验收命令传入了仓库外层目录；检测到了 MV 标记，但该目录没有游戏所需的 `data/`，提取返回 `UNSUPPORTED_INPUT`。实际游戏根目录为源项目的 `Main/`，这是输入路径错误，不是适配器缺陷。保留 v16 记录用于诊断。
 - v17 在正确的 `Main/` 根目录完成，验证记录结论为 `verified`：审校目录匹配 `1,954/1,954`，未处理项为 0，字体缺失码位为 0；NW.js 0.29.4 检查 `23/23` 通过，源树和候选树指纹在运行前后保持一致，运行错误数为 0。标题场景的游戏标题及菜单文本为中文；静态标题图仍含英文 “ASPHODEL”。地图场景读到地图 12、坐标 `(1,1)`，但源版和候选版截图均为全黑。
 - 本次未配置栅格资源清单，视频检查为 0；没有进行完整游戏流程或译文质量认证。因此 `verified` 只适用于这条记录中的文本、字体和 NW.js 启动冒烟范围，不能作为整款游戏完整汉化验收。
@@ -145,7 +150,7 @@ game-localizer/
 
 ## 下一步建议
 
-1. **完成真实 Addressables 项目验收。** 在有授权且可访问的真实 Unity 游戏上复核 bundle 解析、catalog CRC 更新、标准 `player` HanPipeline 断点恢复、候选回读和启动；保留未知/不匹配格式的 `detect_only` 测试。
+1. **完成真实 Addressables 项目验收。** 从当前安装版重新提取 646 条，不能直接复用旧 594 条 catalog；恢复或安装本地模型服务后，用标准 AdapterV1/HanPipeline 完成真正的模型翻译和检查点恢复，再对完整安装版构建候选、确认英文 bundle 字节不变和简中 CRC 更新、完整回读，并在有图形设备的环境启动候选。另行审阅 `Extra Labels:373258983133184` 的 `{0}` 缺失值；保留未知/不匹配格式的 `detect_only` 测试。
 2. **补齐 Addressables 失败诊断和模型质量门。** 当前适配器已使用 HanPipeline/HanStore 的段级检查点，并报告表/条目进度；下一步应暴露模型校验错误类别、重试信息，并验证失败恢复可从已保存段继续。
 3. **补齐原子构建与 Unity 校验。** 在项目外候选中只回写简体中文表、保留英文表、更新 `catalog.bin` 中对应 bundle CRC、重新读取表并验证占位符/富文本/换行，然后做候选启动冒烟；任何阶段失败都保留诊断报告，不触及源目录。
 4. **增加模型输出质量门。** 记录原始错误类别与重试次数；拒绝上下文污染、丢失控制符、非法换行和标签顺序破坏；将低置信或疑似直译项目进入人工审校目录。
@@ -155,5 +160,5 @@ game-localizer/
 
 - 本文项目分支状态、NW.js 纯文本验收改动和定向测试结果在 2026-10-13 检查；较早的跨引擎回归结果仍来自 2026-08-21 至 2026-08-24。
 - Hello Underworld v16/v17 验收记录位于本地 `.tmp/rpg-maker-hello-underworld-validation-record-v16-e2e.json` 和 `.tmp/rpg-maker-hello-underworld-validation-record-v17-e2e.json`。v17 记录 SHA-256 为 `6c6be2f1853d9c007ea64b77bcdf5ea59c714d71c18fb87eddd8fb03e5fb72b4`；NW.js 报告 SHA-256 为 `7e5ce516161389cdb6df4ee71db48ef0e9e4707778f1c7c3c8385e5706768b89`。运行截图在 `.tmp/rpg-maker-hello-underworld-nwjs-evidence-v17-e2e/`，这些 `.tmp` 文件未纳入 Git。
-- 《How to Fish》普通用户流程和 Addressables 专项测试的路径来自前序操作记录；本次检查未找到 `.tmp/how-to-fish-player-run-v1/`、`.tmp/htf-v4/` 或 `.tmp/how-to-fish-qwen25-3b-report-v3.json`。若要将该结论作为可复现项目证据，应重跑并将日志、候选验证报告保存在可访问位置。
+- 《How to Fish》v4 专项报告和候选可在外层仓库 `.tmp/how-to-fish-qwen25-3b-report-v3.json` 与 `.tmp/htf-v4/` 复查；报告 SHA-256 为 `aa9d0d56cff44d528d3544c8bd6931350a0c55408d1eed785b88b853709200fd`。它们记录的英文表改写使该候选不合格。此前提到的 `.tmp/how-to-fish-player-run-v1/hanengine-player-flow.log` 本次仍未找到。外层 `.tmp` 证据不在 Git 版本控制内。
 - `build_ready` 表示结构化构建和内部验证达到候选状态；`verified` 只对记录中的固定项目、版本和资源范围有效。两者都不自动代表译文通过出版级语言审校。

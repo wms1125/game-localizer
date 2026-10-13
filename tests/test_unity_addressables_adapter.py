@@ -300,6 +300,27 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
         self.assertEqual(len(execution.ingested_segments), 1)
         self.assertEqual(execution.ingested_segments[0].source_text, "Start")
 
+    def test_structured_workflow_uses_addressables_adapter_for_player_extraction(self):
+        from game_localizer.structured_workflow import StructuredWorkflowSession
+
+        with patch.object(UnityAddressablesAdapterV1, "_supported_profile", side_effect=self._profile):
+            with StructuredWorkflowSession(
+                self.source,
+                engine_id="unity",
+                state_root=self.root / "structured-workflow-state",
+                declared_mode=DeclaredMode.PLAYER,
+                user_baseline=RiskLevel.H1_OFFLINE,
+                adapter_baseline=RiskLevel.H1_OFFLINE,
+            ) as workflow:
+                adapter = workflow.runtime.registry.adapters[0]
+                selection = workflow.detect()
+                self.assertIsInstance(adapter, UnityAddressablesAdapterV1)
+                self.assertIn(RouteOperation.EXTRACT, selection.final_route.allowed_operations)
+                extracted = workflow.extract()
+
+        self.assertEqual(len(extracted.catalog.entries), 1)
+        self.assertEqual(extracted.catalog.entries[0].source_text, "Start")
+
     def test_build_and_verify_preserve_english_and_read_back_chinese_table(self):
         source_before = snapshot_tree(self.source)
         adapter = UnityAdapterV1()
