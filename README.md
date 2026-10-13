@@ -53,7 +53,7 @@ python cli.py detect "C:\Games\AuthorizedProject" --json
 
 传统 `detect` 命令只扫描文件名和目录结构，用于快速识别 Ren'Py、RPG Maker MV、RPG Maker MZ、Godot、Unity 与 Unreal Engine 的证据；它不会读取或解析资源内容。`engine inspect` 会进一步创建只读的 AdapterV1 检测任务，并返回引擎、证据、工作流能力、统一 `hanengine.adapter-capabilities/v1` 能力矩阵、HanGuard 允许操作和 `ready`/`detect_only` 状态。矩阵分别说明原生文本替换、动态文本、栅格文字和仅检测能力，并为每项提供 `implemented`、`verified`、`detect_only` 或 `unsupported` 状态及原因。
 
-AdapterV1 当前为以下**明文原始项目**提供结构化提取、翻译、校验、独立构建与验证链路：Ren'Py 的 `.rpy`，RPG Maker MV/MZ 的 JSON，Godot 的 PO/CSV，Unity 的 XLIFF/CSV，以及 Unreal 的 PO。旧的 `renpy extract/build` 命令继续保留兼容。Unity Player、Unreal Pak/IoStore、Godot PCK、Ren'Py 归档及其他加密或二进制封装资源均为仅检测，绝不会被自动解包或修改。
+AdapterV1 当前为以下**明文原始项目**提供结构化提取、翻译、校验、独立构建与验证链路：Ren'Py 的 `.rpy`，RPG Maker MV/MZ 的 JSON，Godot 的 PO/CSV，Unity 的 XLIFF/CSV，以及 Unreal 的 PO。对于同时包含英文和简体中文 Unity Localization String Table、且 `catalog.bin` CRC 可匹配的已打包游戏，Unity AdapterV1 还提供窄范围 Addressables 提取、候选构建和回读验证；构建只写简体中文字符串表并保留英文表。未知 Addressables 布局、Unity Player 其他资源、Unreal Pak/IoStore、Godot PCK、Ren'Py 归档及其他加密或二进制封装资源仍为仅检测，不会被修改。旧的 `renpy extract/build` 命令继续保留兼容。
 
 原有的单文件翻译命令仍然可用，例如 `python cli.py game.json dictionary.json`；它们仅面向前述受支持的明文资源，且同样只应处理你拥有合法权利或已获授权修改的内容。
 

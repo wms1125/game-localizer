@@ -17,9 +17,11 @@ from .structured import (
     RpgMakerMVAdapterV1,
     RpgMakerMZAdapterV1,
     StructuredAdapterV1,
-    UnityAdapterV1,
     UnrealAdapterV1,
 )
+from .unity_addressables import UnityAddressablesAdapterV1
+
+UnityAdapterV1 = UnityAddressablesAdapterV1
 
 
 _ADAPTERS: tuple[EngineAdapter, ...] = (
@@ -60,6 +62,7 @@ __all__ = [
     "RpgMakerMVAdapterV1",
     "RpgMakerMZAdapterV1",
     "StructuredAdapterV1",
+    "UnityAddressablesAdapterV1",
     "UnityAdapterV1",
     "UnrealAdapterV1",
     "get_adapters",

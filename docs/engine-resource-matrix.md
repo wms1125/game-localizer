@@ -19,7 +19,7 @@
 | RPG Maker MV | `data/*.json` | 可构建 | JSON 解析、UTF-8、占位符、产物哈希、完整源树保护；合成样例验证记录通过 | 通用官方验证器、字体和冒烟证据入口已具备；尚无真实授权项目 `verified` 记录 | 加密资源和专有封包仅检测 |
 | RPG Maker MZ | `data/*.json` | 可构建 | JSON 解析、UTF-8、占位符、产物哈希、完整源树保护；合成样例验证记录通过 | 通用官方验证器、字体和冒烟证据入口已具备；尚无真实授权项目 `verified` 记录 | 加密资源和专有封包仅检测 |
 | Godot | 原始项目 PO/CSV | 可构建 | PO/CSV 解析、UTF-8、占位符、产物哈希、完整源树保护；合成样例验证记录通过 | 通用官方验证器、字体和冒烟证据入口已具备；尚无真实授权项目 `verified` 记录 | `.pck` 仅检测 |
-| Unity | 原始工程 XLIFF/CSV | 可构建 | XML/CSV 解析、UTF-8、占位符、产物哈希、完整源树保护；合成样例验证记录通过 | 通用官方验证器、字体和冒烟证据入口已具备；尚无真实授权项目 `verified` 记录 | Player、Asset 二进制仅检测 |
+| Unity | 原始工程 XLIFF/CSV；匹配英文与简体中文 Unity Localization String Table、`catalog.bin` CRC 的已打包 Addressables | 可构建 | 明文格式沿用 XML/CSV 校验；Addressables 只写简体中文表、保留英文 bundle，并检查表 ID、catalog CRC 和文件哈希；当前只完成合成 AdapterV1 测试 | 尚无真实授权 Addressables 项目 `verified` 记录；候选不执行游戏启动 | 未知 Addressables 布局、Unity Player 其他资源和 Asset 二进制仅检测 |
 | Unreal Engine | 原始工程 PO | 可构建 | PO 解析、UTF-8、占位符、产物哈希、完整源树保护；合成样例验证记录通过 | 通用官方验证器、字体和冒烟证据入口已具备；尚无真实授权项目 `verified` 记录 | `.pak`、`.ucas`、`.utoc` 仅检测 |
 
 所有构建输出必须位于源项目之外。加密、DRM、二进制解包、反编译、进程注入、内存读写和协议拦截不属于支持范围。
