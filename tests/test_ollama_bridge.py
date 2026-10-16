@@ -7,6 +7,7 @@ from unittest.mock import patch
 from tools.ollama_translation_server import (
     TranslationBridgeError,
     _loopback_url,
+    _ollama_health,
     _preserves_placeholders,
     _request_payload,
     _translate_with_retries,
@@ -29,6 +30,33 @@ class _Response:
 
 
 class OllamaBridgeTests(unittest.TestCase):
+    def test_ollama_health_reports_upstream_transport_failure(self):
+        def fake_urlopen(request, timeout):
+            raise TimeoutError("timed out")
+
+        with patch("tools.ollama_translation_server.urllib.request.urlopen", fake_urlopen):
+            result = _ollama_health("http://127.0.0.1:11434", 2.0)
+
+        self.assertEqual(result, {"status": "error", "error": "TimeoutError"})
+
+    def test_ollama_health_reports_ready_upstream(self):
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with patch(
+            "tools.ollama_translation_server.urllib.request.urlopen",
+            return_value=Response(),
+        ):
+            result = _ollama_health("http://127.0.0.1:11434", 2.0)
+
+        self.assertEqual(result, {"status": "ok"})
+
     def test_only_loopback_ollama_urls_are_allowed(self):
         self.assertEqual(_loopback_url("http://127.0.0.1:11434/"), "http://127.0.0.1:11434")
         with self.assertRaisesRegex(ValueError, "loopback"):

@@ -53,6 +53,23 @@ def _json_error(message: str) -> bytes:
     return json.dumps({"error": message}, ensure_ascii=False).encode("utf-8")
 
 
+def _ollama_health(ollama_url: str, timeout: float) -> dict[str, str]:
+    request = urllib.request.Request(
+        f"{ollama_url}/api/tags",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            if response.status < 200 or response.status >= 300:
+                return {"status": "error", "error": f"http_{response.status}"}
+    except urllib.error.HTTPError as exc:
+        return {"status": "error", "error": f"http_{exc.code}"}
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return {"status": "error", "error": type(exc).__name__}
+    return {"status": "ok"}
+
+
 def _request_payload(payload: Any) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...]]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
@@ -508,7 +525,17 @@ class TranslationHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib HTTP handler API
         if self.path == "/healthz":
-            self._write_json(HTTPStatus.OK, {"status": "ok", "model": self.server.model})
+            ollama = _ollama_health(self.server.ollama_url, min(self.server.timeout, 5.0))
+            if ollama["status"] == "ok":
+                self._write_json(
+                    HTTPStatus.OK,
+                    {"status": "ok", "model": self.server.model, "ollama": ollama},
+                )
+            else:
+                self._write_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"status": "degraded", "model": self.server.model, "ollama": ollama},
+                )
         else:
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
