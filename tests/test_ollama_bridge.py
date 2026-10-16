@@ -330,6 +330,7 @@ class OllamaBridgeTests(unittest.TestCase):
             if len(calls) == 1:
                 return "yum yummy"
             self.assertIn("short slang", kwargs["retry_instruction"])
+            self.assertIn("fish species", kwargs["retry_instruction"])
             return "真好吃"
 
         with patch("tools.ollama_translation_server._translate_with_ollama", fake_translate):

@@ -499,7 +499,9 @@ def _translate_with_retries(
             call_kwargs["retry_instruction"] = (
                 "The previous attempt left English text untranslated. Translate every word, "
                 "including short slang, onomatopoeia, reactions, and repeated sounds, into "
-                "natural Simplified Chinese. Do not return the English source unchanged."
+                "natural Simplified Chinese. Translate fish species, animal names, and game "
+                "creature names even when they are capitalized; do not preserve them merely "
+                "because they look like proper names. Do not return the English source unchanged."
             )
         try:
             translation = _translate_with_ollama(**call_kwargs)
