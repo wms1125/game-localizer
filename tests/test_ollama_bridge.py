@@ -8,6 +8,7 @@ from tools.ollama_translation_server import (
     TranslationBridgeError,
     _loopback_url,
     _known_creature_fallback,
+    _known_ui_fallback,
     _ollama_health,
     _short_expression_fallback,
     _preserves_placeholders,
@@ -421,6 +422,8 @@ class OllamaBridgeTests(unittest.TestCase):
 
         self.assertEqual(result, "狗鱼")
         self.assertEqual(_known_creature_fallback("Red   Snapper"), "红鲷鱼")
+        self.assertEqual(_known_ui_fallback("Suppressor"), "消音器")
+        self.assertIsNone(_known_ui_fallback("Host Game"))
 
     def test_translation_retries_english_echo_with_punctuation(self):
         calls = []

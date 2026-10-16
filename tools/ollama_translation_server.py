@@ -91,6 +91,35 @@ _KNOWN_CREATURE_TRANSLATIONS = {
     "rock crab": "岩蟹",
     "crab carcass": "螃蟹尸体",
 }
+_KNOWN_UI_TRANSLATIONS = {
+    "suppressor": "消音器",
+    "compensator": "枪口补偿器",
+    "extended mag": "扩容弹匣",
+    "iron sight": "机械瞄具",
+    "laser sight": "激光瞄准器",
+    "red dot sight": "红点瞄准镜",
+    "sniper scope": "狙击镜",
+    "no scope": "无瞄准镜",
+    "quick scope": "快速瞄准",
+    "longshot": "远距离击杀",
+    "headshot": "爆头",
+    "damage": "伤害",
+    "ammo": "弹药",
+    "attachments": "配件",
+    "quest item": "任务物品",
+    "value": "价值",
+    "cooking": "烹饪",
+    "sharpen": "磨利",
+    "radar": "雷达",
+    "boat": "船",
+    "drive": "驾驶",
+    "can't drive": "无法驾驶",
+    "no keys": "没有钥匙",
+    "creatures": "生物",
+    "hot dog": "热狗",
+    "carrot": "胡萝卜",
+    "ham": "火腿",
+}
 
 
 class TranslationBridgeError(RuntimeError):
@@ -544,6 +573,11 @@ def _known_creature_fallback(source: str) -> str | None:
     return _KNOWN_CREATURE_TRANSLATIONS.get(normalized)
 
 
+def _known_ui_fallback(source: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", source.strip().casefold())
+    return _KNOWN_UI_TRANSLATIONS.get(normalized)
+
+
 def _translate_with_retries(
     *,
     attempts: int = TRANSLATION_ATTEMPTS,
@@ -561,8 +595,9 @@ def _translate_with_retries(
                 "The previous attempt left English text untranslated. Translate every word, "
                 "including short slang, onomatopoeia, reactions, and repeated sounds, into "
                 "natural Simplified Chinese. Translate fish species, animal names, and game "
-                "creature names even when they are capitalized; do not preserve them merely "
-                "because they look like proper names. Do not return the English source unchanged."
+                "creature names even when they are capitalized; translate weapon attachments "
+                "and UI labels too. Do not preserve them merely because they look like proper "
+                "names. Do not return the English source unchanged."
             )
         try:
             translation = _translate_with_ollama(**call_kwargs)
@@ -582,6 +617,9 @@ def _translate_with_retries(
         if fallback is not None:
             return fallback
         fallback = _known_creature_fallback(str(kwargs["text"]))
+        if fallback is not None:
+            return fallback
+        fallback = _known_ui_fallback(str(kwargs["text"]))
         if fallback is not None:
             return fallback
     retry_count = max(0, attempts_made - 1)
