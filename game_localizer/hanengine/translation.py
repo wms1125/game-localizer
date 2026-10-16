@@ -8,6 +8,9 @@ import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import urlsplit
+
+from .multiengine import extract_placeholders as extract_structured_placeholders
 
 
 @dataclass(frozen=True)
@@ -26,9 +29,12 @@ def _default_transport(url: str, headers: Mapping[str, str], body: bytes, timeou
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return HttpResponse(response.status, response.headers.get("Content-Type", ""), response.read())
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.headers.get("Content-Type", ""), b"")
+        return HttpResponse(exc.code, exc.headers.get("Content-Type", ""), exc.read(16_384))
     except (urllib.error.URLError, TimeoutError) as exc:
-        raise TranslationProviderError(f"translation transport failed: {type(exc).__name__}") from exc
+        raise TranslationProviderError(
+            f"translation transport failed: {type(exc).__name__}",
+            code="transport_error",
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -78,11 +84,53 @@ class TranslationProvider(Protocol):
 
 
 class TranslationProviderError(RuntimeError):
-    pass
+    """A sanitized provider failure with a stable machine-readable category."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "provider_error",
+        failure_codes: Iterable[str] = (),
+        retry_count: int = 0,
+    ) -> None:
+        super().__init__(message)
+        if not isinstance(code, str) or not code:
+            raise ValueError("code must be a non-empty string")
+        self.code = code
+        self.failure_codes = tuple(dict.fromkeys(failure_codes))
+        if any(not isinstance(item, str) or not item for item in self.failure_codes):
+            raise ValueError("failure_codes must contain non-empty strings")
+        if isinstance(retry_count, bool) or not isinstance(retry_count, int) or retry_count < 0:
+            raise ValueError("retry_count must be a non-negative integer")
+        self.retry_count = retry_count
 
 
 class TranslationNotFoundError(TranslationProviderError):
-    pass
+    def __init__(self, message: str = "no translation found") -> None:
+        super().__init__(message, code="not_found")
+
+
+class TranslationQualityError(TranslationProviderError):
+    def __init__(self, issue: "TranslationQualityIssue") -> None:
+        if not isinstance(issue, TranslationQualityIssue):
+            raise TypeError("issue must be a TranslationQualityIssue")
+        super().__init__(issue.message, code=issue.code)
+        self.issue = issue
+
+
+@dataclass(frozen=True)
+class TranslationQualityIssue:
+    code: str
+    severity: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, str) and value for value in (self.code, self.severity, self.message)):
+            raise ValueError("translation quality issue fields must be non-empty strings")
+
+    def to_dict(self) -> dict[str, str]:
+        return {"code": self.code, "severity": self.severity, "message": self.message}
 
 
 class DictionaryTranslationProvider:
@@ -134,7 +182,10 @@ class CloudTranslationProvider:
         body = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         response = self._transport(self._endpoint, headers, body, self._timeout)
         if response.status < 200 or response.status >= 300:
-            raise TranslationProviderError(f"cloud translation returned HTTP {response.status}")
+            raise TranslationProviderError(
+                f"cloud translation returned HTTP {response.status}",
+                code="http_error",
+            )
         try:
             decoded = json.loads(response.body)
             if not isinstance(decoded, Mapping):
@@ -145,15 +196,285 @@ class CloudTranslationProvider:
             confidence = decoded.get("confidence", 0.0)
             result = TranslationResult(text, provider, model, confidence)
         except (KeyError, TypeError, ValueError) as exc:
-            raise TranslationProviderError("cloud translation returned an invalid response") from exc
+            raise TranslationProviderError(
+                "cloud translation returned an invalid response",
+                code="invalid_response",
+            ) from exc
         return result
 
 
-_PLACEHOLDER_RE = re.compile(r"\[[^\]\n]+\]|\{[^{}\n]+\}|%\d+|%[a-zA-Z]")
+def _local_endpoint(endpoint: str) -> str:
+    if not isinstance(endpoint, str) or not endpoint:
+        raise ValueError("local model endpoint must not be empty")
+    parsed = urlsplit(endpoint)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValueError("local model endpoint must be an unauthenticated HTTP loopback URL")
+    return endpoint
+
+
+class LocalModelTranslationProvider:
+    """Call a local model runtime using HanEngine's translation JSON contract.
+
+    The runtime receives one JSON object per request and must return an object
+    containing ``translation``. It may also return ``provider``, ``model`` and
+    ``confidence``. Network access is restricted to the local machine.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        transport: HttpTransport | None = None,
+        timeout: float = 120.0,
+        provider_name: str = "local-model",
+        model_name: str = "unknown",
+    ):
+        self._endpoint = _local_endpoint(endpoint)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise ValueError("timeout must be a positive number")
+        if not isinstance(provider_name, str) or not provider_name:
+            raise ValueError("provider_name must not be empty")
+        if not isinstance(model_name, str) or not model_name:
+            raise ValueError("model_name must not be empty")
+        self._transport = _default_transport if transport is None else transport
+        self._timeout = float(timeout)
+        self._provider_name = provider_name
+        self._model_name = model_name
+
+    def translate(self, request: TranslationRequest) -> TranslationResult:
+        if not isinstance(request, TranslationRequest):
+            raise TypeError("request must be a TranslationRequest")
+        payload = {
+            "segment_id": request.segment_id,
+            "text": request.text,
+            "source_language": request.source_language,
+            "target_language": request.target_language,
+            "context": list(request.context),
+            "protected_tokens": sorted(_placeholder_tokens(request.text)),
+        }
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        response = self._transport(
+            self._endpoint,
+            {"Content-Type": "application/json", "Accept": "application/json"},
+            body,
+            self._timeout,
+        )
+        if response.status < 200 or response.status >= 300:
+            code = "http_error"
+            message = f"local model returned HTTP {response.status}"
+            failure_codes: tuple[str, ...] = ()
+            retry_count = 0
+            try:
+                decoded_error = json.loads(response.body)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                decoded_error = None
+            if isinstance(decoded_error, Mapping):
+                candidate_code = decoded_error.get("error_code")
+                candidate_message = decoded_error.get("error")
+                candidate_retries = decoded_error.get("retry_count")
+                if (
+                    isinstance(candidate_retries, int)
+                    and not isinstance(candidate_retries, bool)
+                    and 0 <= candidate_retries <= 100
+                ):
+                    retry_count = candidate_retries
+                if isinstance(candidate_code, str) and candidate_code in {
+                    "invalid_request",
+                    "placeholder_mismatch",
+                    "physical_newline_mismatch",
+                    "invalid_response",
+                    "empty_translation",
+                    "transport_error",
+                    "ollama_http_error",
+                    "translation_error",
+                    "residual_english",
+                }:
+                    code = candidate_code
+                    failure_codes = (candidate_code,)
+                if isinstance(candidate_message, str) and candidate_message:
+                    message = candidate_message[:500]
+            raise TranslationProviderError(
+                message,
+                code=code,
+                failure_codes=failure_codes,
+                retry_count=retry_count,
+            )
+        try:
+            decoded = json.loads(response.body)
+            if not isinstance(decoded, Mapping):
+                raise ValueError
+            text = decoded["translation"]
+            provider = decoded.get("provider", self._provider_name)
+            model = decoded.get("model", self._model_name)
+            confidence = decoded.get("confidence", 0.0)
+            result = TranslationResult(text, provider, model, confidence)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise TranslationProviderError(
+                "local model returned an invalid response",
+                code="invalid_response",
+            ) from exc
+        return result
+
+
+_PERCENT_PLACEHOLDER_RE = re.compile(r"%(?:\d+\$)?[A-Za-z]|%\d+")
+
+
+def _placeholder_tokens(value: str) -> tuple[str, ...]:
+    structured = [
+        token
+        for token in extract_structured_placeholders(value)
+        if not token.startswith("%")
+    ]
+    structured.extend(match.group(0) for match in _PERCENT_PLACEHOLDER_RE.finditer(value))
+    structured.extend("\\n" for _ in range(value.count("\\n")))
+    return tuple(structured)
 
 
 def _preserves_placeholders(source: str, target: str) -> bool:
-    return sorted(_PLACEHOLDER_RE.findall(source)) == sorted(_PLACEHOLDER_RE.findall(target))
+    return sorted(_placeholder_tokens(source)) == sorted(_placeholder_tokens(target))
+
+
+def _rich_text_tags(value: str) -> tuple[str, ...]:
+    return tuple(
+        token
+        for token in extract_structured_placeholders(value)
+        if token.startswith("<") and token.endswith(">")
+    )
+
+
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_METADATA_ECHO_RE = re.compile(
+    r"(?i)(?:^|[\[{(\s])(?:segment_id|source_language|target_language|protected_tokens|context)\s*[:=]"
+)
+_TRANSLATION_LABEL_RE = re.compile(r"(?i)^(?:translation|translated text|译文)\s*[:：]")
+_ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+_PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
+
+
+def _is_model_result(result: TranslationResult) -> bool:
+    provider = result.provider.casefold()
+    model = result.model.casefold()
+    return (
+        provider.startswith("local-")
+        or provider in {"local", "ollama"}
+        or any(marker in model for marker in ("qwen", "llama", "mistral"))
+    )
+
+
+def translation_quality_issues(
+    request: TranslationRequest,
+    result: TranslationResult,
+) -> tuple[TranslationQualityIssue, ...]:
+    """Inspect one result before it is persisted or written into a candidate."""
+
+    if not isinstance(request, TranslationRequest):
+        raise TypeError("request must be a TranslationRequest")
+    if not isinstance(result, TranslationResult):
+        raise TypeError("result must be a TranslationResult")
+    issues: list[TranslationQualityIssue] = []
+    target = result.text
+    if not target.strip():
+        issues.append(TranslationQualityIssue("empty_translation", "error", "translation is empty"))
+    if _CONTROL_CHARACTER_RE.search(target):
+        issues.append(
+            TranslationQualityIssue(
+                "control_character",
+                "error",
+                "translation contains an unsupported control character",
+            )
+        )
+    source_breaks = tuple(re.findall(r"\r\n|\r|\n", request.text))
+    target_breaks = tuple(re.findall(r"\r\n|\r|\n", target))
+    if source_breaks != target_breaks:
+        issues.append(
+            TranslationQualityIssue(
+                "physical_newline_mismatch",
+                "error",
+                "translation changed physical line breaks",
+            )
+        )
+    if not _preserves_placeholders(request.text, target):
+        issues.append(
+            TranslationQualityIssue(
+                "placeholder_mismatch",
+                "error",
+                "translation changed protected placeholders or markup tags",
+            )
+        )
+    if _rich_text_tags(request.text) != _rich_text_tags(target):
+        issues.append(
+            TranslationQualityIssue(
+                "rich_text_tag_order_mismatch",
+                "error",
+                "translation changed rich-text tag order",
+            )
+        )
+    if _METADATA_ECHO_RE.search(target) or _TRANSLATION_LABEL_RE.search(target):
+        issues.append(
+            TranslationQualityIssue(
+                "metadata_contamination",
+                "error",
+                "translation contains request metadata or a translator label",
+            )
+        )
+    if _is_model_result(result):
+        ascii_words = _ASCII_WORD_RE.findall(target)
+        preserved_unit = request.text.strip().casefold() in _PRESERVED_ENGLISH_UNITS
+        if target.strip() == request.text.strip() and ascii_words and not preserved_unit:
+            issues.append(
+                TranslationQualityIssue(
+                    "residual_english",
+                    "error",
+                    "model returned the source text unchanged",
+                )
+            )
+        elif len(ascii_words) >= 3 and not re.search(r"[\u3400-\u9fff]", target):
+            issues.append(
+                TranslationQualityIssue(
+                    "residual_english",
+                    "error",
+                    "model result contains only residual English words",
+                )
+            )
+        elif len(ascii_words) >= 3 and re.search(r"[\u3400-\u9fff]", target):
+            issues.append(
+                TranslationQualityIssue(
+                    "residual_english",
+                    "warning",
+                    "model result mixes Chinese with several English words",
+                )
+            )
+        if result.confidence < 0.45:
+            issues.append(
+                TranslationQualityIssue(
+                    "low_confidence",
+                    "warning",
+                    f"model confidence {result.confidence:.2f} is below 0.45",
+                )
+            )
+    return tuple(issues)
+
+
+def enforce_translation_quality(
+    request: TranslationRequest,
+    result: TranslationResult,
+) -> tuple[TranslationQualityIssue, ...]:
+    issues = translation_quality_issues(request, result)
+    blocking = next((issue for issue in issues if issue.severity == "error"), None)
+    if blocking is not None:
+        raise TranslationQualityError(blocking)
+    return issues
 
 
 class TranslationRouter:
@@ -172,23 +493,32 @@ class TranslationRouter:
         if cached is not None:
             return TranslationResult(cached.text, cached.provider, cached.model, cached.confidence, True)
         failures: list[str] = []
+        failure_codes: list[str] = []
+        retry_count = 0
         misses = 0
         for provider in self._providers:
             try:
                 result = provider.translate(request)
-                if not _preserves_placeholders(request.text, result.text):
-                    raise TranslationProviderError("provider changed placeholders")
+                enforce_translation_quality(request, result)
                 self._cache[key] = result
                 return result
             except TranslationNotFoundError:
                 misses += 1
             except TranslationProviderError as exc:
-                failures.append(type(exc).__name__)
+                failures.append(f"{exc.code}:{type(exc).__name__}")
+                failure_codes.extend(exc.failure_codes or (exc.code,))
+                retry_count += exc.retry_count
             except Exception as exc:
-                failures.append(type(exc).__name__)
+                failures.append(f"provider_error:{type(exc).__name__}")
+                failure_codes.append("provider_error")
         if misses == len(self._providers):
             raise TranslationNotFoundError("no provider has a translation")
-        raise TranslationProviderError("all translation providers failed: " + ",".join(failures))
+        raise TranslationProviderError(
+            "all translation providers failed: " + ",".join(failures),
+            code="all_providers_failed",
+            failure_codes=tuple(dict.fromkeys(failure_codes)),
+            retry_count=retry_count,
+        )
 
     def translate_many(self, requests: Iterable[TranslationRequest]) -> tuple[TranslationResult, ...]:
         return tuple(self.translate(request) for request in requests)
@@ -198,10 +528,15 @@ __all__ = [
     "CloudTranslationProvider",
     "DictionaryTranslationProvider",
     "HttpResponse",
+    "LocalModelTranslationProvider",
     "TranslationProvider",
     "TranslationNotFoundError",
     "TranslationProviderError",
+    "TranslationQualityError",
+    "TranslationQualityIssue",
     "TranslationRequest",
     "TranslationResult",
     "TranslationRouter",
+    "enforce_translation_quality",
+    "translation_quality_issues",
 ]
