@@ -26,6 +26,12 @@ TRANSLATION_ATTEMPTS = 3
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
+_SHORT_EXPRESSION_FALLBACKS = {
+    "yum yum": "好吃好吃",
+    "yum yum yum": "好吃好吃好吃",
+    "hmm mhm": "嗯嗯",
+    "yums": "好吃",
+}
 
 
 class TranslationBridgeError(RuntimeError):
@@ -469,6 +475,11 @@ def _needs_residual_english_retry(source: str, translation: str) -> bool:
     return len(ascii_words) >= 3 and not _CJK_RE.search(target_text)
 
 
+def _short_expression_fallback(source: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", source.strip().casefold())
+    return _SHORT_EXPRESSION_FALLBACKS.get(normalized)
+
+
 def _translate_with_retries(
     *,
     attempts: int = TRANSLATION_ATTEMPTS,
@@ -500,6 +511,10 @@ def _translate_with_retries(
             if isinstance(exc, TranslationBridgeError) and exc.code == "invalid_request":
                 break
     assert last_error is not None
+    if isinstance(last_error, TranslationBridgeError) and last_error.code == "residual_english":
+        fallback = _short_expression_fallback(str(kwargs["text"]))
+        if fallback is not None:
+            return fallback
     retry_count = max(0, attempts_made - 1)
     if isinstance(last_error, TranslationBridgeError):
         last_error.retry_count = retry_count

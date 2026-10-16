@@ -8,6 +8,7 @@ from tools.ollama_translation_server import (
     TranslationBridgeError,
     _loopback_url,
     _ollama_health,
+    _short_expression_fallback,
     _preserves_placeholders,
     _request_payload,
     _translate_with_retries,
@@ -371,6 +372,30 @@ class OllamaBridgeTests(unittest.TestCase):
 
         self.assertEqual(result, "好吃")
         self.assertEqual(len(calls), 2)
+
+    def test_translation_uses_narrow_fallback_for_repeated_food_expression(self):
+        with patch(
+            "tools.ollama_translation_server._translate_with_ollama",
+            return_value="yum yum yum",
+        ):
+            result = _translate_with_retries(
+                attempts=3,
+                ollama_url="http://127.0.0.1:11434",
+                model="qwen2.5:3b",
+                segment_id="unity:yum-yum-yum",
+                text="yum yum yum",
+                source_language="en",
+                target_language="zh-CN",
+                context=(),
+                protected_tokens=(),
+                timeout=30.0,
+            )
+
+        self.assertEqual(result, "好吃好吃好吃")
+
+    def test_short_expression_fallback_does_not_preserve_unknown_english(self):
+        self.assertEqual(_short_expression_fallback("HMM MHM"), "嗯嗯")
+        self.assertIsNone(_short_expression_fallback("Host Game"))
 
     def test_translation_retries_english_echo_with_punctuation(self):
         calls = []
