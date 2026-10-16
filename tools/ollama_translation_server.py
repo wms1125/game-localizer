@@ -35,6 +35,62 @@ _SHORT_EXPRESSION_FALLBACKS = {
     "yums": "好吃",
     "yummers": "真好吃",
 }
+_KNOWN_CREATURE_TRANSLATIONS = {
+    "pike": "狗鱼",
+    "piranha": "食人鱼",
+    "red snapper": "红鲷鱼",
+    "salmon": "三文鱼",
+    "sea urchin": "海胆",
+    "seagull": "海鸥",
+    "seahorse": "海马",
+    "sengarat": "森加拉特",
+    "shrimp": "虾",
+    "stonefish": "石鱼",
+    "superdwarf fish": "超矮鱼",
+    "tigerfish": "虎鱼",
+    "triggerfish": "扳机鱼",
+    "voxelfish": "体素鱼",
+    "yellow boxfish": "黄箱鲀",
+    "albatross": "信天翁",
+    "blue shark": "蓝鲨",
+    "bowhead whale": "弓头鲸",
+    "the old pike": "老狗鱼",
+    "giant piranha": "巨型食人鱼",
+    "goblin shark": "哥布林鲨",
+    "mutated bowhead whale": "变异弓头鲸",
+    "pufferfish": "河豚",
+    "spider crab": "蜘蛛蟹",
+    "sunfish": "翻车鱼",
+    "tuna": "金枪鱼",
+    "albatross head": "信天翁头",
+    "giant piranha skeleton": "巨型食人鱼骨架",
+    "pufferfish fin": "河豚鳍",
+    "spider crab shell": "蜘蛛蟹壳",
+    "whale fin": "鲸鱼鳍",
+    "starfish": "海星",
+    "sponge": "海绵",
+    "squid": "鱿鱼",
+    "manta": "鳐鱼",
+    "hammerhead shark": "双髻鲨",
+    "narwhal": "独角鲸",
+    "isopod": "等足类",
+    "hermit crab": "寄居蟹",
+    "sailfish": "剑鱼",
+    "oyster": "牡蛎",
+    "tripod fish": "三脚鱼",
+    "carp": "鲤鱼",
+    "koi fish": "锦鲤",
+    "dogfish": "狗鲨",
+    "mahi-mahi": "鬼头刀",
+    "char": "红点鲑",
+    "amberjack": "琥珀鱼",
+    "bristlemouth": "刺口鱼",
+    "alaska pollock": "阿拉斯加狭鳕",
+    "tench": "丁鱥",
+    "fry": "鱼苗",
+    "rock crab": "岩蟹",
+    "crab carcass": "螃蟹尸体",
+}
 
 
 class TranslationBridgeError(RuntimeError):
@@ -483,6 +539,11 @@ def _short_expression_fallback(source: str) -> str | None:
     return _SHORT_EXPRESSION_FALLBACKS.get(normalized)
 
 
+def _known_creature_fallback(source: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", source.strip().casefold())
+    return _KNOWN_CREATURE_TRANSLATIONS.get(normalized)
+
+
 def _translate_with_retries(
     *,
     attempts: int = TRANSLATION_ATTEMPTS,
@@ -518,6 +579,9 @@ def _translate_with_retries(
     assert last_error is not None
     if isinstance(last_error, TranslationBridgeError) and last_error.code == "residual_english":
         fallback = _short_expression_fallback(str(kwargs["text"]))
+        if fallback is not None:
+            return fallback
+        fallback = _known_creature_fallback(str(kwargs["text"]))
         if fallback is not None:
             return fallback
     retry_count = max(0, attempts_made - 1)

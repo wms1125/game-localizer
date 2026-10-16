@@ -7,6 +7,7 @@ from unittest.mock import patch
 from tools.ollama_translation_server import (
     TranslationBridgeError,
     _loopback_url,
+    _known_creature_fallback,
     _ollama_health,
     _short_expression_fallback,
     _preserves_placeholders,
@@ -399,6 +400,27 @@ class OllamaBridgeTests(unittest.TestCase):
         self.assertEqual(_short_expression_fallback("yummers"), "真好吃")
         self.assertEqual(_short_expression_fallback("thanks"), "谢谢")
         self.assertIsNone(_short_expression_fallback("Host Game"))
+
+    def test_translation_uses_known_creature_fallback_after_residual_english(self):
+        with patch(
+            "tools.ollama_translation_server._translate_with_ollama",
+            return_value="Pike",
+        ):
+            result = _translate_with_retries(
+                attempts=3,
+                ollama_url="http://127.0.0.1:11434",
+                model="qwen2.5:3b",
+                segment_id="unity:pike",
+                text="Pike",
+                source_language="en",
+                target_language="zh-CN",
+                context=(),
+                protected_tokens=(),
+                timeout=30.0,
+            )
+
+        self.assertEqual(result, "狗鱼")
+        self.assertEqual(_known_creature_fallback("Red   Snapper"), "红鲷鱼")
 
     def test_translation_retries_english_echo_with_punctuation(self):
         calls = []
