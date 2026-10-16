@@ -1,0 +1,332 @@
+{
+  "schema_version": "hanengine.visual-judge-benchmark/v1",
+  "dataset": {
+    "generator": "hanengine.visual-judge-controlled/v2",
+    "canvas": [
+      960,
+      540
+    ],
+    "font": "msyh.ttc",
+    "license": "CC0-1.0",
+    "category_count": 9,
+    "sample_count": 36
+  },
+  "samples": [
+    {
+      "sample_id": "normal_control-01",
+      "reference_image": "images/normal_control-01-reference.png",
+      "candidate_image": "images/normal_control-01-candidate.png",
+      "expected_defect": false,
+      "expected_issue_codes": []
+    },
+    {
+      "sample_id": "normal_control-02",
+      "reference_image": "images/normal_control-02-reference.png",
+      "candidate_image": "images/normal_control-02-candidate.png",
+      "expected_defect": false,
+      "expected_issue_codes": []
+    },
+    {
+      "sample_id": "normal_control-03",
+      "reference_image": "images/normal_control-03-reference.png",
+      "candidate_image": "images/normal_control-03-candidate.png",
+      "expected_defect": false,
+      "expected_issue_codes": []
+    },
+    {
+      "sample_id": "normal_control-04",
+      "reference_image": "images/normal_control-04-reference.png",
+      "candidate_image": "images/normal_control-04-candidate.png",
+      "expected_defect": false,
+      "expected_issue_codes": []
+    },
+    {
+      "sample_id": "residual_english-01",
+      "reference_image": "images/residual_english-01-reference.png",
+      "candidate_image": "images/residual_english-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "residual_untranslated_text"
+      ]
+    },
+    {
+      "sample_id": "residual_english-02",
+      "reference_image": "images/residual_english-02-reference.png",
+      "candidate_image": "images/residual_english-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "residual_untranslated_text"
+      ]
+    },
+    {
+      "sample_id": "residual_english-03",
+      "reference_image": "images/residual_english-03-reference.png",
+      "candidate_image": "images/residual_english-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "residual_untranslated_text"
+      ]
+    },
+    {
+      "sample_id": "residual_english-04",
+      "reference_image": "images/residual_english-04-reference.png",
+      "candidate_image": "images/residual_english-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "residual_untranslated_text"
+      ]
+    },
+    {
+      "sample_id": "clipped_text-01",
+      "reference_image": "images/clipped_text-01-reference.png",
+      "candidate_image": "images/clipped_text-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "clipped"
+      ]
+    },
+    {
+      "sample_id": "clipped_text-02",
+      "reference_image": "images/clipped_text-02-reference.png",
+      "candidate_image": "images/clipped_text-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "clipped"
+      ]
+    },
+    {
+      "sample_id": "clipped_text-03",
+      "reference_image": "images/clipped_text-03-reference.png",
+      "candidate_image": "images/clipped_text-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "clipped"
+      ]
+    },
+    {
+      "sample_id": "clipped_text-04",
+      "reference_image": "images/clipped_text-04-reference.png",
+      "candidate_image": "images/clipped_text-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "clipped"
+      ]
+    },
+    {
+      "sample_id": "overflow-01",
+      "reference_image": "images/overflow-01-reference.png",
+      "candidate_image": "images/overflow-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overflow"
+      ]
+    },
+    {
+      "sample_id": "overflow-02",
+      "reference_image": "images/overflow-02-reference.png",
+      "candidate_image": "images/overflow-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overflow"
+      ]
+    },
+    {
+      "sample_id": "overflow-03",
+      "reference_image": "images/overflow-03-reference.png",
+      "candidate_image": "images/overflow-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overflow"
+      ]
+    },
+    {
+      "sample_id": "overflow-04",
+      "reference_image": "images/overflow-04-reference.png",
+      "candidate_image": "images/overflow-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overflow"
+      ]
+    },
+    {
+      "sample_id": "overlap-01",
+      "reference_image": "images/overlap-01-reference.png",
+      "candidate_image": "images/overlap-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overlap"
+      ]
+    },
+    {
+      "sample_id": "overlap-02",
+      "reference_image": "images/overlap-02-reference.png",
+      "candidate_image": "images/overlap-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overlap"
+      ]
+    },
+    {
+      "sample_id": "overlap-03",
+      "reference_image": "images/overlap-03-reference.png",
+      "candidate_image": "images/overlap-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overlap"
+      ]
+    },
+    {
+      "sample_id": "overlap-04",
+      "reference_image": "images/overlap-04-reference.png",
+      "candidate_image": "images/overlap-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "overlap"
+      ]
+    },
+    {
+      "sample_id": "missing_glyphs-01",
+      "reference_image": "images/missing_glyphs-01-reference.png",
+      "candidate_image": "images/missing_glyphs-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "missing_glyphs"
+      ]
+    },
+    {
+      "sample_id": "missing_glyphs-02",
+      "reference_image": "images/missing_glyphs-02-reference.png",
+      "candidate_image": "images/missing_glyphs-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "missing_glyphs"
+      ]
+    },
+    {
+      "sample_id": "missing_glyphs-03",
+      "reference_image": "images/missing_glyphs-03-reference.png",
+      "candidate_image": "images/missing_glyphs-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "missing_glyphs"
+      ]
+    },
+    {
+      "sample_id": "missing_glyphs-04",
+      "reference_image": "images/missing_glyphs-04-reference.png",
+      "candidate_image": "images/missing_glyphs-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "missing_glyphs"
+      ]
+    },
+    {
+      "sample_id": "garbled_text-01",
+      "reference_image": "images/garbled_text-01-reference.png",
+      "candidate_image": "images/garbled_text-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "garbled_text"
+      ]
+    },
+    {
+      "sample_id": "garbled_text-02",
+      "reference_image": "images/garbled_text-02-reference.png",
+      "candidate_image": "images/garbled_text-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "garbled_text"
+      ]
+    },
+    {
+      "sample_id": "garbled_text-03",
+      "reference_image": "images/garbled_text-03-reference.png",
+      "candidate_image": "images/garbled_text-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "garbled_text"
+      ]
+    },
+    {
+      "sample_id": "garbled_text-04",
+      "reference_image": "images/garbled_text-04-reference.png",
+      "candidate_image": "images/garbled_text-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "garbled_text"
+      ]
+    },
+    {
+      "sample_id": "bad_wrapping-01",
+      "reference_image": "images/bad_wrapping-01-reference.png",
+      "candidate_image": "images/bad_wrapping-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "bad_wrapping"
+      ]
+    },
+    {
+      "sample_id": "bad_wrapping-02",
+      "reference_image": "images/bad_wrapping-02-reference.png",
+      "candidate_image": "images/bad_wrapping-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "bad_wrapping"
+      ]
+    },
+    {
+      "sample_id": "bad_wrapping-03",
+      "reference_image": "images/bad_wrapping-03-reference.png",
+      "candidate_image": "images/bad_wrapping-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "bad_wrapping"
+      ]
+    },
+    {
+      "sample_id": "bad_wrapping-04",
+      "reference_image": "images/bad_wrapping-04-reference.png",
+      "candidate_image": "images/bad_wrapping-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "bad_wrapping"
+      ]
+    },
+    {
+      "sample_id": "style_readability-01",
+      "reference_image": "images/style_readability-01-reference.png",
+      "candidate_image": "images/style_readability-01-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "style_readability"
+      ]
+    },
+    {
+      "sample_id": "style_readability-02",
+      "reference_image": "images/style_readability-02-reference.png",
+      "candidate_image": "images/style_readability-02-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "style_readability"
+      ]
+    },
+    {
+      "sample_id": "style_readability-03",
+      "reference_image": "images/style_readability-03-reference.png",
+      "candidate_image": "images/style_readability-03-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "style_readability"
+      ]
+    },
+    {
+      "sample_id": "style_readability-04",
+      "reference_image": "images/style_readability-04-reference.png",
+      "candidate_image": "images/style_readability-04-candidate.png",
+      "expected_defect": true,
+      "expected_issue_codes": [
+        "style_readability"
+      ]
+    }
+  ]
+}

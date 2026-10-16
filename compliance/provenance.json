@@ -1,0 +1,28 @@
+{
+  "contract": "hanengine.provenance/v1",
+  "project": {
+    "license_spdx": "NOASSERTION",
+    "license_status": "UNDECIDED",
+    "name": "HanEngine",
+    "repository": "https://github.com/wms1125/game-localizer",
+    "version": "0.0.0-foundation"
+  },
+  "restricted_reference_material": [
+    {
+      "name": "RenpyThief 6.7.7 authorized recovery package",
+      "purpose": "static architecture analysis only",
+      "repository_inclusion": "FORBIDDEN",
+      "sha256": "2DF39E113C8CA2401749A2F985E00EB96F1FA2BC5FB82F47F77A3747EF67767A"
+    }
+  ],
+  "implementation_sources": [
+    {
+      "kind": "project_owned",
+      "scope": "game_localizer/** and repository-owned synthetic fixtures"
+    },
+    {
+      "kind": "official_documentation",
+      "scope": "documented per implementation change"
+    }
+  ]
+}

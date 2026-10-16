@@ -1,0 +1,9 @@
+{
+  "displayName": "Harbor Square",
+  "events": [
+    {
+      "code": 102,
+      "parameters": [["Open the map", "Leave the harbor"], 0, 0, 2, 0]
+    }
+  ]
+}

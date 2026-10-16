@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "registry_id": "hanengine-translation-sources-v1",
+  "sources": [
+    {
+      "id": "renpy-the-question-schinese-sdk-8.5.3",
+      "authority_tier": "official-engine-source",
+      "kind": "runtime-reference",
+      "engine": "renpy",
+      "language": "zh-CN",
+      "description": "Ren'Py's official The Question sample and its Simplified Chinese translation files, recorded for local runtime and terminology review.",
+      "source": {
+        "release_url": "https://www.renpy.org/dl/8.5.3/renpy-8.5.3-sdk.zip",
+        "release_sha256": "66eb9ebfe775c620ee602a4dc4375a0c8f64d59e8ae2746c8602032423f56826",
+        "upstream_repository": "https://github.com/renpy/renpy",
+        "upstream_reference": "3baa108",
+        "sdk_version": "8.5.3.26051504",
+        "license_file": "LICENSE.txt",
+        "license_file_sha256": "b5d4610dfb530c53d5ce681e913f313903948616eb7b4ff8e8ddd19337852c1e"
+      },
+      "local_artifact": {
+        "root_label": "renpy-sdk-clean-unpacked/the_question",
+        "source_tree_sha256": "ce1dfcc9e8964d3c0d64ea49df0b8c91907a52049b00e80b2694f4313750f8ac",
+        "translation_files": {
+          "game/tl/schinese/common.rpy": "d907a08b8465e90d8870d1f8342cb51f7a41ebd697fc3671cadd180adf865556",
+          "game/tl/schinese/options.rpy": "188af8dbf91bdbbfaed4049d23d80ec1cbb17d5d4715667fc81abf4e2f001c8a",
+          "game/tl/schinese/screens.rpy": "a386c640b9a6c38a2d1dfd95702202f0a5aa5a9ac339e652c7df8a919292db1f",
+          "game/tl/schinese/script.rpy": "b07a546de770631fbab07055353fee7576597c2774d0e06652f5934bdc3eb33b"
+        }
+      },
+      "use_for": [
+        "Ren'Py syntax and runtime behavior reference",
+        "local-only Chinese candidate smoke tests",
+        "human review starting points for generic Ren'Py UI terms"
+      ],
+      "do_not_use_for": [
+        "proof of translation quality or linguistic authority",
+        "unreviewed project-wide terminology decisions",
+        "redistribution without a separate license and attribution review"
+      ]
+    }
+  ]
+}

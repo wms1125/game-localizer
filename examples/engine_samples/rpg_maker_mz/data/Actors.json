@@ -1,0 +1,15 @@
+[
+  null,
+  {
+    "name": "Mika",
+    "nickname": "Clockmaker",
+    "profile": "Ready, {player}?",
+    "note": "<keep:engine-metadata>",
+    "events": [
+      {
+        "code": 401,
+        "parameters": ["The workshop is open, {player}!"]
+      }
+    ]
+  }
+]
