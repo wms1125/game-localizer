@@ -322,7 +322,9 @@ def _replace_bundle(
     progress_offset: int,
     progress_total: int,
 ) -> int:
-    temporary = Path(tempfile.mkdtemp(prefix="hanengine-unity-bundle-"))
+    # Keep this beside the bundle so replacement stays on one volume, but use
+    # a short prefix because the bundle filename itself is close to MAX_PATH.
+    temporary = Path(tempfile.mkdtemp(prefix=".hnu-bundle-", dir=str(bundle.parent)))
     try:
         try:
             environment = _unitypy_load(bundle)
@@ -447,10 +449,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
     def _supported_profile(self, root: Path) -> _AddressablesProfile | None:
         if self.target_language.casefold() != "zh-cn" or self.source_language.casefold() != "en":
             return None
-        try:
-            return _profile(root)
-        except Exception:
-            return None
+        return _profile(root)
 
     def detect(self, request: DetectionRequest) -> DetectionResult | AdapterError:
         if not isinstance(request, DetectionRequest):
@@ -496,6 +495,19 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 recoverable=True,
                 cause=exc,
             )
+        except UnityAddressablesError as exc:
+            message = str(exc)
+            if message.startswith("UnityPy is required"):
+                message += "; install UnityPy into the Python environment running HanEngine"
+            else:
+                message = f"Unity Localization Addressables profile could not be inspected: {message}"
+            return self._error(
+                Operation.DETECT,
+                AdapterErrorCode.UNSUPPORTED_INPUT,
+                message,
+                recoverable=False,
+                cause=exc,
+            )
         except OSError as exc:
             return self._error(
                 Operation.DETECT,
@@ -508,11 +520,11 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
     def extract(self, request: ExtractRequest) -> ExtractResult | AdapterError:
         if not isinstance(request, ExtractRequest):
             raise TypeError("request must be an ExtractRequest")
-        profile = self._supported_profile(request.source_root)
-        if profile is None:
-            return super().extract(request)
         try:
             request.context.checkpoint()
+            profile = self._supported_profile(request.source_root)
+            if profile is None:
+                return super().extract(request)
             entries = []
             relative_bundle = profile.layout.english_bundle.relative_to(
                 request.source_root.resolve(strict=True)
@@ -575,7 +587,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
             return self._error(
                 Operation.EXTRACT,
                 AdapterErrorCode.UNSUPPORTED_INPUT,
-                "Supported Unity Localization tables could not be extracted",
+                f"Supported Unity Localization tables could not be extracted: {exc}",
                 recoverable=False,
                 cause=exc,
             )
@@ -594,6 +606,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
             return super().build(request)
         temporary: Path | None = None
         removed_placeholder = False
+        failure_stage = "profile-validation"
         try:
             request.context.checkpoint()
             catalog = self._catalog_from_segments(request)
@@ -623,12 +636,15 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                     raise UnityAddressablesError("output root already exists and is not empty")
                 removed_placeholder = True
             output.parent.mkdir(parents=True, exist_ok=True)
-            # Keep the copied tree under the system temp directory.  A Unity
-            # Addressables path plus a user-chosen candidate name can exceed
-            # Windows' legacy MAX_PATH limit when the staging tree sits next
-            # to the output directory.
-            temporary = Path(tempfile.mkdtemp(prefix="hnu-addr-"))
+            # Keep the temporary tree beside the output so final promotion
+            # remains an atomic same-volume rename on Windows.  The output
+            # root is already resolved and is shorter than the source path.
+            failure_stage = "project-copy"
+            temporary = Path(
+                tempfile.mkdtemp(prefix=f".{output.name}.unity.", dir=str(output.parent))
+            ).resolve()
             _copy_project_tree(request.source_root.resolve(strict=True), temporary, request.context)
+            failure_stage = "copied-profile-validation"
             candidate_profile = _profile(temporary)
             if candidate_profile is None:
                 raise UnityAddressablesError("copied candidate lost its supported Addressables profile")
@@ -636,6 +652,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 raise UnityAddressablesError("source Addressables resources changed while the candidate was copied")
             progress_total = len(translations)
             request.context.progress(0, progress_total, current_item="Unity Localization tables")
+            failure_stage = "chinese-bundle-rewrite"
             changed_chinese = _replace_bundle(
                 candidate_profile.layout.chinese_bundle,
                 _SIMPLIFIED_CHINESE_SUFFIX,
@@ -644,12 +661,14 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 progress_offset=0,
                 progress_total=progress_total,
             )
+            failure_stage = "catalog-update"
             _update_catalog(
                 profile.layout.catalog,
                 candidate_profile.layout.catalog,
                 (profile.layout.chinese_bundle,),
                 (candidate_profile.layout.chinese_bundle,),
             )
+            failure_stage = "candidate-read-back"
             checked_candidate = _profile(temporary)
             if checked_candidate is None or not self._tables_match_translations(
                 checked_candidate,
@@ -659,6 +678,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 raise UnityAddressablesError(
                     "rebuilt Simplified Chinese table failed read-back or English table changed"
                 )
+            failure_stage = "manifest-generation"
             relative_paths = tuple(sorted(checked_candidate.layout.localized_files(temporary)))
             manifest = tuple(
                 BuildManifestEntry(
@@ -668,6 +688,7 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 )
                 for relative in relative_paths
             )
+            failure_stage = "candidate-publish"
             if removed_placeholder:
                 output.rmdir()
             temporary.replace(output)
@@ -708,12 +729,15 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 cause=exc,
             )
         except (OSError, UnityAddressablesError, TypeError, ValueError, KeyError) as exc:
+            diagnostic_cause = exc
+            while diagnostic_cause.__cause__ is not None:
+                diagnostic_cause = diagnostic_cause.__cause__
             return self._error(
                 Operation.BUILD,
                 AdapterErrorCode.BUILD_FAILED,
-                "Unity Addressables candidate could not be built",
+                f"Unity Addressables candidate could not be built during {failure_stage}",
                 recoverable=False,
-                cause=exc,
+                cause=diagnostic_cause,
             )
         finally:
             if temporary is not None:

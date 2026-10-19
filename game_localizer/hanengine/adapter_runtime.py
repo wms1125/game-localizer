@@ -102,10 +102,16 @@ class AdapterRuntimeError(RuntimeError):
 
 
 class AdapterNotDetectedError(AdapterRuntimeError):
-    def __init__(self, task: TaskPlan, provisional_route: RoutePlan):
+    def __init__(
+        self,
+        task: TaskPlan,
+        provisional_route: RoutePlan,
+        reasons: tuple[str, ...] = (),
+    ):
         super().__init__("No AdapterV1 implementation matched the project")
         self.task = task
         self.provisional_route = provisional_route
+        self.reasons = tuple(reasons)
 
 
 class AdapterAmbiguityError(AdapterRuntimeError):
@@ -128,7 +134,12 @@ class AdapterTaskFailedError(AdapterRuntimeError):
         operation: Operation,
         adapter_error: AdapterError | None = None,
     ):
-        super().__init__(f"AdapterV1 {operation.value} task did not complete")
+        message = f"AdapterV1 {operation.value} task did not complete"
+        if adapter_error is not None:
+            message += f": {adapter_error.code.value}: {adapter_error.message}"
+            if adapter_error.cause_type is not None:
+                message += f" ({adapter_error.cause_type})"
+        super().__init__(message)
         self.task = task
         self.operation = operation
         self.adapter_error = adapter_error
@@ -483,7 +494,11 @@ class AdapterRuntimeV1:
         if ambiguous_ids:
             raise AdapterAmbiguityError(completed, provisional, ambiguous_ids[0])
         if not selected:
-            raise AdapterNotDetectedError(completed, provisional)
+            raise AdapterNotDetectedError(
+                completed,
+                provisional,
+                ("no_supported_project_markers",),
+            )
 
         adapter, detection = selected[0]
         final_route = self.guard.evaluate_final(
@@ -556,7 +571,12 @@ class AdapterRuntimeV1:
                 adapter_errors.append(result)
                 context.warning(
                     "AdapterV1 operation returned an error",
-                    {"adapter_id": selection.adapter_id, "code": result.code.value},
+                    {
+                        "adapter_id": selection.adapter_id,
+                        "code": result.code.value,
+                        "message": result.message,
+                        "cause_type": result.cause_type,
+                    },
                 )
                 if result.code is AdapterErrorCode.CANCELLED:
                     raise TaskCancelled("adapter operation cancelled")
