@@ -93,6 +93,8 @@ _KNOWN_CREATURE_TRANSLATIONS = {
     "crab carcass": "螃蟹尸体",
 }
 _KNOWN_UI_TRANSLATIONS = {
+    "impressive": "令人印象深刻",
+    "decals": "贴花",
     "suppressor": "消音器",
     "compensator": "枪口补偿器",
     "extended mag": "扩容弹匣",

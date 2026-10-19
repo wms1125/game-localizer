@@ -424,6 +424,8 @@ class OllamaBridgeTests(unittest.TestCase):
         self.assertEqual(result, "狗鱼")
         self.assertEqual(_known_creature_fallback("Red   Snapper"), "红鲷鱼")
         self.assertEqual(_known_ui_fallback("Suppressor"), "消音器")
+        self.assertEqual(_known_ui_fallback("Impressive"), "令人印象深刻")
+        self.assertEqual(_known_ui_fallback("Decals"), "贴花")
         self.assertIsNone(_known_ui_fallback("Host Game"))
 
     def test_translation_retries_english_echo_with_punctuation(self):
