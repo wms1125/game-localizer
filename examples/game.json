@@ -1,0 +1,11 @@
+{
+  "menu": {
+    "start": "New Game",
+    "continue": "Continue",
+    "options": "Options"
+  },
+  "dialogue": [
+    "Hello, {name}!",
+    "こんにちは"
+  ]
+}

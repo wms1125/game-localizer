@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "line": 2,
+      "kind": "narration",
+      "speaker": null,
+      "source_text": "Main Menu",
+      "placeholders": [],
+      "text_context": null
+    },
+    {
+      "line": 3,
+      "kind": "narration",
+      "speaker": null,
+      "source_text": "Start",
+      "placeholders": [],
+      "text_context": null
+    },
+    {
+      "line": 4,
+      "kind": "narration",
+      "speaker": null,
+      "source_text": "Options",
+      "placeholders": [],
+      "text_context": null
+    }
+  ]
+}

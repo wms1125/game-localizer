@@ -1,0 +1,1505 @@
+{
+  "contract": "hanengine.benchmark/v1",
+  "slots": [
+    {
+      "slot_id": "gold-001",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-002",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-003",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-004",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-005",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-006",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-007",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-008",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-009",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-010",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-011",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-012",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-013",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-014",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-015",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-016",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-017",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-018",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-019",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-020",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-021",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-022",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-023",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-024",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-025",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-026",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-027",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-028",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-029",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-030",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-031",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-032",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-033",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-034",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-035",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-036",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-037",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-038",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-039",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-040",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-041",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-042",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-043",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-044",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-045",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-046",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-047",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-048",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-049",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-050",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-051",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-052",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-053",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-054",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-055",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-056",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-057",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-058",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-059",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-060",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-061",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-062",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-063",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-064",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-065",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-066",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-067",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-068",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-069",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-070",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-071",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-072",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-073",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-074",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-075",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-076",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-077",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-078",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-079",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-080",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-081",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-082",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-083",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-084",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-085",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-086",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-087",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-088",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-089",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-090",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-091",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-092",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-093",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-094",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-095",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-096",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-097",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-098",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-099",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-100",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-101",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-102",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-103",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-104",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-105",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-106",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-107",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-108",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-109",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-110",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-111",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-112",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-113",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-114",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-115",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-116",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-117",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-118",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-119",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-120",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-121",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-122",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-123",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-124",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-125",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-126",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-127",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-128",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-129",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-130",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-131",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-132",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-133",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-134",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-135",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-136",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-137",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-138",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-139",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-140",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-141",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-142",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-143",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-144",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-145",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-146",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-147",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-148",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-149",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-150",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-151",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-152",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-153",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-154",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-155",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-156",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-157",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-158",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-159",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-160",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-161",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-162",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-163",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-164",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-165",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-166",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-167",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-168",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-169",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-170",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-171",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-172",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-173",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-174",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-175",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-176",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-177",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-178",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-179",
+      "category": "dialogue",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-180",
+      "category": "dialogue",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-181",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-182",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-183",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-184",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-185",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-186",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-187",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-188",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-189",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-190",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-191",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-192",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-193",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-194",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-195",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-196",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-197",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-198",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-199",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-200",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-201",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-202",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-203",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-204",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-205",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-206",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-207",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-208",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-209",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-210",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-211",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-212",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-213",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-214",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-215",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-216",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-217",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-218",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-219",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-220",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-221",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-222",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-223",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-224",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-225",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-226",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-227",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-228",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-229",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-230",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-231",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-232",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-233",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-234",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-235",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-236",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-237",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-238",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-239",
+      "category": "menu_ui",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-240",
+      "category": "menu_ui",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-241",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-242",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-243",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-244",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-245",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-246",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-247",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-248",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-249",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-250",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-251",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-252",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-253",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-254",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-255",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-256",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-257",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-258",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-259",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-260",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-261",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-262",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-263",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-264",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-265",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-266",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-267",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-268",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-269",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-270",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-271",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-272",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-273",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-274",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-275",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-276",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-277",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-278",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-279",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-280",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-281",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-282",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-283",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-284",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-285",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-286",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-287",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-288",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-289",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-290",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-291",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-292",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-293",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-294",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-295",
+      "category": "system",
+      "source_language": "ja"
+    },
+    {
+      "slot_id": "gold-296",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-297",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-298",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-299",
+      "category": "system",
+      "source_language": "en"
+    },
+    {
+      "slot_id": "gold-300",
+      "category": "system",
+      "source_language": "ja"
+    }
+  ]
+}
