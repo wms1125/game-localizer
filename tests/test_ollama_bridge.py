@@ -397,6 +397,7 @@ class OllamaBridgeTests(unittest.TestCase):
         self.assertEqual(result, "好吃好吃好吃")
 
     def test_short_expression_fallback_does_not_preserve_unknown_english(self):
+        self.assertEqual(_short_expression_fallback("Bing Bong"), "叮咚")
         self.assertEqual(_short_expression_fallback("HMM MHM"), "嗯嗯")
         self.assertEqual(_short_expression_fallback("yummers"), "真好吃")
         self.assertEqual(_short_expression_fallback("thanks"), "谢谢")

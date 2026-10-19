@@ -27,6 +27,7 @@ _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
 _SHORT_EXPRESSION_FALLBACKS = {
+    "bing bong": "叮咚",
     "yum": "好吃",
     "yum yum": "好吃好吃",
     "yum yum yum": "好吃好吃好吃",
