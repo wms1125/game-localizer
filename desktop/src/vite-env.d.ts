@@ -32,6 +32,7 @@ type DetectionCandidate = {
   capability?: string | string[];
   maturity?: string;
   limitations?: string[];
+  reasons?: string[];
   evidence?: Array<Record<string, unknown>>;
   capability_matrix?: CapabilityMatrix;
 };
@@ -55,6 +56,7 @@ type DetectionReport = {
   capability_matrix?: CapabilityMatrix;
   allowed_operations?: string[];
   hanguard?: Record<string, unknown> | null;
+  reasons?: string[];
   task_id?: string;
   state_root?: string;
 };
@@ -93,6 +95,37 @@ type PythonEvent = { taskId: string; channel?: "workflow" | "control"; type: str
 type AuthUser = { user_id: string; username: string; display_name: string };
 type AuthStatus = { authenticated: boolean; needsSetup: boolean; user: AuthUser | null; user_count?: number };
 type AuthCredentials = { username: string; password: string; display_name?: string };
+type QualityIssue = {
+  code: string;
+  severity: string;
+  segmentId: string | null;
+  relativePath: string | null;
+  message: string;
+  automaticallyRecoverable: boolean;
+  suggestedAction: string | null;
+};
+type QualityReportSummary = {
+  reportPath: string;
+  status: "passed" | "review_required" | "failed";
+  engineId: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  summary: {
+    segmentCount: number;
+    translatedCount: number;
+    resumedCount: number;
+    untranslatedCount: number;
+    unhandledCount: number;
+    validationIssueCount: number;
+    validationBlockingCount: number;
+    validationWarningCount: number;
+    verificationIssueCount: number;
+  };
+  validationPassed: boolean | null;
+  verificationPassed: boolean | null;
+  review: { required: boolean; reasons: string[] };
+  issues: QualityIssue[];
+};
 type VisualReportSummary = {
   decision: "pass" | "blocked" | "escalate";
   hardGatePassed: boolean;
@@ -134,6 +167,7 @@ interface Window {
     scanProject: (rootPath: string) => Promise<ProjectNode[]>;
     readCatalog: (filePath: string) => Promise<CatalogPayload>;
     writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;
+    readQualityReport: (filePath: string) => Promise<QualityReportSummary>;
     readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
     readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
     readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;

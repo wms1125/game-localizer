@@ -127,6 +127,31 @@ function taskStateLabel(state: string) {
   return labels[state] || state;
 }
 
+function qualityStatusLabel(status: QualityReportSummary["status"]) {
+  return {
+    passed: "质量检查通过",
+    review_required: "需要人工复核",
+    failed: "构建未通过",
+  }[status];
+}
+
+function qualityReasonLabel(reason: string) {
+  return {
+    translation_incomplete: "存在漏译条目",
+    extraction_warnings: "提取阶段存在警告",
+    validation_warnings: "校验阶段存在警告",
+    build_warnings: "构建阶段存在警告",
+    verification_issues: "验证阶段存在问题",
+  }[reason] || reason;
+}
+
+function detectionReasonLabel(reason: string) {
+  return {
+    no_supported_project_markers: "目录中没有受支持的游戏项目标记或明文资源",
+    packaged_resource_only: "只发现编译或封包资源，没有可提取的明文资源",
+  }[reason] || reason;
+}
+
 function normalizeEngineId(engine: string | null) {
   if (!engine) return null;
   return engine.replace(/^hanengine\./, "").replace(/-maker-/g, "_maker_");
@@ -172,6 +197,7 @@ function App() {
   const [activeWorkflowTaskIds, setActiveWorkflowTaskIds] = useState<string[]>([]);
   const [quickOutputPath, setQuickOutputPath] = useState("");
   const [quickStatus, setQuickStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const [qualityReport, setQualityReport] = useState<QualityReportSummary | null>(null);
   const [tasks, setTasks] = useState<TaskStatus[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskDetails, setTaskDetails] = useState<TaskStatus | null>(null);
@@ -222,6 +248,7 @@ function App() {
       setDictionaryPath("");
       setQuickOutputPath("");
       setQuickStatus("idle");
+      setQualityReport(null);
     } catch (error) {
       appendLog(`退出登录失败：${String(error)}`);
     }
@@ -393,6 +420,7 @@ function App() {
     setQuickStatus("idle");
     setQuickOutputPath("");
     setDetection(null);
+    setQualityReport(null);
     setTasks([]);
     setTaskDetails(null);
     setSelectedTaskId("");
@@ -422,7 +450,8 @@ function App() {
       appendLog(`[检测] ${selectedCandidate?.display_name || report.selected_engine}（${report.status}）`);
       if (report.status !== "ready") appendLog("[安全门控] 当前项目仅允许检测，提取和构建已禁用。");
     } else {
-      appendLog(`[检测] 未能自动确定引擎（${report.status}），请手动选择。`);
+      const reasons = (report.reasons || []).map(detectionReasonLabel).join("；");
+      appendLog(`[检测] 未能自动确定引擎（${report.status}）${reasons ? `：${reasons}` : "，请手动选择。"}`);
     }
     return report.selected_engine;
   }
@@ -447,7 +476,7 @@ function App() {
   }
 
   async function chooseDictionary() {
-    const result = await window.hanengine?.selectFile({ title: "加载翻译字典", filters: [{ name: "JSON", extensions: ["json"] }] });
+    const result = await window.hanengine?.selectFile({ title: "加载专业术语表", filters: [{ name: "JSON", extensions: ["json"] }] });
     if (result && !result.canceled && result.filePaths[0]) setDictionaryPath(result.filePaths[0]);
   }
 
@@ -493,7 +522,21 @@ function App() {
     const result = await window.hanengine?.selectDirectory({ title: "选择汉化输出目录" });
     if (!result || result.canceled || !result.filePaths[0]) return;
     const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
-    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", result.filePaths[0], "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", backendMode(mode)], "翻译、构建并验证");
+    const output = result.filePaths[0];
+    setQualityReport(null);
+    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", backendMode(mode)], "翻译、构建并验证");
+    await loadQualityReport(output);
+  }
+
+  async function loadQualityReport(output: string) {
+    const reportPath = `${output}.quality.json`;
+    try {
+      const report = await window.hanengine.readQualityReport(reportPath);
+      setQualityReport(report);
+      appendLog(`[质量] ${qualityStatusLabel(report.status)}：${report.summary.translatedCount}/${report.summary.segmentCount} 已翻译，漏译 ${report.summary.untranslatedCount}`);
+    } catch (error) {
+      appendLog(`[质量] 未能读取报告：${String(error)}`);
+    }
   }
 
   async function chooseQuickOutput() {
@@ -508,7 +551,7 @@ function App() {
   }
 
   async function runQuickLocalization() {
-    if (!projectPath || !dictionaryPath || !quickOutputPath) return;
+    if (!projectPath || !quickOutputPath) return;
     if (!canLocalizeProject) {
       appendLog("[安全门控] 当前项目未获得提取、校验、构建和验证权限。");
       return;
@@ -517,15 +560,43 @@ function App() {
       appendLog("[安全门控] 输出目录必须位于游戏项目之外。");
       return;
     }
+    if (!dictionaryPath) {
+      appendLog("[翻译] 尚未配置翻译来源。请先提取文本；需要实际汉化时，请在专业模式加载术语表。云端翻译将在正式服务接入后提供。");
+      return;
+    }
     setQuickStatus("running");
+    setQualityReport(null);
     setActiveWorkflowTaskIds([]);
     const result = await runPython(
       ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", "player"],
       "一键汉化：提取、翻译、校验、构建和验证",
     );
     setQuickStatus(result?.code === 0 ? "completed" : "failed");
+    await loadQualityReport(quickOutputPath);
     await refreshTasks();
-    if (result?.code === 0) setView("tasks");
+  }
+
+  async function extractQuickCatalog() {
+    if (!projectPath || !quickOutputPath) return;
+    if (!canLocalizeProject) {
+      appendLog("[安全门控] 当前项目未获得提取权限，请检查项目类型和检测结果。");
+      return;
+    }
+    if (isPathInside(projectPath, quickOutputPath)) {
+      appendLog("[安全门控] 输出目录必须位于游戏项目之外。");
+      return;
+    }
+    const catalogOutput = `${quickOutputPath.replace(/[\\/]$/, "")}/hanengine.catalog.json`;
+    const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
+    if (selectedEngine === "auto") {
+      appendLog("[提取] 无法确定引擎，请先重新检测项目。");
+      return;
+    }
+    const result = await runPython(
+      ["engine", "extract", selectedEngine, projectPath, "--output", catalogOutput, "--language", "zh-CN", "--mode", "player"],
+      "提取待翻译文本",
+    );
+    if (result?.code === 0) await loadCatalog(catalogOutput);
   }
 
   async function chooseVisualManifest() {
@@ -719,8 +790,9 @@ function App() {
           <div className="workspace-header"><div><div className="breadcrumbs"><span>{mode === "professional" ? "专业" : "普通"}</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? (mode === "normal" ? "快速汉化" : "翻译工作区") : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span>{mode === "professional" && <button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button>}</div></div>
 
           {view === "workspace" && mode === "professional" && <>
-            <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载字典" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
+            <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载专业术语表" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
             <div className="stats-strip"><div><span>总条目</span><strong>{rows.length.toLocaleString()}</strong></div><div><span>已完成</span><strong className="success-text">{translatedCount.toLocaleString()}</strong></div><div><span>待翻译</span><strong className="warning-text">{pendingCount.toLocaleString()}</strong></div><div><span>需检查</span><strong className="warning-text">{warningCount.toLocaleString()}</strong></div><div className="stats-spacer" /><div className="file-context"><FileJson2 size={14} /><span>{catalogPath ? basename(catalogPath) : "提取或打开 catalog JSON 后显示翻译条目"}</span></div></div>
+            <QualityReportPanel report={qualityReport} />
             <div className="filter-bar"><div className="search-box"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索 ID、上下文或文本" /></div><button className={`filter-button ${reviewOnly ? "active" : ""}`} onClick={() => setReviewOnly((value) => !value)}><CircleAlert size={14} />仅看待检查</button></div>
             <section className="translation-area"><div className="table-wrap"><table><thead><tr><th className="id-col">ID</th><th className="context-col">上下文</th><th>原文</th><th>译文</th><th className="status-col">状态</th></tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id} className={row.id === selectedId ? "selected-row" : ""} onClick={() => setSelectedId(row.id)}><td className="mono">{row.id}</td><td className="muted-cell">{row.context}</td><td>{row.source}</td><td className={!row.target ? "placeholder-cell" : ""}>{row.target || "点击下方编辑译文"}</td><td><span className={`status-pill ${row.status}`}>{statusLabel[row.status]}</span></td></tr>) : <tr><td className="empty-table" colSpan={5}>尚未加载翻译目录。打开项目后点击“提取文本”，或直接打开 catalog JSON。</td></tr>}</tbody></table></div><div className="editor-panel"><div className="editor-heading"><div><span className="eyebrow">当前条目</span><strong>{selected?.context || "未选择"}</strong></div><span className="editor-id">{selected?.id || "-"}</span></div><div className="editor-fields"><div><label>原文</label><div className="source-preview">{selected?.source || "选择一条翻译记录"}</div></div><div><label>译文</label><textarea value={selected?.target || ""} onChange={(event) => updateSelectedTarget(event.target.value)} placeholder="输入简体中文译文..." /></div></div></div></section>
           </>}
@@ -728,13 +800,14 @@ function App() {
             projectPath={projectPath}
             detection={detection}
             candidate={detectedCandidate}
-            dictionaryPath={dictionaryPath}
+            hasTranslationSource={Boolean(dictionaryPath)}
             outputPath={quickOutputPath}
             running={running}
             status={quickStatus}
+            qualityReport={qualityReport}
             canLocalize={Boolean(canLocalizeProject)}
             onOpenProject={openProject}
-            onChooseDictionary={chooseDictionary}
+            onExtract={extractQuickCatalog}
             onChooseOutput={chooseQuickOutput}
             onRun={runQuickLocalization}
             onOpenTasks={() => setView("tasks")}
@@ -954,13 +1027,14 @@ function QuickLocalizationView({
   projectPath,
   detection,
   candidate,
-  dictionaryPath,
+  hasTranslationSource,
   outputPath,
   running,
   status,
+  qualityReport,
   canLocalize,
   onOpenProject,
-  onChooseDictionary,
+  onExtract,
   onChooseOutput,
   onRun,
   onOpenTasks,
@@ -968,37 +1042,71 @@ function QuickLocalizationView({
   projectPath: string;
   detection: DetectionReport | null;
   candidate: DetectionCandidate | null;
-  dictionaryPath: string;
+  hasTranslationSource: boolean;
   outputPath: string;
   running: boolean;
   status: "idle" | "running" | "completed" | "failed";
+  qualityReport: QualityReportSummary | null;
   canLocalize: boolean;
   onOpenProject: () => void;
-  onChooseDictionary: () => void;
+  onExtract: () => void;
   onChooseOutput: () => void;
   onRun: () => void;
   onOpenTasks: () => void;
 }) {
   const capability = capabilityNames(candidate);
   const ready = Boolean(projectPath && candidate && canLocalize);
+  const canRunTranslation = Boolean(ready && hasTranslationSource && outputPath);
+  const canExtract = Boolean(ready && outputPath);
+  const capabilityTitle = !ready ? "当前项目仅允许检测" : canRunTranslation ? "可以执行一键汉化" : "可以提取文本";
+  const capabilityDescription = !ready
+    ? (candidate?.limitations?.join("；") || detection?.reasons?.map(detectionReasonLabel).join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")
+    : canRunTranslation
+      ? `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}`
+      : "翻译来源未配置；可以先提取文本，之后在专业模式加载术语表。";
   return <section className="operation-view quick-view">
     <div className="operation-heading">
-      <div><span className="eyebrow">HanEngine / 普通模式</span><h2>快速汉化</h2><p>选择游戏、字典和输出目录，HanEngine 会自动完成提取、翻译、校验、构建和验证。</p></div>
+      <div><span className="eyebrow">HanEngine / 普通模式</span><h2>快速汉化</h2><p>选择游戏和输出目录即可开始。普通模式会先提取可翻译文本，翻译来源由专业模式管理。</p></div>
       <button className="secondary-button" onClick={onOpenTasks}><ListChecks size={15} />查看任务</button>
     </div>
     <div className="quick-steps">
       <div className={`quick-step ${projectPath ? "done" : "active"}`}><span>1</span><div><strong>选择游戏目录</strong><small>{projectPath || "从一个已授权的原始工程开始"}</small></div><button className="secondary-button" onClick={onOpenProject}>{projectPath ? "更换" : "选择"}</button></div>
       <div className={`quick-step ${candidate ? "done" : projectPath ? "active" : "locked"}`}><span>2</span><div><strong>自动检测引擎</strong><small>{candidate ? `${candidate.display_name} · ${candidate.score}%` : "选择目录后自动检测"}</small></div>{candidate && <Check size={16} className="step-check" />}</div>
-      <div className={`quick-step ${dictionaryPath ? "done" : projectPath ? "active" : "locked"}`}><span>3</span><div><strong>选择本地字典</strong><small>{dictionaryPath || "UTF-8 JSON 字典"}</small></div><button className="secondary-button" onClick={onChooseDictionary} disabled={!projectPath}>浏览</button></div>
-      <div className={`quick-step ${outputPath ? "done" : projectPath ? "active" : "locked"}`}><span>4</span><div><strong>选择输出目录</strong><small>{outputPath || "必须位于游戏项目之外"}</small></div><button className="secondary-button" onClick={onChooseOutput} disabled={!projectPath}>浏览</button></div>
+      <div className={`quick-step ${outputPath ? "done" : projectPath ? "active" : "locked"}`}><span>3</span><div><strong>选择输出目录</strong><small>{outputPath || "必须位于游戏项目之外"}</small></div><button className="secondary-button" onClick={onChooseOutput} disabled={!projectPath}>浏览</button></div>
     </div>
     {detection && <div className={`capability-card ${ready ? "allowed" : "blocked"}`}>
       {ready ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
-      <div><strong>{ready ? "可以执行一键汉化" : "当前项目仅允许检测"}</strong><span>{ready ? `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}` : (candidate?.limitations?.join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")}</span>{candidate?.capability_matrix && <small className="capability-matrix-summary">{capabilityMatrixLabel(candidate.capability_matrix)}</small>}</div>
+      <div><strong>{capabilityTitle}</strong><span>{capabilityDescription}</span>{candidate?.capability_matrix && <small className="capability-matrix-summary">{capabilityMatrixLabel(candidate.capability_matrix)}</small>}</div>
       <span className="capability-state">{detection.status}</span>
     </div>}
-    <div className="quick-actions"><button className="primary-button" disabled={!ready || !dictionaryPath || !outputPath || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">原项目不会被覆盖，所有产物写入独立目录。</span></div>
+    <div className="quick-actions"><button className="secondary-button" disabled={!canExtract || running} onClick={onExtract}><ArrowDownToLine size={15} />先提取文本</button><button className="primary-button" disabled={!canRunTranslation || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">普通模式不要求字典；未配置翻译来源时，一键汉化不可用，先提取不会修改原项目。</span></div>
+    <QualityReportPanel report={qualityReport} />
     {status !== "idle" && <div className={`quick-result ${status}`}><span>{status === "completed" ? "汉化流程已完成，可在任务中心查看产物。" : status === "failed" ? "汉化流程失败，可从任务中心查看原因并重试。" : "正在执行 HanTask 流程，关闭应用后仍可从任务中心继续。"}</span><button className="icon-button" title="打开任务中心" onClick={onOpenTasks}><ExternalLink size={15} /></button></div>}
+  </section>;
+}
+
+function QualityReportPanel({ report }: { report: QualityReportSummary | null }) {
+  if (!report) return null;
+  const icon = report.status === "passed" ? <CircleCheck size={19} /> : report.status === "failed" ? <ShieldAlert size={19} /> : <CircleAlert size={19} />;
+  const visibleIssues = report.issues.slice(0, 3);
+  return <section className={`quality-report ${report.status}`}>
+    <div className="quality-report-heading">
+      <span className="quality-report-icon">{icon}</span>
+      <div><strong>{qualityStatusLabel(report.status)}</strong><span>{report.engineId} · {report.sourceLanguage} → {report.targetLanguage}</span></div>
+      <span className="quality-report-path" title={report.reportPath}>{report.reportPath}</span>
+    </div>
+    <div className="quality-report-counts">
+      <div><span>总条目</span><strong>{report.summary.segmentCount.toLocaleString()}</strong></div>
+      <div><span>已翻译</span><strong>{report.summary.translatedCount.toLocaleString()}</strong></div>
+      <div><span>漏译</span><strong>{report.summary.untranslatedCount.toLocaleString()}</strong></div>
+      <div><span>未处理</span><strong>{report.summary.unhandledCount.toLocaleString()}</strong></div>
+      <div><span>阻断项</span><strong>{report.summary.validationBlockingCount.toLocaleString()}</strong></div>
+    </div>
+    {(report.review.reasons.length > 0 || visibleIssues.length > 0) && <div className="quality-report-details">
+      {report.review.reasons.length > 0 && <p>审查原因：{report.review.reasons.map(qualityReasonLabel).join("；")}</p>}
+      {visibleIssues.map((issue) => <div className="quality-issue" key={`${issue.code}-${issue.segmentId || issue.relativePath || issue.message}`}><strong>{issue.code}</strong><span>{issue.message}</span>{issue.suggestedAction && <small>建议：{issue.suggestedAction}</small>}</div>)}
+      {report.issues.length > visibleIssues.length && <p>另有 {report.issues.length - visibleIssues.length} 项问题，详见报告文件。</p>}
+    </div>}
   </section>;
 }
 

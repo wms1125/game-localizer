@@ -9,6 +9,7 @@ const {
   readVisualReport,
   readVisualReviewProof,
 } = require("./visual-report.cjs");
+const { readQualityReport } = require("./quality-report.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const BACKEND_ROOT = app.isPackaged
@@ -317,6 +318,10 @@ app.whenReady().then(() => {
   ipcMain.handle("catalog:write", async (event, filePath, updates) => {
     await requireAuthenticated(event);
     return writeCatalog(path.resolve(filePath), updates);
+  });
+  ipcMain.handle("quality:read-report", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readQualityReport(filePath);
   });
   ipcMain.handle("visual:read-report", async (event, filePath) => {
     await requireAuthenticated(event);
