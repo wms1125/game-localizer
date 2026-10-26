@@ -35,12 +35,16 @@ classes. Its machine-readable truth uses the same
 `hanengine.visual-judge-benchmark/v1` sample contract as
 `tools/benchmark_visual_judges.py`.
 
-The images use a fixed 960x540 synthetic interface. The generator selects a
-known host font in a fixed order and records the selected filename in the
-manifest; no font binary or third-party game asset is copied into the
-repository. Generator v2 localizes the candidate's fixed title, chapter,
-button, and save-slot labels so the four normal controls contain no known
-English UI residual. Benchmark requests also omit category-bearing sample IDs.
+The images use a fixed 960x540 synthetic interface and a vendored, renamed
+subset of Adobe Source Han Sans SC. The font is licensed separately under
+SIL OFL 1.1 in `assets/FONT-OFL-LICENSE.txt`; generated screenshots and their
+truth manifest remain covered by the benchmark's CC0 license. The manifest
+records the font hash and Pillow version. Install the pinned image dependency
+from `requirements-visual-benchmarks.txt` before regeneration. Generator v3
+uses the same fixed font on every supported host and localizes the candidate's
+title, chapter, button, and save-slot labels so the four normal controls
+contain no known English UI residual. Benchmark requests also omit
+category-bearing sample IDs.
 
 Regenerate the dataset with:
 

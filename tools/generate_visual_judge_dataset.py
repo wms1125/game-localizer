@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
+import PIL
 from PIL import Image, ImageDraw, ImageFont
 
 
 SCHEMA_VERSION = "hanengine.visual-judge-benchmark/v1"
-GENERATOR_VERSION = "hanengine.visual-judge-controlled/v2"
+GENERATOR_VERSION = "hanengine.visual-judge-controlled/v3"
 CANVAS = (960, 540)
+FONT_NAME = "HanEngine Benchmark Sans"
+FONT_PATH = Path(__file__).resolve().parents[1] / "benchmarks" / "assets" / "HanEngineBenchmarkSans.otf"
+PINNED_PILLOW_VERSION = "12.1.1"
 CHROME_TEXT = {
     "en": {
         "title": "MOONLIGHT ARCHIVE",
@@ -37,20 +42,14 @@ CATEGORIES = (
     ("bad_wrapping", "bad_wrapping"),
     ("style_readability", "style_readability"),
 )
-FONT_CANDIDATES = (
-    Path("C:/Windows/Fonts/msyh.ttc"),
-    Path("C:/Windows/Fonts/simhei.ttf"),
-    Path("C:/Windows/Fonts/simsun.ttc"),
-    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-)
-
-
 def _font_path() -> Path:
-    for candidate in FONT_CANDIDATES:
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError("no supported deterministic font was found")
+    if not FONT_PATH.is_file():
+        raise RuntimeError(f"benchmark font is missing: {FONT_PATH}")
+    if PIL.__version__ != PINNED_PILLOW_VERSION:
+        raise RuntimeError(
+            f"Pillow {PINNED_PILLOW_VERSION} is required; found {PIL.__version__}"
+        )
+    return FONT_PATH
 
 
 def _font(path: Path, size: int) -> ImageFont.FreeTypeFont:
@@ -163,7 +162,10 @@ def build_dataset(output_root: Path) -> tuple[Path, ...]:
         "dataset": {
             "generator": GENERATOR_VERSION,
             "canvas": list(CANVAS),
-            "font": font_path.name,
+            "font": FONT_NAME,
+            "font_file": font_path.name,
+            "font_sha256": hashlib.sha256(font_path.read_bytes()).hexdigest(),
+            "pillow_version": PIL.__version__,
             "license": "CC0-1.0",
             "category_count": len(CATEGORIES),
             "sample_count": len(samples),

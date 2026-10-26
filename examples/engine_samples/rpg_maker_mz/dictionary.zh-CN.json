@@ -5,6 +5,9 @@
   "Clockmaker": "钟表匠",
   "Ready, {player}?": "准备好了吗，{player}？",
   "The workshop is open, {player}!": "工坊已经开放，{player}！",
+  "Workshop Floor": "工坊楼层",
   "Tune the clock": "校准时钟",
-  "Read the blueprint": "阅读蓝图"
+  "Read the blueprint": "阅读蓝图",
+  "Attack": "攻击",
+  "Guard": "防御"
 }

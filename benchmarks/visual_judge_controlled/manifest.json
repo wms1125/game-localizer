@@ -1,12 +1,15 @@
 {
   "schema_version": "hanengine.visual-judge-benchmark/v1",
   "dataset": {
-    "generator": "hanengine.visual-judge-controlled/v2",
+    "generator": "hanengine.visual-judge-controlled/v3",
     "canvas": [
       960,
       540
     ],
-    "font": "msyh.ttc",
+    "font": "HanEngine Benchmark Sans",
+    "font_file": "HanEngineBenchmarkSans.otf",
+    "font_sha256": "b54440847f2f91480b1484b6c722f149caf224b681cf5651075edf0791fb50c2",
+    "pillow_version": "12.1.1",
     "license": "CC0-1.0",
     "category_count": 9,
     "sample_count": 36
