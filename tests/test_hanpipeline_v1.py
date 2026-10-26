@@ -164,6 +164,8 @@ class HanPipelineV1Tests(unittest.TestCase):
             catalog = workflow.extract().catalog
 
             class _NewlineMismatchProvider:
+                TRANSLATIONS = {"Hello, {name}!": "你好，{name}！"}
+
                 def __init__(self) -> None:
                     self.calls = []
 
@@ -177,7 +179,7 @@ class HanPipelineV1Tests(unittest.TestCase):
                             retry_count=2,
                         )
                     return TranslationResult(
-                        f"中文{request.text}",
+                        self.TRANSLATIONS.get(request.text, "中文"),
                         "local-model",
                         "test-model",
                         0.9,

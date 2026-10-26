@@ -17,6 +17,7 @@ from .translation import (
     TranslationProviderError,
     TranslationRequest,
     enforce_translation_quality,
+    with_terminal_punctuation,
 )
 
 
@@ -332,6 +333,7 @@ class HanPipelineV1:
                     )
                     try:
                         translation = provider.translate(request)
+                        translation = with_terminal_punctuation(request, translation)
                         quality_issues = enforce_translation_quality(request, translation)
                     except TranslationNotFoundError:
                         metadata = dict(persisted.metadata)

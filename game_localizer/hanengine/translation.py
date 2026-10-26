@@ -6,7 +6,7 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -368,6 +368,10 @@ _METADATA_ECHO_RE = re.compile(
 _TRANSLATION_LABEL_RE = re.compile(r"(?i)^(?:translation|translated text|译文)\s*[:：]")
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
+# Latin tokens that legitimately stay inside Chinese game text (units,
+# established abbreviations).  Anything else left over in a CJK result is a
+# mixed-language defect and is rejected so the segment falls back for review.
+_MIXED_LANGUAGE_ALLOWLIST = frozenset({"kg", "npc"})
 _TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
 _TRAILING_PLACEHOLDER_RE = re.compile(r"(?:\{[^{}]*\}|\[[^\[\]]*\]|%\d+(?:\$[A-Za-z])?)+\s*$")
 _TRAILING_RICH_TEXT_RE = re.compile(r"</?[A-Za-z][^<>]*>\s*$")
@@ -385,6 +389,85 @@ def has_terminal_punctuation(value: str) -> bool:
             break
     visible = visible.rstrip("\"'”’」』）》)]}")
     return bool(visible and visible[-1] in _TERMINAL_PUNCTUATION)
+
+
+_PUNCTUATION_COMPLETIONS = {
+    ".": "。",
+    "。": "。",
+    "!": "！",
+    "！": "！",
+    "?": "？",
+    "？": "？",
+    "…": "…",
+    "~": "～",
+    "～": "～",
+}
+_APPENDABLE_TAIL_RE = re.compile(r"[\u3400-\u9fff0-9A-Za-z%)\]}]$")
+
+
+def with_terminal_punctuation(
+    request: TranslationRequest, result: TranslationResult
+) -> TranslationResult:
+    """Complete missing sentence-final punctuation on CJK results.
+
+    The style reference is the official reference translation when present,
+    otherwise the source text.  Appendability is decided on the visible tail
+    (trailing rich-text markup ignored) and the punctuation is appended at
+    the end of the result, so placeholders and markup are never corrupted.
+    """
+
+    target = result.text
+    if not re.search(r"[\u3400-\u9fff]", target) or has_terminal_punctuation(target):
+        return result
+    reference = (
+        request.reference_translation
+        if request.reference_translation is not None
+        else request.text
+    )
+    if not has_terminal_punctuation(reference):
+        return result
+    visible = reference.strip()
+    while visible:
+        previous = visible
+        visible = _TRAILING_PLACEHOLDER_RE.sub("", visible).rstrip()
+        visible = _TRAILING_RICH_TEXT_RE.sub("", visible).rstrip()
+        if visible == previous:
+            break
+    visible = visible.rstrip("\"'”’」』）》)]}")
+    if not visible:
+        return result
+    mapped = _PUNCTUATION_COMPLETIONS.get(visible[-1])
+    if mapped is None:
+        return result
+    tail = target.rstrip()
+    while tail:
+        previous = tail
+        tail = _TRAILING_RICH_TEXT_RE.sub("", tail).rstrip()
+        if tail == previous:
+            break
+    if not _APPENDABLE_TAIL_RE.search(tail):
+        return result
+    return replace(result, text=target + mapped)
+
+
+def _mixed_language_words(target: str) -> tuple[str, ...]:
+    """Return leftover non-allowlisted Latin words inside a CJK result.
+
+    Placeholders ({0}, {name}) and rich-text markup are stripped first so only
+    real untranslated words count.
+    """
+
+    if not re.search(r"[\u3400-\u9fff]", target):
+        return ()
+    visible = target
+    for token in extract_structured_placeholders(target):
+        visible = visible.replace(token, " ")
+    words = [
+        word
+        for word in _ASCII_WORD_RE.findall(visible)
+        if word.casefold() not in _MIXED_LANGUAGE_ALLOWLIST
+    ]
+    return tuple(dict.fromkeys(words))
 
 
 def _is_model_result(result: TranslationResult) -> bool:
@@ -472,14 +555,17 @@ def translation_quality_issues(
                     "model result contains only residual English words",
                 )
             )
-        elif len(ascii_words) >= 3 and re.search(r"[\u3400-\u9fff]", target):
-            issues.append(
-                TranslationQualityIssue(
-                    "residual_english",
-                    "warning",
-                    "model result mixes Chinese with several English words",
+        else:
+            mixed_words = _mixed_language_words(target)
+            if mixed_words:
+                issues.append(
+                    TranslationQualityIssue(
+                        "residual_english",
+                        "error",
+                        "model result mixes Chinese with untranslated English words: "
+                        + ", ".join(mixed_words),
+                    )
                 )
-            )
         if result.confidence < 0.45:
             issues.append(
                 TranslationQualityIssue(
@@ -590,5 +676,6 @@ __all__ = [
     "TranslationRouter",
     "enforce_translation_quality",
     "has_terminal_punctuation",
+    "with_terminal_punctuation",
     "translation_quality_issues",
 ]
