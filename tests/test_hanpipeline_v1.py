@@ -155,6 +155,58 @@ class HanPipelineV1Tests(unittest.TestCase):
             built = workflow.build(resumed.catalog, self.root / "output")
             self.assertTrue(built.verify_result.passed)
 
+    def test_quality_gate_failure_falls_back_and_batch_continues(self):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            catalog = workflow.extract().catalog
+
+            class _NewlineMismatchProvider:
+                def __init__(self) -> None:
+                    self.calls = []
+
+                def translate(self, request):
+                    self.calls.append(request.text)
+                    if request.text == "Hero":
+                        raise TranslationProviderError(
+                            "model moved the line break",
+                            code="physical_newline_mismatch",
+                            failure_codes=("physical_newline_mismatch",),
+                            retry_count=2,
+                        )
+                    return TranslationResult(
+                        f"中文{request.text}",
+                        "local-model",
+                        "test-model",
+                        0.9,
+                    )
+
+            provider = _NewlineMismatchProvider()
+            outcome = workflow.translate(catalog, TranslationRouter((provider,)))
+
+            self.assertEqual(outcome.translated_count, 1)
+            self.assertEqual(outcome.untranslated_count, 1)
+            failed_segment = next(
+                segment
+                for segment in outcome.segments
+                if segment.source_text == "Hero"
+            )
+            self.assertIsNone(failed_segment.target_text)
+            self.assertEqual(
+                failed_segment.metadata["translation_failure"]["code"],
+                "physical_newline_mismatch",
+            )
+            queue = build_translation_review_queue(
+                outcome.catalog,
+                translation=outcome,
+            )
+            queued = next(
+                item for item in queue["items"] if item["source_text"] == "Hero"
+            )
+            self.assertIn("missing_translation", queued["reasons"])
+
     def test_residual_english_is_queued_and_translation_continues(self):
         with StructuredWorkflowSession(
             self.project,

@@ -22,6 +22,22 @@ from .translation import (
 
 PIPELINE_TRANSLATE_STEP = "pipeline-translate"
 
+# Quality-gate rejections that describe a problem with one segment's model
+# output.  They fall back to the source text and a review entry instead of
+# aborting the whole translation task.  Anything else (provider outages,
+# authentication, unexpected errors) still fails the task.
+FALLBACK_ERROR_CODES = frozenset(
+    {
+        "residual_english",
+        "physical_newline_mismatch",
+        "metadata_contamination",
+        "control_character",
+        "empty_translation",
+        "placeholder_mismatch",
+        "rich_text_tag_order_mismatch",
+    }
+)
+
 
 class PipelineTranslationError(RuntimeError):
     pass
@@ -348,7 +364,11 @@ class HanPipelineV1:
                                 "retry_count": retry_count,
                             },
                         )
-                        if set(error_codes) == {"residual_english"}:
+                        if error_codes and set(error_codes) <= FALLBACK_ERROR_CODES:
+                            # Content-quality rejection for this segment only:
+                            # keep the source text, queue the entry for human
+                            # review, and let the rest of the batch continue.
+                            # Infrastructural provider failures still abort.
                             metadata = dict(persisted.metadata)
                             metadata.pop("translation", None)
                             metadata.pop("translation_quality", None)
