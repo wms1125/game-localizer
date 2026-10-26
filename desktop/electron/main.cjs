@@ -10,6 +10,7 @@ const {
   readVisualReviewProof,
 } = require("./visual-report.cjs");
 const { readQualityReport } = require("./quality-report.cjs");
+const { readComparisonReport } = require("./comparison-report.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const BACKEND_ROOT = app.isPackaged
@@ -322,6 +323,10 @@ app.whenReady().then(() => {
   ipcMain.handle("quality:read-report", async (event, filePath) => {
     await requireAuthenticated(event);
     return readQualityReport(filePath);
+  });
+  ipcMain.handle("comparison:read-report", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readComparisonReport(path.resolve(filePath));
   });
   ipcMain.handle("visual:read-report", async (event, filePath) => {
     await requireAuthenticated(event);

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("hanengine", {
   readCatalog: (filePath) => ipcRenderer.invoke("catalog:read", filePath),
   writeCatalog: (filePath, updates) => ipcRenderer.invoke("catalog:write", filePath, updates),
   readQualityReport: (filePath) => ipcRenderer.invoke("quality:read-report", filePath),
+  readComparisonReport: (filePath) => ipcRenderer.invoke("comparison:read-report", filePath),
   readVisualReport: (filePath) => ipcRenderer.invoke("visual:read-report", filePath),
   readVisualImagePair: (filePath, sampleId) => ipcRenderer.invoke("visual:read-image-pair", filePath, sampleId),
   readVisualReviewProof: (filePath) => ipcRenderer.invoke("visual:read-review-proof", filePath),

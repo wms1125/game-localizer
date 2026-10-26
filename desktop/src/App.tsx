@@ -38,7 +38,7 @@ import {
   X,
 } from "lucide-react";
 
-type View = "quick" | "workspace" | "single" | "package" | "tasks" | "visual";
+type View = "quick" | "workspace" | "review" | "single" | "package" | "tasks" | "visual";
 
 const BACKEND_MODE = "player";
 
@@ -173,6 +173,8 @@ function App() {
     }
   });
   const [view, setView] = useState<View>("quick");
+  const [comparisonPath, setComparisonPath] = useState("");
+  const [comparison, setComparison] = useState<ComparisonReportSummary | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -520,6 +522,38 @@ function App() {
     await loadQualityReport(output);
   }
 
+  async function chooseComparisonReport() {
+    const result = await window.hanengine?.selectFile({ title: "选择对比报告 JSON", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    try {
+      const report = await window.hanengine.readComparisonReport(result.filePaths[0]);
+      setComparisonPath(report.reportPath);
+      setComparison(report);
+      const pending = report.summary.entryCount - report.summary.matchCount;
+      appendLog(`[审阅] 已加载对比报告：${report.summary.entryCount} 条，待处理 ${pending} 条（差异 ${report.summary.differenceCount} · 未译 ${report.summary.untranslatedCount} · 缺译文 ${report.summary.missingTargetCount}）`);
+    } catch (error) {
+      appendLog(`[审阅] 对比报告读取失败：${String(error)}`);
+    }
+  }
+
+  async function adoptReviewTarget(segmentId: string, text: string) {
+    if (!text.trim()) return appendLog("[审阅] 译文为空，未写入。");
+    if (!catalogPath) return appendLog("[审阅] 请先在工作台打开翻译目录（提取文本或打开 catalog JSON）。");
+    const updated = rows.map((row) => (row.id === segmentId ? { ...row, target: text, status: rowStatus(row.source, text) } : row));
+    const changedRow = updated.find((row) => row.id === segmentId);
+    setRows(updated);
+    try {
+      await window.hanengine.writeCatalog(catalogPath, changedRow ? [changedRow] : []);
+      setComparison((current) => current ? {
+        ...current,
+        entries: current.entries.map((entry) => entry.segmentId === segmentId ? { ...entry, candidateZh: text } : entry),
+      } : current);
+      appendLog(`[审阅] 已写入译文并保存目录：${segmentId}`);
+    } catch (error) {
+      appendLog(`[审阅] 写入目录失败：${String(error)}`);
+    }
+  }
+
   async function loadQualityReport(output: string) {
     const reportPath = `${output}.quality.json`;
     try {
@@ -744,6 +778,7 @@ function App() {
   const navItems = [
     { id: "quick" as View, label: "快速汉化", icon: <Play size={16} /> },
     { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
+    { id: "review" as View, label: "审阅", icon: <CircleAlert size={16} />, badge: comparison ? comparison.entries.filter((entry) => entry.category !== "match").length : 0 },
     { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
     { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
     { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
@@ -766,7 +801,7 @@ function App() {
       <div className={`body-grid ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-top"><button className="new-project" onClick={openProject}><FolderOpen size={16} />打开项目</button><button className="icon-button" title="收起工作栏" onClick={() => setSidebarCollapsed(true)}><Menu size={16} /></button></div>
-          <nav className="nav-list">{visibleNavItems.map((item) => <button key={item.id} className={`nav-item ${view === item.id ? "active" : ""}`} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span></button>)}</nav>
+          <nav className="nav-list">{visibleNavItems.map((item) => <button key={item.id} className={`nav-item ${view === item.id ? "active" : ""}`} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span>{item.badge ? <span className="nav-badge">{item.badge}</span> : null}</button>)}</nav>
           <div className="sidebar-section"><div className="section-title"><span>项目结构</span><button className="small-icon" title="重新扫描" onClick={() => projectPath && openProject()}><RefreshCw size={13} /></button></div>{projectPath ? <div className="project-name"><CircleDot size={13} /><span title={projectPath}>{basename(projectPath)}</span></div> : <div className="empty-state compact"><Folder size={22} /><span>打开一个项目开始</span></div>}<div className="tree">{renderTree(tree)}</div></div>
           <div className="sidebar-footer"><div className="ethics"><ShieldCheck size={14} /><span>仅处理合法拥有或获授权的资源</span></div><button className="collapse-button" onClick={() => setSidebarCollapsed(true)}><ChevronRight size={14} />收起</button></div>
         </aside>
@@ -796,6 +831,15 @@ function App() {
             onChooseOutput={chooseQuickOutput}
             onRun={runQuickLocalization}
             onOpenTasks={() => setView("tasks")}
+          />}
+
+          {view === "review" && <ReviewView
+            comparisonPath={comparisonPath}
+            comparison={comparison}
+            catalogLoaded={Boolean(catalogPath)}
+            onChooseReport={chooseComparisonReport}
+            onAdopt={adoptReviewTarget}
+            onOpenWorkspace={() => setView("workspace")}
           />}
 
           {view === "single" && <OperationView title="单文件翻译" description="使用现有 translator.py 处理 TXT、KS、RPY、SCRIPT、CSV 或 JSON 资源。" primaryLabel="执行汉化" onPrimary={() => resourcePath && dictionaryPath && runPython([resourcePath, dictionaryPath], "单文件汉化")}><PathField label="资源文件" value={resourcePath} onPick={async () => { const result = await window.hanengine?.selectFile(); if (result && !result.canceled) setResourcePath(result.filePaths[0]); }} /><PathField label="翻译字典" value={dictionaryPath} onPick={chooseDictionary} /></OperationView>}
@@ -1088,6 +1132,92 @@ function QualityReportPanel({ report }: { report: QualityReportSummary | null })
       {visibleIssues.map((issue) => <div className="quality-issue" key={`${issue.code}-${issue.segmentId || issue.relativePath || issue.message}`}><strong>{issue.code}</strong><span>{issue.message}</span>{issue.suggestedAction && <small>建议：{issue.suggestedAction}</small>}</div>)}
       {report.issues.length > visibleIssues.length && <p>另有 {report.issues.length - visibleIssues.length} 项问题，详见报告文件。</p>}
     </div>}
+  </section>;
+}
+
+function ReviewView({
+  comparisonPath,
+  comparison,
+  catalogLoaded,
+  onChooseReport,
+  onAdopt,
+  onOpenWorkspace,
+}: {
+  comparisonPath: string;
+  comparison: ComparisonReportSummary | null;
+  catalogLoaded: boolean;
+  onChooseReport: () => void;
+  onAdopt: (segmentId: string, text: string) => void;
+  onOpenWorkspace: () => void;
+}) {
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [tableFilter, setTableFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [draft, setDraft] = useState("");
+
+  const pendingEntries = comparison?.entries.filter((entry) => entry.category !== "match") || [];
+  const tables = Array.from(new Set(pendingEntries.map((entry) => entry.tableName).filter(Boolean))); 
+  const filtered = pendingEntries.filter((entry) => {
+    if (severityFilter !== "all" && entry.severity !== severityFilter) return false;
+    if (tableFilter !== "all" && entry.tableName !== tableFilter) return false;
+    if (query.trim()) {
+      const haystack = `${entry.sourceText} ${entry.officialZh} ${entry.candidateZh}`.toLowerCase();
+      if (!haystack.includes(query.trim().toLowerCase())) return false;
+    }
+    return true;
+  });
+  const selected = filtered.find((entry) => entry.segmentId === selectedId) || filtered[0] || null;
+  const severityLabel: Record<string, string> = { error: "错误", warning: "警告", review: "待对照", none: "一致" };
+
+  return <section className="operation-view review-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 审阅</span><h2>审阅</h2><p>加载对比报告后逐条核对机器译文与官方参考；采纳或改写后的译文直接写回翻译目录。</p></div>
+      <button className="primary-button" onClick={onChooseReport}>{comparison ? "更换报告" : "加载对比报告"}</button>
+    </div>
+    {comparison && <div className="review-summary">
+      <span>总条目 <b>{comparison.summary.entryCount}</b></span>
+      <span>一致 <b>{comparison.summary.matchCount}</b></span>
+      <span>差异 <b>{comparison.summary.differenceCount}</b></span>
+      <span>未译 <b>{comparison.summary.untranslatedCount}</b></span>
+      <span>缺译文 <b>{comparison.summary.missingTargetCount}</b></span>
+      <span className="review-path" title={comparison.reportPath}>{comparisonPath}</span>
+    </div>}
+    {!catalogLoaded && <div className="notice-card"><ShieldAlert size={18} /><div><strong>翻译目录未加载</strong><span>采纳或补译需要先把翻译目录加载到工作台（在工作台提取文本或打开 catalog JSON）。</span><button className="secondary-button" onClick={onOpenWorkspace}>去工作台</button></div></div>}
+    {comparison && <>
+      <div className="review-filters">
+        <label className="inline-control">严重度<select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}><option value="all">全部</option><option value="error">错误</option><option value="warning">警告</option><option value="review">待对照</option></select></label>
+        <label className="inline-control">来源表<select value={tableFilter} onChange={(event) => setTableFilter(event.target.value)}><option value="all">全部</option>{tables.map((table) => <option key={table} value={table}>{table}</option>)}</select></label>
+        <div className="search-box"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索原文 / 官方 / 当前译文" /></div>
+        <span className="review-count">{filtered.length} 条</span>
+      </div>
+      <div className="review-grid">
+        <div className="review-list">
+          {filtered.length ? filtered.map((entry) => <button key={entry.segmentId} className={`review-row ${selected?.segmentId === entry.segmentId ? "selected" : ""}`} onClick={() => { setSelectedId(entry.segmentId); setDraft(entry.recommendedText || entry.candidateZh || ""); }}>
+            <span className={`sev-chip sev-${entry.severity}`}>{severityLabel[entry.severity] || entry.severity}</span>
+            <span className="rev-src">{entry.sourceText || "（空）"}</span>
+            <span className="rev-cur">{entry.candidateZh || "（无译文）"}</span>
+          </button>) : <div className="empty-state compact" style={{ padding: "26px 12px" }}><span>没有符合筛选条件的条目。</span></div>}
+        </div>
+        <div className="review-detail">
+          {selected ? <>
+            <div className="review-cols">
+              <div><label>英文原文</label><div className="review-text en">{selected.sourceText || "—"}</div></div>
+              <div><label>官方参考</label><div className="review-text official">{selected.officialZh || "—"}</div></div>
+              <div><label>当前译文</label><div className="review-text current">{selected.candidateZh || "—"}</div></div>
+            </div>
+            <label className="review-draft-label">修订译文</label>
+            <textarea className="review-draft" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="输入修订译文…" />
+            <div className="review-actions-row">
+              <button className="secondary-button" disabled={!selected.officialZh} onClick={() => { setDraft(selected.officialZh); onAdopt(selected.segmentId, selected.officialZh); }}>采纳官方译文</button>
+              <button className="primary-button" disabled={!draft.trim() || !catalogLoaded} onClick={() => onAdopt(selected.segmentId, draft)}>保存修订</button>
+              {selected.reasons.length > 0 && <span className="review-reasons">{selected.reasons.join(" · ")}</span>}
+            </div>
+          </> : <div className="empty-state compact" style={{ padding: "26px 12px" }}><span>选择左侧条目查看三方对照。</span></div>}
+        </div>
+      </div>
+    </>}
+    {!comparison && <div className="notice-card"><CircleAlert size={18} /><div><strong>尚未加载对比报告</strong><span>先用 `engine compare` 生成 comparison JSON，或直接加载已有的对比报告文件。</span></div></div>}
   </section>;
 }
 
