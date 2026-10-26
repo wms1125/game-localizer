@@ -1,8 +1,8 @@
 # 真实授权项目验证记录
 
-更新时间：2026-08-08
+更新时间：2026-08-21
 
-此文件定义 HanEngine 从“可构建”升级到“已验证”所需的证据。仓库当前没有可公开记录的真实授权项目认证；合成样例只能验证代码闭环，不能填写为真实项目认证。
+此文件定义 HanEngine 从“可构建”升级到“已验证”所需的证据。合成样例只能验证代码闭环，不能填写为真实项目认证；真实记录只认证其固定项目、版本和资源范围。v1 的发布边界见 [v1 发布范围](release-scope-v1.md)：图片/视频栅格资源不属于默认发布流程，不能借用历史美术实验把结构化文本候选提升为 `verified`。
 
 ## 验证命令
 
@@ -36,6 +36,34 @@ python cli.py project validate unity "C:\Games\AuthorizedUnityProject" `
 
 `{output}` 必须作为一个完整参数出现，运行时替换为候选目录。`--runtime-smoke` 是已经在授权环境中完成的人工或外部运行记录声明，CLI 不会自行启动游戏；标记为 `passed` 时必须附带稳定引用。
 
+RPG Maker MV/MZ 可用 NW.js 对源项目和候选运行相同的启动检查。`--nwjs` 与 `--nwjs-evidence` 必须同时提供，证据目录必须在源项目和候选之外且为空或尚不存在。纯文本验收不需要栅格清单；只有同时传入 `--raster-manifest` 时，才会额外播放获批视频、检查精确资源路径并采集各时间段截图：
+
+```powershell
+python cli.py project validate rpg_maker_mv "C:\Games\AuthorizedRpgMaker" `
+  <其他必填参数> `
+  --font "D:\HanEngine\fonts\project-zh-CN.otf" `
+  --nwjs "C:\Tools\nwjs\nw.exe" `
+  --nwjs-evidence "D:\HanEngine\evidence\project-nwjs-v1"
+```
+
+该入口在源项目和候选的临时影子副本中启动 NW.js，验证标题场景、数据库名称、开局地图、运行错误、截图哈希和源/候选树保护。提供栅格清单时，再通过 RPG Maker `Game_Interpreter.command261` 检查实际 `currentSrc` 与每个审批视频路径匹配，并采集全部审批时间区间。该检查不宣称玩家自然推进了完整剧情，也不替代人工语言和布局审校。
+
+仅执行纯文本的内部验证时，不传 `--raster-manifest`、`--nwjs` 或 `--nwjs-evidence`。也可以只添加 `--nwjs` 与 `--nwjs-evidence` 执行游戏启动冒烟，而不启用图片/视频处理。可把经过人工审校的完整目录作为 `--reviewed-catalog` 传入；它会按引擎、源/目标语言、项目资源指纹、文件列表、段 ID 与源文本哈希严格匹配，再优先于机械字典写回。没有外部运行验证器时，记录保持 `build_ready`；不得借用旧的图片/视频验证结论。
+
+```powershell
+python cli.py project validate rpg_maker_mv "C:\Games\AuthorizedRpgMaker" `
+  --output "D:\HanEngine\candidates\project-zh-CN-text" `
+  --dictionary "D:\HanEngine\dictionaries\project.zh-CN.json" `
+  --reviewed-catalog "D:\HanEngine\catalogs\project-reviewed.json" `
+  --state-root "D:\HanEngine\state" `
+  --record "D:\HanEngine\records\project-rpg-maker-text.json" `
+  --record-id "project-rpg-maker-text" `
+  --project-label "authorized-project-alias" `
+  --authorized `
+  --authorization-reference "internal-ticket-1234" `
+  --font "D:\HanEngine\fonts\project-zh-CN.otf"
+```
+
 ## 结论语义
 
 | JSON 结论 | 含义 |
@@ -55,7 +83,7 @@ python cli.py project validate unity "C:\Games\AuthorizedUnityProject" `
 - HanGuard 最终路线、相对资源路径、段统计和持久化任务 ID；
 - 完整源树哈希、支持资源指纹、构建清单、候选树哈希和内部验证结果；
 - 官方验证器工具名、类型、退出码或失败类别，字体文件名、字体哈希和缺失码点；
-- 运行冒烟引用、已知偏差和最终结论。
+- 运行冒烟引用、可选的候选绑定 NW.js 报告、已知偏差和最终结论。
 
 记录不保存源项目、输出目录、状态目录或字典的绝对路径，不保存原始或翻译文本，也不保存外部验证器的 stdout/stderr。验证器运行前后的候选树均计算哈希；验证器修改候选内容会使记录失败。
 

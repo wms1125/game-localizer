@@ -4,7 +4,7 @@ HanEngine 是一个本地优先的多引擎游戏本地化工具。它面向你�
 
 当前产品范围覆盖 Ren'Py、RPG Maker MV/MZ、Godot、Unity 和 Unreal Engine。具体项目是否可构建由资源形态、适配器成熟度和 HanGuard 最终决策共同决定；检测到加密、DRM、二进制封装或未授权资源时，工具只会报告限制，不会解包、破解或修改它们。
 
-当前完成度、支持矩阵、关键参数和后续优先级见 [项目状态](docs/project-status.md)，逐资源能力边界见 [引擎资源矩阵](docs/engine-resource-matrix.md)。这些文档与本 README 是当前产品范围的权威来源；历史计划和 RenpyThief 分析只用于保留设计演进与研究证据。
+v1 的正式交付边界和发布条件见 [v1 发布范围](docs/release-scope-v1.md)；当前完成度见 [项目状态](docs/current-project-status.md)，逐资源能力边界见 [引擎资源矩阵](docs/engine-resource-matrix.md)。图片/视频文字的清单、审批和写回规则见 [美术资源汉化流程](docs/raster-resource-localization-workflow.md)，但它是默认关闭的独立实验能力，不等同于 v1 的文本汉化交付。
 
 仅用于合法拥有或已获授权的游戏资源；不支持破解、解密、绕过保护或用于传播盗版内容。
 
@@ -20,6 +20,8 @@ python cli.py engine inspect auto "C:\Games\AuthorizedProject" --json --mode pla
 python cli.py engine extract rpg_maker_mv "C:\Games\AuthorizedProject" --output catalog.json --mode studio
 python cli.py engine build rpg_maker_mv "C:\Games\AuthorizedProject" catalog.json --output build --dictionary dictionary.json --mode studio
 python cli.py engine localize auto "C:\Games\AuthorizedProject" --output build --dictionary dictionary.json --mode player
+python cli.py raster prepare "C:\Games\AuthorizedProject" --output raster-manifest.json
+python cli.py raster verify "C:\Games\AuthorizedProject" raster-manifest.json --candidate build --output raster-report.json
 python cli.py project validate renpy "C:\Games\AuthorizedProject" --output build --dictionary dictionary.json --state-root state --record validation.json --record-id project-001 --project-label authorized-project --authorized --authorization-reference internal-ticket-1234
 python cli.py renpy extract "C:\Games\AuthorizedProject" --output catalog.json
 python cli.py renpy build "C:\Games\AuthorizedProject" catalog.json --output build --dictionary dictionary.json
@@ -55,6 +57,8 @@ python cli.py detect "C:\Games\AuthorizedProject" --json
 
 AdapterV1 当前为以下**明文原始项目**提供结构化提取、翻译、校验、独立构建与验证链路：Ren'Py 的 `.rpy`，RPG Maker MV/MZ 的 JSON，Godot 的 PO/CSV，Unity 的 XLIFF/CSV，以及 Unreal 的 PO。对于同时包含英文和简体中文 Unity Localization String Table、且 `catalog.bin` CRC 可匹配的已打包游戏，Unity AdapterV1 还提供窄范围 Addressables 提取、候选构建和回读验证；构建只写简体中文字符串表并保留英文表。未知 Addressables 布局、Unity Player 其他资源、Unreal Pak/IoStore、Godot PCK、Ren'Py 归档及其他加密或二进制封装资源仍为仅检测，不会被修改。旧的 `renpy extract/build` 命令继续保留兼容。
 
+读取 Unity Localization Addressables bundle 需要在运行 HanEngine 的同一 Python 环境中安装可选依赖 UnityPy。例如使用 Python 3.12 时运行 `py -3.12 -m pip install UnityPy`。如果已识别 Addressables 布局但 bundle 无法解析，检测会报告具体原因，不会把它伪装成可提取项目。
+
 原有的单文件翻译命令仍然可用，例如 `python cli.py game.json dictionary.json`；它们仅面向前述受支持的明文资源，且同样只应处理你拥有合法权利或已获授权修改的内容。
 
 ## HanEngine
@@ -64,8 +68,9 @@ HanEngine 不改变现有单文件翻译器的使用方式。当前实现包括�
 - 多引擎 AdapterV1：Ren'Py、RPG Maker MV/MZ、Godot、Unity 和 Unreal 的检测、结构化资源提取、占位符保护、独立构建与验证；封装资源按引擎统一降级为仅检测。
 - Ren'Py 明文 `.rpy` 对白、旁白和菜单已接入 HanPipelineV1 一键链路，生成独立 `game/tl/<language>/` 输出并校验源项目指纹、占位符、UTF-8、产物哈希和生成结构。`project validate --renpy-sdk` 可显式调用外部 SDK 编译器；仓库当前没有实际 SDK 编译或游戏运行冒烟认证记录。
 - P1 项目验证运行器：`project validate` 强制授权确认并生成脱敏 JSON 证据；完整记录源树保护、候选哈希、任务链、HanGuard、官方验证器、字体覆盖和运行冒烟状态，缺少外部证据时只标记为 `build_ready`。
-- OCR 原位置视觉替换；连续三帧稳定且 OCR 置信度足够时才绘制覆盖层，不注入游戏进程、不读取内存，也不保存原始截图。
+- 图片/视频文字可使用独立的栅格清单、人工审批和候选合并流程；它不属于 v1 默认工作流，当前不承诺通用 OCR、重绘或视频重制，并且不会替代原生文本写回。
 - 本地字典和显式启用的云翻译路由；云请求只发送文本、语言与文本上下文，令牌仅从运行时环境读取。
+- 本地模型翻译提供方；仅访问本机回环地址，运行时 JSON 契约见 [`docs/local-model-translation.md`](docs/local-model-translation.md)。
 - HanPipelineV1 多引擎流水线；按段把译文和恢复检查点原子写入 HanStore，中断后重新执行只翻译未完成段。
 - Windows SAPI 本地 TTS 和可选的云 TTS 接口，输出经过 WAV 格式检查后原子写入。
 - 普通未加密 ZIP 的独立副本修改；拒绝加密条目、路径穿越、重复路径、`.rpa`、`.rpyc` 和其他专有封包。
@@ -84,7 +89,7 @@ python cli.py engine localize auto "C:\Games\AuthorizedProject" --output build -
 python cli.py tts "你好" --output voice.wav --language zh-CN
 ```
 
-`engine localize` 依次执行检测、提取、翻译、校验、构建和验证。字典提供方优先，字典未命中的段才发送到显式配置的云端点。默认状态目录位于 `%LOCALAPPDATA%\HanEngine`；也可通过 `--state-root` 指定。再次运行会复用源指纹、上下文指纹和目标语言均匹配的已完成段；`--no-resume` 会强制重译，`--translated-catalog` 可额外导出完整翻译目录。`engine build` 也接受相同的翻译和恢复参数。
+`engine localize` 依次执行检测、提取、翻译、校验、构建和验证。字典提供方优先，字典未命中的段才发送到显式配置的云端点。默认状态目录位于 `%LOCALAPPDATA%\HanEngine`；也可通过 `--state-root` 指定。再次运行会复用源指纹、上下文指纹和目标语言均匹配的已完成段；`--no-resume` 会强制重译，`--translated-catalog` 可额外导出完整翻译目录。`engine build` 也接受相同的翻译和恢复参数。两者都可通过 `--raster-manifest` 把审批后的图片/视频产物安全合并到同一候选；未审批资源保持原样。
 
 六个适配器验收样例（Ren'Py、RPG Maker MV/MZ、Godot、Unity、Unreal）位于 [`examples/engine_samples`](/C:/Users/23256/Documents/汉化/.worktrees/game-localizer/examples/engine_samples)。每个样例都保留真实项目标记和明文本地化资源，并附带可直接用于 GUI 或 CLI 的中文测试字典；样例说明同时列出了公开案例入口。仓库只分发原创 fixture，不自动下载或再分发这些案例的游戏资产。
 

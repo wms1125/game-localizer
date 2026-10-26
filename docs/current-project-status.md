@@ -1,10 +1,14 @@
 # HanEngine 当前项目状态
 
-更新时间：2026-08-14
+更新时间：2026-08-21
 
-本文是当前工作树的阶段性状态摘要。它补充并更新 `docs/project-status.md`，重点记录最近的真实 Ren'Py 项目验证和“无感汉化”目标。这里的“已验证”表示工程流水线、编译、字体和运行冒烟证据完整，不代表机器翻译质量已经达到发布标准。
+本文是当前工作树的阶段性状态摘要。它补充并更新 `docs/project-status.md`，重点记录最近的真实项目证据和 v1 发布主线。这里的“已验证”表示工程流水线、编译、字体和运行冒烟证据完整，不代表机器翻译语言质量已经达到发布标准。
 
 当前仓库分支为 `codex/game-localizer`。本轮起点 checkpoint 为 `fe64856 docs: record v11 client language evidence`，并已同步到远端检查点；P1.1 后续里程碑已在同一分支形成仅本地提交，尚未推送。
+
+## v1 发布主线
+
+v1 聚焦可审计的结构化文本汉化：检测、提取、翻译、质量报告、独立构建、失败恢复和桌面端交付。图片/视频文字流程保留为默认关闭的独立实验能力，不以旧的 Hello Underworld 美术候选或人工试玩替代通用性能和运行认证。正式范围与退出条件见 [v1 发布范围](release-scope-v1.md)。
 
 ## 1. 已完成内容
 
@@ -14,6 +18,8 @@
 - 已接入 Ren'Py、RPG Maker MV/MZ、Godot、Unity、Unreal 的结构化资源适配路径。
 - 已实现检测、提取、翻译、校验、独立构建、验证、任务持久化、断点续跑、取消和重试。
 - 默认输出位于源项目之外，支持源树指纹、候选树指纹、占位符校验、UTF-8 校验、产物哈希和回滚边界。
+- `engine build/localize` 现可同时接收 `--font` 与 `--raster-manifest`，并按实际检测到的引擎映射字体配置；`project validate` 同样接收栅格清单，把配置、资产计数和独立验证报告写入认证记录。阻断性栅格问题会使内部验证失败，未审批但保持原样的资源只进入人工复核状态。当前 Hello Underworld v15 明确不传入栅格清单。
+- RPG Maker MV/MZ 的 `project validate --nwjs` 可独立运行纯文本候选的标题/地图启动冒烟；显式提供栅格清单时才额外通过真实 `Game_Interpreter.command261` 检查审批视频。两种模式都在独立影子项目和一次性浏览器 profile 中执行，并绑定源树/候选树、运行错误和截图哈希。Hello Underworld 的局部替换视频在用户验收中出现明显卡顿，因此当前只验收结构化文本，不传入栅格清单。
 
 ### 桌面端与账户
 
@@ -23,6 +29,8 @@
 - 普通模式映射为 `player`，专业模式映射为 `studio`；未认证渲染进程不能访问项目和任务 IPC。
 - 任务中心支持查看、取消、重试和重启恢复。
 - 客户端设置现承载游戏启动语言（简体中文/原文）和游戏启动程序；设置保存在本地，并由受认证的 Electron IPC 以 `HANENGINE_GAME_LANGUAGE` 传给游戏进程。游戏候选不添加语言菜单。
+- `engine build/localize` 的 `hanengine.quality-report/v1` 现经受认证 IPC 按严格结构读取并裁剪给渲染端。普通模式在流程结束后保留质量结果，专业模式同步显示总条目、已翻译、漏译、未处理、阻断项、审查原因、问题建议和报告路径；失败报告不会因构建退出失败而丢失。
+- 普通模式已移除“本地字典”步骤：用户选择游戏、检测引擎和独立输出目录后即可先提取文本；术语表仅在专业模式作为可选覆盖。缺少翻译来源时不会生成假成功候选，而是明确提示当前只能提取，云端翻译只在正式 endpoint、隐私和令牌治理确定后接入默认用户路径。
 
 ### Ren'Py 适配器修复
 
@@ -38,6 +46,15 @@
 - `--font` 不再只做外部覆盖率检查。Ren'Py 构建会把字体复制到 `game/hanengine_fonts/`，并生成 `game/hanengine_fonts.rpy`，对目标语言配置 GUI、对白、按钮和选项字体。
 - 多字体候选使用 Ren'Py 原生 `FontGroup`。字体按参数顺序分配实际 Unicode cmap 覆盖，最后一个字体作为未显式码点的运行时回退；无覆盖码点、非法字体、符号链接、文件名冲突和保留路径冲突都会使构建失败。
 - 字体配置和字体二进制现在与翻译、语言激活文件一起进入 `BuildResult.generated_files`、manifest、SHA-256、候选指纹和 AdapterV1 验证，修复了“字体覆盖检查通过但候选包仍显示方框”的假阳性。
+
+### Godot 名称、样式与官方验证
+
+- 官方编辑器验证现在在同一影子候选上连续执行两遍，第二遍若仍出现 `SCRIPT ERROR:`、`FATAL ERROR:` 或 `CRASH HANDLER:`，即使进程退出码为 `0` 也会阻断认证；正式候选不接收导入缓存或编辑器生成文件。
+- 已实现保守的运行时名称发现：只追踪明确进入 `tr()` 的类型化 GDScript 数据流，并从挂载对应实体脚本的场景节点提取稳定名称。歧义类型、默认类名键和不明确的 CSV 写入目标会失败，`dynamic_text` 公开能力仍为 `detect_only`。
+- Godot 候选只注入一个完整 CJK 字体和语言 autoload，不全局覆盖字号、颜色或描边。视觉硬门要求源 `.theme/.tres/.tscn` 逐字节保持不变，并校验字体哈希、autoload 和禁止的样式覆盖。
+- GDQuest Open RPG v8 已完成 `97/97` 翻译和敌人名补全，`Bugcat/Wolf/Baloo/Nutsy` 等名称可显示为中文；像素字体、黑色描边、布局和颜色均保留。使用项目指定且经官方哈希校验的 Godot 4.6.2 后，原始上游与中文候选第二遍日志逐字节相同，均在 Dialogic `node_portrait_container.gd:89` 报 `SCRIPT ERROR:`，该记录结论保持 `failed`。
+- Godot CSV 新目标列会把公共语言标识 `zh-CN` 规范为引擎原生 `zh_CN`；工作流语言契约保持不变，修复后的 v8 候选树与已人工查看的 v6 候选树哈希一致。
+- Godot 官方 Dodge the Creeps 派生项目已作为独立复验：最终记录 `godot-dodge-the-creeps-v3-style` 的 `4/4` PO 翻译、两遍 Godot 4.7.1 校验、字体覆盖、7 项样式硬门和双语言运行冒烟均通过，结论为 `verified`。
 
 ### 真实非官方项目验证
 
@@ -141,6 +158,7 @@ game-localizer/
 | `--authorized` | 项目验证授权确认 | `project validate` 必须显式提供 |
 | `--authorization-reference` | 授权依据的可脱敏引用 | 不写入私密令牌或项目内容 |
 | `--renpy-sdk` / `--validator` | 官方编译器或验证器 | 成功执行前最多只能得到 `build_ready` |
+| `--nwjs` / `--nwjs-evidence` | RPG Maker MV/MZ 的 NW.js 可执行文件和新证据目录 | 两者必须同时提供；栅格清单可选，提供时才检查获批视频；自动生成运行验证和 smoke 结果，不能再手工传 `--runtime-smoke` |
 | `--font` | 一个或多个 `.ttf`/`.otf` | Ren'Py 会按顺序打包字体、生成 `FontGroup` 并检查译文 Unicode 覆盖 |
 | `--font-probe-text` | 可重复的运行时动态文本探针 | 必须与 `--font` 同时使用；探针码点和译文一起参与字体覆盖与 `FontGroup` 分配 |
 | `--runtime-smoke` | `not_run`、`passed`、`failed` | `passed` 必须带稳定引用 |
@@ -199,13 +217,14 @@ python cli.py project validate renpy <project> `
 ### 范围和验证
 
 - “任何游戏”不能由一个通用文本替换器保证。明文脚本、动态文本、图片文字、视频字幕、加密封包和受保护运行时必须分级处理。
-- RPG Maker、Godot、Unity、Unreal 尚缺少与 Ren'Py 同等级别的真实授权项目 `verified` 记录。
-- 图片/视频内嵌文字、复杂动态文本和专有封包不属于当前原生适配范围。
+- RPG Maker、Unity、Unreal 尚缺少与 Ren'Py、Godot 同等级别的真实授权项目 `verified` 记录。Godot 已完成官方 Dodge the Creeps 派生项目的 4.7.1 PO 写回认证；RPG Maker MV 的 Hello Underworld 当前为非美术文字候选 v15，结论 `build_ready`，并已记录一次隔离 NW.js 人工运行冒烟，尚未升级为 `verified`。
+- 图片/视频内嵌文字已建立 `hanengine.raster-manifest/v1` 正式流程：资源库存、统一文字段、审批状态、源/产物 SHA-256、独立候选写回和验证报告均已接入 AdapterV1 与 CLI。当前 `raster_text` 为 `implemented`，但通用自动 OCR、风格重绘、视频重编码和运行认证仍未实现，不能升级为 `verified`。
 - 本次真实验证使用机械测试字典，仍需真实译文、术语表、人工审校和长文本布局回归。
+- Hello Underworld（`CMPUT250HU/HelloUnderworld`，固定提交 `afbb145ca626a43ae73432c64724d9be17e9ae82`，Apache-2.0）是当前垂直验收样本：v15 使用审校目录严格匹配并写回 `1954/1954` 结构化片段，覆盖角色名、敌人名、物品、技能、系统菜单、地图事件、选择项、战斗文本和小游戏文本；隔离人工运行冒烟记录为 `manual-nwjs-v14-playtest-2026-08-21`。标题图、窗口皮肤、脚本、音频和三段 WebM 与源项目逐字节一致。候选仍为 `build_ready`，直到通过无栅格写回的真实 NW.js 自动验收；旧 v10/v12/v13 含美术资源的候选因播放卡顿不用于验收。详见 `docs/analysis/2026-08-17-rpg-maker-hello-underworld-reviewed-catalog-v14.md`。
 - 已建立仓库自有的文件型 Ren'Py golden corpus manifest，首批 4 个合成 fixture 覆盖对白、菜单、屏幕控件、`_()`、上下文标签、富文本、嵌套插值和重复原文；该 corpus 只证明结构/构建契约，不代表真实项目或中文质量权威。
 - 已登记官方 Ren'Py `The Question` 简体中文样例的固定版本和文件哈希，但没有把第三方样例译文复制进 golden corpus；该来源可证明官方项目行为和来源链，不能替代人工语言质量审校。
 - 已使用登记来源在隔离候选中生成本地 `zh_cn` 翻译：目录覆盖率为 242/242，v11 内部验证通过且仅剩 2 个非阻断告警（作者署名、语言名称），Ren'Py SDK `8.5.3.26051504` 编译退出码为 0；字体已实际打包且联合覆盖通过。原文/中文客户端模式均完成六场景 runtime smoke，候选树与验证记录一致。
-- P1.1 基线相关八个测试模块此前共 127 项通过；后续新增 GLM 基准、图像压缩、Key/默认模型配置、响应契约、模型标识覆盖、OCR 强制组合、受控数据集、人工复核报告读取、renderer 相交阴性/阳性样本、GLM 前短路、v1/v2 兼容、严格报告往返和真实运行 fixture 契约。完整工作区 Python `python -m unittest discover -s tests` 当前为 549/549 项通过，Electron 为 10/10 项通过，TypeScript 检查与 Vite 正式构建通过。
+- P1.1 基线相关八个测试模块此前共 127 项通过；后续新增 GLM 基准、图像压缩、Key/默认模型配置、响应契约、模型标识覆盖、OCR 强制组合、受控数据集、人工复核报告读取、renderer 相交阴性/阳性样本、GLM 前短路、v1/v2 兼容、严格报告往返、Godot 名称/样式/两遍校验、栅格资源清单/写回、NW.js 精确视频路径和审校目录契约。完整工作区 Python `python -m unittest discover -s tests` 当前为 583/583 项通过，Electron 为 10/10 项通过，TypeScript 检查与 Vite 正式构建通过。
 
 ### 桌面端和发布
 
@@ -233,27 +252,27 @@ P1.1 在已声明的 Ren'Py 明文项目范围内完成。完成含义是客户�
 1. 已为 Ren'Py、RPG Maker MV/MZ、Godot、Unity、Unreal 定义 `native_text_replace`、`dynamic_text`、`raster_text`、`detect_only` 四个能力维度。
 2. 统一 schema 为 `hanengine.adapter-capabilities/v1`，每个声明包含 `implemented`、`verified`、`detect_only`、`unsupported` 状态、原因和证据引用，并支持严格 JSON 往返。
 3. `AdapterMetadata`、CLI `engines`/`engine inspect` 和 Electron 检测模型共享同一矩阵；封包或二进制输入的写回维度会自动降级为 `detect_only`。
-4. Ren'Py 原生文本替换以 The Question 与 Heartfelt Moments 的真实验证记录为 `verified`；其余引擎保持 `implemented`，直到取得真实授权项目证据。
-5. 已补充六个内置 AdapterV1 的能力契约测试；完整 Python 回归为 `553/553`，Electron 为 `10/10`，Vite 正式构建通过。
+4. Ren'Py 原生文本替换以 The Question 与 Heartfelt Moments 的真实验证记录为 `verified`；Godot 以 `godot-dodge-the-creeps-v3-style` 为 `verified`；其余引擎保持 `implemented`。
+5. 已补充六个内置 AdapterV1 的能力契约测试；包含栅格资源流程、字体/栅格联合 CLI、NW.js 精确视频路径和审校目录回归后完整 Python 回归为 `583/583`，Electron 为 `10/10`，Vite 正式构建通过。
 
 ### P1.2.2：跨引擎真实项目认证
 
 1. 所有引擎优先写回原生本地化格式，不使用字幕叠加或进程注入。
 2. 对无法原生替换的内容生成清晰的未处理清单和原因。
-3. 为 RPG Maker、Godot、Unity、Unreal 准备合规的真实项目、官方工具和运行冒烟证据。
+3. Godot 已完成；RPG Maker MV 的 Hello Underworld v15 已形成只含非美术文字、带一次隔离人工运行冒烟记录的 `build_ready` 候选。图片/视频局部替换因卡顿暂缓，不应在该候选上继续追加栅格写回；当前优先完成 v1 核心工作流和桌面端发布闭环，之后再为 RPG Maker MZ、Unity、Unreal 准备合规真实项目、官方工具和运行冒烟证据。
 
 ### P2：扩展真实项目认证
 
-1. 为 RPG Maker、Godot、Unity、Unreal 分别准备合规的真实项目、官方工具、字体和运行冒烟环境。
-2. 每个引擎至少形成一份脱敏 `verified` 记录和版本兼容性报告。
+1. 为 RPG Maker、Unity、Unreal 分别准备合规的真实项目、官方工具、字体和运行冒烟环境。
+2. 每个剩余引擎至少形成一份脱敏 `verified` 记录和版本兼容性报告。
 3. 建立跨引擎 golden corpus，比较提取覆盖率、占位符完整性、编译结果和运行画面。
 
 ### P3：资源和发布质量
 
 1. 将 OCR/图片重绘/视频字幕作为独立能力，继续受 HanGuard 门控，不与原生文本替换混淆。
-2. 完成桌面端端到端测试、安装包、升级、回滚和多窗口尺寸回归。
-3. 固定依赖版本，执行干净机器构建和安装验证。
+2. 完成统一发布状态、质量报告、未处理清单、失败恢复和最终错误展示。
+3. 完成桌面端端到端测试、安装包、升级、回滚、依赖锁定和干净机器验证。
 
 ## 当前结论
 
-HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 真实项目 `verified` 闭环、客户端语言控制和字体随候选包交付的第一版实现。P1.1 已完成：静态文本覆盖、动态未处理项、重复源文冲突、字体、编译、双模式运行、renderer v2 观测、RapidOCR 英文残留硬门、确定性文本相交硬门、智谱辅助复核、36 场景受控缺陷集、客户端逐场景验收和独立人工复核证明均有实现与证据。v14 历史报告的 140/140 硬门和 6/6 `glm-4.6v` 复核通过；历史相交回归为 133/133 本地硬门通过、renderer 误报 0。新探针的两次真实 v2 六场景采集跨次不稳定项为 0、正常误报为 0；仓库真实覆盖 fixture 被 `renderer_text_overlap` 单独阻断，模型调用为 0。受控门槛复测证明模型会漏检重叠和低对比度，当前不再自动授权 `pass`。P1.1 不再保留 renderer v2 实证缺口，下一阶段进入 P1.2 的跨引擎能力声明统一。
+HanEngine 已具备多引擎 AdapterV1 基础、Ren'Py 和 Godot 固定范围 `verified` 记录、客户端语言控制和字体随候选包交付的第一版实现。P1.1 与 P1.2.1 已完成；RPG Maker MV 当前以 Hello Underworld v15 验收结构化中文，并记录一次隔离人工运行冒烟通过，所有图片与视频维持源版本。局部美术替换已因实际卡顿暂停，后续在取得不损害播放性能的方案前不把它列入当前交付。现在进入 v1 产品化阶段：统一核心文本工作流质量、完成桌面端发布闭环，并建立可复现构建与安装验收。

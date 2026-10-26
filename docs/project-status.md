@@ -1,12 +1,12 @@
 # HanEngine 项目状态
 
-更新时间：2026-08-08
+更新时间：2026-08-21
 
-本文是 HanEngine 当前范围、能力矩阵和开发优先级的权威说明。HanEngine 的长期目标是通过统一适配器覆盖主流游戏引擎，而不是只适配 Ren'Py。新引擎和新资源格式必须接入 AdapterV1、HanPipelineV1、HanTask、HanStore 和 HanGuard；不得绕过资源格式验证、授权边界或能力门控。
+本文保留 2026-08-08 的项目基线快照，避免旧链接失效。当前的 v1 范围、能力等级和发布优先级分别以 [v1 发布范围](release-scope-v1.md)、[当前项目状态](current-project-status.md) 和 [引擎资源矩阵](engine-resource-matrix.md) 为准。HanEngine 的长期目标仍是通过统一适配器覆盖主流游戏引擎，而不是只适配 Ren'Py；新引擎和新资源格式必须接入 AdapterV1、HanPipelineV1、HanTask、HanStore 和 HanGuard，不得绕过资源格式验证、授权边界或能力门控。
 
 “目标覆盖主流引擎”不等于对所有版本、所有资源格式和所有成品游戏作出可修改承诺。每项能力必须按引擎、资源形态、版本和真实授权项目验证结果分级为“仅检测”“可提取”“可构建”或“已验证”。
 
-## 1. 已完成内容
+## 2026-08-08 基线快照（历史记录）
 
 ### 多引擎运行时
 
@@ -33,7 +33,7 @@
 - Electron 主进程保持文件系统和 Python 子进程边界；渲染进程使用 React + TypeScript，启用 `contextIsolation`、禁用 `nodeIntegration`，通过 preload 暴露最小 IPC。
 - 已实现本地账户数据库和登录门控：首次启动创建账户，支持登录与退出；密码使用 PBKDF2-SHA256 独立盐值，原始密码仅通过 stdin 交给 Python，SQLite 只保存密码哈希和会话令牌哈希，原始令牌仅驻留 Electron 主进程内存。未认证渲染进程不能访问项目、catalog、Python 工作流和任务控制 IPC。
 - 默认模式为“普通”，内部映射为 CLI `player`；“专业”映射为 `studio`。普通模式不暴露 catalog、风险参数和专业操作。
-- 普通模式实现四步一键汉化：选择游戏目录、自动检测、选择本地字典、选择项目外输出目录，然后运行 `engine localize auto ... --mode player`。
+- 普通模式不要求预先准备本地字典：选择游戏目录、自动检测和项目外输出目录后即可先运行 `engine extract ... --mode player` 查看待翻译文本；已有术语表时仍可在专业模式加载后运行 `engine localize auto ... --mode player`。
 - 任务中心已接入 `tasks:list`、`tasks:show`、`tasks:retry`、`tasks:cancel`，显示任务阶段、进度、最近检查点、HanGuard 决策、失败原因和产物，并支持取消、重试和重启后恢复。
 - 专业模式保留项目树、catalog 表格编辑、手动提取和构建入口；主进程对 catalog 保存采用临时文件后原子重命名。
 
