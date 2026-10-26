@@ -107,11 +107,14 @@ def compare_unity_catalog(
         elif Counter(extract_placeholders(entry.source_text)) != Counter(extract_placeholders(target)):
             category, severity = "format_error", "error"
             reasons.append("placeholder_mismatch")
+        elif official_text is not None and target == official_text:
+            # Official text kept identical to the source (units, brands): the
+            # candidate matches the official choice even though the source is
+            # unchanged, so this is a match rather than an untranslated entry.
+            category, severity = "match", "none"
         elif target.strip() == entry.source_text.strip() and _contains_english(target):
             category, severity = "untranslated", "warning"
             reasons.append("source_text_unchanged")
-        elif official_text is not None and target == official_text:
-            category, severity = "match", "none"
         elif official_text is None:
             category, severity = "candidate_only", "warning"
         else:

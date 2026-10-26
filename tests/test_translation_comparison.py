@@ -53,6 +53,7 @@ class TranslationComparisonTests(unittest.TestCase):
             self._entry(5, "Credits", "Credits"),
             self._entry(6, "Missing", None),
             self._entry(7, "English", "中文"),
+            self._entry(8, "kg", "kg"),
         ]
         official = {
             ("UI", 1): "开始",
@@ -62,6 +63,7 @@ class TranslationComparisonTests(unittest.TestCase):
             ("UI", 5): "名单",
             ("UI", 6): "缺失",
             ("UI", 7): "英文",
+            ("UI", 8): "kg",
         }
         sources = {("UI", index): entry.source_text for index, entry in enumerate(entries, 1)}
         sources[("UI", 7)] = "Different English source"
@@ -80,8 +82,11 @@ class TranslationComparisonTests(unittest.TestCase):
         self.assertEqual(by_id[5]["severity"], "warning")
         self.assertEqual(by_id[6]["category"], "missing_target")
         self.assertEqual(by_id[7]["category"], "source_mismatch")
+        # Official also keeps "kg" unchanged: identical candidate is a match,
+        # not an untranslated warning.
+        self.assertEqual(by_id[8]["category"], "match")
         self.assertEqual(by_id[2]["recommended_text"], "邀请好友")
-        self.assertEqual(report["summary"]["entry_count"], 7)
+        self.assertEqual(report["summary"]["entry_count"], 8)
 
     def test_html_escapes_translation_text_and_supports_search(self):
         report = {
