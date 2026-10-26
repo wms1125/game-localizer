@@ -35,13 +35,12 @@ import {
   Square,
   Upload,
   UserPlus,
-  Users,
-  Workflow,
   X,
 } from "lucide-react";
 
-type Mode = "professional" | "normal";
-type View = "workspace" | "single" | "package" | "tasks" | "visual";
+type View = "quick" | "workspace" | "single" | "package" | "tasks" | "visual";
+
+const BACKEND_MODE = "player";
 
 const statusLabel: Record<TranslationRow["status"], string> = {
   translated: "已完成",
@@ -52,10 +51,6 @@ const statusLabel: Record<TranslationRow["status"], string> = {
 
 function basename(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || "未选择项目";
-}
-
-function backendMode(mode: Mode) {
-  return mode === "professional" ? "studio" : "player";
 }
 
 function isLikelyUntranslated(source: string, target: string) {
@@ -161,7 +156,6 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [mode, setMode] = useState<Mode>("normal");
   const [gameLanguage, setGameLanguage] = useState<GameLanguage>(() => {
     try {
       const value = window.localStorage.getItem("hanengine.gameLanguage");
@@ -178,7 +172,7 @@ function App() {
       return "";
     }
   });
-  const [view, setView] = useState<View>("workspace");
+  const [view, setView] = useState<View>("quick");
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -287,8 +281,7 @@ function App() {
 
   useEffect(() => {
     if (projectPath) void detectProject(projectPath);
-    if (mode === "normal" && (view === "single" || view === "package")) setView("workspace");
-  }, [mode]);
+  }, [projectPath]);
 
   const selected = rows.find((row) => row.id === selectedId) || rows[0];
   const filteredRows = useMemo(() => {
@@ -436,7 +429,7 @@ function App() {
   }
 
   async function detectProject(rootPath: string): Promise<string | null> {
-    const result = await runPython(["engine", "inspect", "auto", rootPath, "--json", "--mode", backendMode(mode)], "识别游戏引擎和可用能力");
+    const result = await runPython(["engine", "inspect", "auto", rootPath, "--json", "--mode", BACKEND_MODE], "识别游戏引擎和可用能力");
     if (!result) return null;
     const report = parseJsonOutput<DetectionReport>(result.stdout);
     if (!report) {
@@ -476,7 +469,7 @@ function App() {
   }
 
   async function chooseDictionary() {
-    const result = await window.hanengine?.selectFile({ title: "加载专业术语表", filters: [{ name: "JSON", extensions: ["json"] }] });
+    const result = await window.hanengine?.selectFile({ title: "加载术语表（可选）", filters: [{ name: "JSON", extensions: ["json"] }] });
     if (result && !result.canceled && result.filePaths[0]) setDictionaryPath(result.filePaths[0]);
   }
 
@@ -511,20 +504,19 @@ function App() {
     let selectedEngine = engine;
     if (selectedEngine === "auto") selectedEngine = detection?.selected_engine || (await detectProject(projectPath)) || "auto";
     if (selectedEngine === "auto") return appendLog("无法提取：请手动选择一个引擎。");
-    const args = ["engine", "extract", selectedEngine, projectPath, "--output", output, "--language", "zh-CN", "--mode", backendMode(mode)];
+    const args = ["engine", "extract", selectedEngine, projectPath, "--output", output, "--language", "zh-CN", "--mode", BACKEND_MODE];
     const result = await runPython(args, "提取翻译目录");
     if (result?.code === 0) await loadCatalog(output);
   }
 
   async function localizeProject() {
     if (!projectPath) return appendLog("请先选择项目目录。");
-    if (!dictionaryPath) return appendLog("请先加载翻译字典。");
     const result = await window.hanengine?.selectDirectory({ title: "选择汉化输出目录" });
     if (!result || result.canceled || !result.filePaths[0]) return;
     const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
     const output = result.filePaths[0];
     setQualityReport(null);
-    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", backendMode(mode)], "翻译、构建并验证");
+    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--language", "zh-CN", "--mode", BACKEND_MODE], "翻译、构建并验证");
     await loadQualityReport(output);
   }
 
@@ -561,14 +553,13 @@ function App() {
       return;
     }
     if (!dictionaryPath) {
-      appendLog("[翻译] 尚未配置翻译来源。请先提取文本；需要实际汉化时，请在专业模式加载术语表。云端翻译将在正式服务接入后提供。");
-      return;
+      appendLog("[翻译] 未加载术语表：将直接使用本地模型翻译（qwen 系列，全程本地）。可在高级设置加载术语表提升术语一致性。");
     }
     setQuickStatus("running");
     setQualityReport(null);
     setActiveWorkflowTaskIds([]);
     const result = await runPython(
-      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, "--dictionary", dictionaryPath, "--language", "zh-CN", "--mode", "player"],
+      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--language", "zh-CN", "--mode", BACKEND_MODE],
       "一键汉化：提取、翻译、校验、构建和验证",
     );
     setQuickStatus(result?.code === 0 ? "completed" : "failed");
@@ -751,15 +742,14 @@ function App() {
   }
 
   const navItems = [
-    { id: "workspace" as View, label: "工作台", icon: <LayoutPanelLeft size={16} /> },
+    { id: "quick" as View, label: "快速汉化", icon: <Play size={16} /> },
+    { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
     { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
     { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
     { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
     { id: "tasks" as View, label: "任务中心", icon: <ListChecks size={16} /> },
   ];
-  const visibleNavItems = mode === "normal"
-    ? navItems.filter((item) => item.id === "workspace" || item.id === "visual" || item.id === "tasks")
-    : navItems;
+  const visibleNavItems = navItems;
 
   if (!authReady) return <AuthLoadingScreen />;
   if (!currentUser) {
@@ -770,10 +760,6 @@ function App() {
     <div className="app-shell">
       <header className="titlebar">
         <div className="brand-mark"><Languages size={18} /><span>HanEngine</span><small>本地游戏汉化工作台</small></div>
-        <div className="mode-switch" role="tablist" aria-label="工作模式">
-          <button className={mode === "normal" ? "active" : ""} onClick={() => setMode("normal")}><Users size={15} />普通</button>
-          <button className={mode === "professional" ? "active" : ""} onClick={() => setMode("professional")}><Workflow size={15} />专业</button>
-        </div>
         <div className="title-actions"><button className="icon-button no-drag" title="刷新项目" onClick={() => projectPath && openProject()}><RefreshCw size={16} /></button><button className="icon-button no-drag" title="启动游戏" onClick={() => void launchSelectedGame()}><Play size={16} /></button><button className="icon-button no-drag" title="设置" onClick={() => setSettingsOpen(true)}><Settings2 size={16} /></button><span className="account-chip no-drag"><CircleUserRound size={15} /><span>{currentUser.display_name || currentUser.username}</span></span><button className="icon-button no-drag" title="退出登录" onClick={() => void logout()}><LogOut size={16} /></button></div>
       </header>
 
@@ -787,20 +773,19 @@ function App() {
 
         <main className="workspace">
           {sidebarCollapsed && <button className="restore-sidebar icon-button" title="展开工作栏" onClick={() => setSidebarCollapsed(false)}><Menu size={16} /></button>}
-          <div className="workspace-header"><div><div className="breadcrumbs"><span>{mode === "professional" ? "专业" : "普通"}</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? (mode === "normal" ? "快速汉化" : "翻译工作区") : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span>{mode === "professional" && <button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button>}</div></div>
+          <div className="workspace-header"><div><div className="breadcrumbs"><span>HanEngine</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? "翻译工作台" : view === "quick" ? "快速汉化" : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span><button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button></div></div>
 
-          {view === "workspace" && mode === "professional" && <>
-            <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载专业术语表" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
+          {view === "workspace" && <>
+            <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载术语表（可选）" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
             <div className="stats-strip"><div><span>总条目</span><strong>{rows.length.toLocaleString()}</strong></div><div><span>已完成</span><strong className="success-text">{translatedCount.toLocaleString()}</strong></div><div><span>待翻译</span><strong className="warning-text">{pendingCount.toLocaleString()}</strong></div><div><span>需检查</span><strong className="warning-text">{warningCount.toLocaleString()}</strong></div><div className="stats-spacer" /><div className="file-context"><FileJson2 size={14} /><span>{catalogPath ? basename(catalogPath) : "提取或打开 catalog JSON 后显示翻译条目"}</span></div></div>
             <QualityReportPanel report={qualityReport} />
             <div className="filter-bar"><div className="search-box"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索 ID、上下文或文本" /></div><button className={`filter-button ${reviewOnly ? "active" : ""}`} onClick={() => setReviewOnly((value) => !value)}><CircleAlert size={14} />仅看待检查</button></div>
             <section className="translation-area"><div className="table-wrap"><table><thead><tr><th className="id-col">ID</th><th className="context-col">上下文</th><th>原文</th><th>译文</th><th className="status-col">状态</th></tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id} className={row.id === selectedId ? "selected-row" : ""} onClick={() => setSelectedId(row.id)}><td className="mono">{row.id}</td><td className="muted-cell">{row.context}</td><td>{row.source}</td><td className={!row.target ? "placeholder-cell" : ""}>{row.target || "点击下方编辑译文"}</td><td><span className={`status-pill ${row.status}`}>{statusLabel[row.status]}</span></td></tr>) : <tr><td className="empty-table" colSpan={5}>尚未加载翻译目录。打开项目后点击“提取文本”，或直接打开 catalog JSON。</td></tr>}</tbody></table></div><div className="editor-panel"><div className="editor-heading"><div><span className="eyebrow">当前条目</span><strong>{selected?.context || "未选择"}</strong></div><span className="editor-id">{selected?.id || "-"}</span></div><div className="editor-fields"><div><label>原文</label><div className="source-preview">{selected?.source || "选择一条翻译记录"}</div></div><div><label>译文</label><textarea value={selected?.target || ""} onChange={(event) => updateSelectedTarget(event.target.value)} placeholder="输入简体中文译文..." /></div></div></div></section>
           </>}
-          {view === "workspace" && mode === "normal" && <QuickLocalizationView
+          {view === "quick" && <QuickLocalizationView
             projectPath={projectPath}
             detection={detection}
             candidate={detectedCandidate}
-            hasTranslationSource={Boolean(dictionaryPath)}
             outputPath={quickOutputPath}
             running={running}
             status={quickStatus}
@@ -847,7 +832,7 @@ function App() {
             onCancel={cancelTaskById}
           />}
 
-          <footer className="statusbar"><span><span className="connection-dot" />HanEngine Core</span><span>模式：{mode === "professional" ? "专业" : "普通"}</span><span>Python CLI 已连接</span><span className="status-spacer" />{running ? <button className="cancel-button" onClick={cancelActiveWorkflow}><Square size={12} />请求停止</button> : <span>就绪</span>}</footer>
+          <footer className="statusbar"><span><span className="connection-dot" />HanEngine Core</span><span>HanGuard：player · H1_OFFLINE</span><span>Python CLI 已连接</span><span className="status-spacer" />{running ? <button className="cancel-button" onClick={cancelActiveWorkflow}><Square size={12} />请求停止</button> : <span>就绪</span>}</footer>
         </main>
       </div>
       {settingsOpen && <ClientSettingsDialog
@@ -1027,7 +1012,6 @@ function QuickLocalizationView({
   projectPath,
   detection,
   candidate,
-  hasTranslationSource,
   outputPath,
   running,
   status,
@@ -1042,7 +1026,6 @@ function QuickLocalizationView({
   projectPath: string;
   detection: DetectionReport | null;
   candidate: DetectionCandidate | null;
-  hasTranslationSource: boolean;
   outputPath: string;
   running: boolean;
   status: "idle" | "running" | "completed" | "failed";
@@ -1056,17 +1039,15 @@ function QuickLocalizationView({
 }) {
   const capability = capabilityNames(candidate);
   const ready = Boolean(projectPath && candidate && canLocalize);
-  const canRunTranslation = Boolean(ready && hasTranslationSource && outputPath);
+  const canRunTranslation = Boolean(ready && outputPath);
   const canExtract = Boolean(ready && outputPath);
-  const capabilityTitle = !ready ? "当前项目仅允许检测" : canRunTranslation ? "可以执行一键汉化" : "可以提取文本";
+  const capabilityTitle = !ready ? "当前项目仅允许检测" : canRunTranslation ? "可以执行一键汉化" : "选择输出目录后可执行";
   const capabilityDescription = !ready
     ? (candidate?.limitations?.join("；") || detection?.reasons?.map(detectionReasonLabel).join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")
-    : canRunTranslation
-      ? `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}`
-      : "翻译来源未配置；可以先提取文本，之后在专业模式加载术语表。";
+    : `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}；未加载术语表时使用本地模型直接翻译。`;
   return <section className="operation-view quick-view">
     <div className="operation-heading">
-      <div><span className="eyebrow">HanEngine / 普通模式</span><h2>快速汉化</h2><p>选择游戏和输出目录即可开始。普通模式会先提取可翻译文本，翻译来源由专业模式管理。</p></div>
+      <div><span className="eyebrow">HanEngine / 一键汉化</span><h2>快速汉化</h2><p>选择游戏和输出目录即可开始：检测、提取、翻译、校验、构建、验证六步自动串联，全程本地运行。</p></div>
       <button className="secondary-button" onClick={onOpenTasks}><ListChecks size={15} />查看任务</button>
     </div>
     <div className="quick-steps">
@@ -1079,7 +1060,7 @@ function QuickLocalizationView({
       <div><strong>{capabilityTitle}</strong><span>{capabilityDescription}</span>{candidate?.capability_matrix && <small className="capability-matrix-summary">{capabilityMatrixLabel(candidate.capability_matrix)}</small>}</div>
       <span className="capability-state">{detection.status}</span>
     </div>}
-    <div className="quick-actions"><button className="secondary-button" disabled={!canExtract || running} onClick={onExtract}><ArrowDownToLine size={15} />先提取文本</button><button className="primary-button" disabled={!canRunTranslation || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">普通模式不要求字典；未配置翻译来源时，一键汉化不可用，先提取不会修改原项目。</span></div>
+    <div className="quick-actions"><button className="secondary-button" disabled={!canExtract || running} onClick={onExtract}><ArrowDownToLine size={15} />先提取文本</button><button className="primary-button" disabled={!canRunTranslation || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">翻译全程本地生成；可选项：在高级设置加载术语表提升术语一致性。先提取不会修改原项目。</span></div>
     <QualityReportPanel report={qualityReport} />
     {status !== "idle" && <div className={`quick-result ${status}`}><span>{status === "completed" ? "汉化流程已完成，可在任务中心查看产物。" : status === "failed" ? "汉化流程失败，可从任务中心查看原因并重试。" : "正在执行 HanTask 流程，关闭应用后仍可从任务中心继续。"}</span><button className="icon-button" title="打开任务中心" onClick={onOpenTasks}><ExternalLink size={15} /></button></div>}
   </section>;

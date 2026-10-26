@@ -17,8 +17,8 @@ python cli.py examples/game.json examples/dictionary.json
 python cli.py game.csv dictionary.json --output translated.csv
 python cli.py game.txt dictionary.json --untranslated todo.json
 python cli.py engine inspect auto "C:\Games\AuthorizedProject" --json --mode player
-python cli.py engine extract rpg_maker_mv "C:\Games\AuthorizedProject" --output catalog.json --mode studio
-python cli.py engine build rpg_maker_mv "C:\Games\AuthorizedProject" catalog.json --output build --dictionary dictionary.json --mode studio
+python cli.py engine extract rpg_maker_mv "C:\Games\AuthorizedProject" --output catalog.json --mode player
+python cli.py engine build rpg_maker_mv "C:\Games\AuthorizedProject" catalog.json --output build --dictionary dictionary.json --mode player
 python cli.py engine localize auto "C:\Games\AuthorizedProject" --output build --dictionary dictionary.json --mode player
 python cli.py raster prepare "C:\Games\AuthorizedProject" --output raster-manifest.json
 python cli.py raster verify "C:\Games\AuthorizedProject" raster-manifest.json --candidate build --output raster-report.json
@@ -39,7 +39,7 @@ npm run dev
 
 命令行的 `--output` 用于指定汉化资源输出位置，`--untranslated` 用于指定待翻译 JSON 清单的位置。运行 `python cli.py --help` 可查看参数说明和授权提示。桌面图形界面统一使用 `desktop/` 下的 Electron + React 应用：开发时运行 `npm run dev`，构建前端运行 `npm run build`，生成 Windows 安装包运行 `npm run dist`。
 
-桌面端默认使用“普通”模式，面向单个游戏的一键汉化流程；“专业”模式用于手动提取、目录编辑、构建、封包和任务控制。界面标签使用“普通/专业”，内部仍分别映射到 Python CLI 的 `player/studio`，以保持后端和 CLI 兼容。普通模式只在 AdapterV1 与 HanGuard 同时允许 `extract`、`validate`、`build`、`verify` 时开放一键汉化。
+桌面端为单一玩家流程：快速汉化是默认着陆页，翻译工作台提供手动提取、目录编辑、构建、封包和任务控制，无需切换模式。界面与 CLI 调用固定使用 `player` 风险级别；`--mode` 参数保留给 CLI 作内部风险级别设置。一键汉化只在 AdapterV1 与 HanGuard 同时允许 `extract`、`validate`、`build`、`verify` 时开放。
 
 桌面端首次启动会创建本地账户数据库并显示建号界面，后续通过用户名和密码登录。密码采用 PBKDF2-SHA256 加盐哈希，原始密码只通过子进程 stdin 传递；会话令牌只以哈希形式进入 SQLite，原始令牌仅保留在 Electron 主进程内存中。此功能是单机身份门控，不是云账号或跨设备同步服务。
 
@@ -75,7 +75,7 @@ HanEngine 不改变现有单文件翻译器的使用方式。当前实现包括�
 - Windows SAPI 本地 TTS 和可选的云 TTS 接口，输出经过 WAV 格式检查后原子写入。
 - 普通未加密 ZIP 的独立副本修改；拒绝加密条目、路径穿越、重复路径、`.rpa`、`.rpyc` 和其他专有封包。
 - 文件哈希备份、失败自动恢复和显式回滚；原地应用需要最终 HanGuard 路由授权。
-- 普通/专业双模式 Electron + React GUI，以及保留兼容性的单文件页面。
+- 单流程 Electron + React GUI（快速汉化 + 翻译工作台），以及保留兼容性的单文件页面。
 - 本地用户数据库、首次建号、登录和退出；未登录渲染进程不能调用项目扫描、catalog、Python 工作流或任务控制 IPC。
 
 检测命令仍是只读的 Phase 1 适配器能力，不会因为上述显式工作流而自动修改任何项目。GUI 的 ZIP 工作流只生成独立副本；CLI 原地应用还必须同时传入 `--apply --authorized --backup-root`。
