@@ -371,7 +371,7 @@ _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
 # Latin tokens that legitimately stay inside Chinese game text (units,
 # established abbreviations).  Anything else left over in a CJK result is a
 # mixed-language defect and is rejected so the segment falls back for review.
-_MIXED_LANGUAGE_ALLOWLIST = frozenset({"kg", "npc"})
+_MIXED_LANGUAGE_ALLOWLIST = frozenset({"kg", "npc", "steam"})
 _TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
 _TRAILING_PLACEHOLDER_RE = re.compile(r"(?:\{[^{}]*\}|\[[^\[\]]*\]|%\d+(?:\$[A-Za-z])?)+\s*$")
 _TRAILING_RICH_TEXT_RE = re.compile(r"</?[A-Za-z][^<>]*>\s*$")

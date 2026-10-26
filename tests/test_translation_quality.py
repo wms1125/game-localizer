@@ -31,7 +31,7 @@ class MixedLanguageDetectionTests(unittest.TestCase):
         self.assertEqual(codes.get("residual_english"), "error")
 
     def test_allowlisted_tokens_do_not_trigger(self):
-        for text in ("去找NPC角色", "重 5 kg 的物品", "按下{0}键 interact".replace(" interact", "")):
+        for text in ("去找NPC角色", "重 5 kg 的物品", "正在连接 Steam..."):
             with self.subTest(text=text):
                 issues = translation_quality_issues(_request("source"), _result(text))
                 self.assertNotIn("residual_english", {issue.code for issue in issues})
