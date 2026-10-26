@@ -71,9 +71,17 @@ class AdapterRuntimeV1Tests(unittest.TestCase):
         (self.source / "game.rpgproject").write_text("RPG Maker MV", encoding="utf-8")
         (data / "Actors.json").write_text(
             json.dumps(
+                [None, {"name": "Hero", "nickname": "", "profile": ""}]
+            ),
+            encoding="utf-8",
+        )
+        (data / "Map001.json").write_text(
+            json.dumps(
                 {
-                    "name": "Hero",
-                    "events": [{"code": 401, "parameters": ["Hello, {name}!"]}],
+                    "displayName": "",
+                    "events": [
+                        {"list": [{"code": 401, "parameters": ["Hello, {name}!"]}]}
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -411,7 +419,7 @@ class AdapterRuntimeV1Tests(unittest.TestCase):
         events = self.project.list_events(raised.exception.task.task_id)
         self.assertEqual(events[-1].data, {"exception_type": "ValueError"})
 
-    def test_adapter_error_becomes_sanitized_failed_task(self):
+    def test_adapter_error_becomes_failed_task_without_internal_exception_detail(self):
         class FailingAdapter(RpgMakerMVAdapterV1):
             def extract(self, request):
                 return AdapterError(
@@ -442,7 +450,10 @@ class AdapterRuntimeV1Tests(unittest.TestCase):
         self.assertIs(raised.exception.adapter_error.code, AdapterErrorCode.UNSUPPORTED_INPUT)
         events = self.project.list_events(raised.exception.task.task_id)
         serialized = json.dumps([event.to_dict() for event in events])
-        self.assertNotIn("Source resource cannot be extracted", serialized)
+        # AdapterError.message is sanitized by the AdapterV1 contract, so the
+        # warning event may surface it to explain the failure.  What must never
+        # leak is the internal exception type or its raw detail.
+        self.assertIn("Source resource cannot be extracted", serialized)
         self.assertEqual(events[-1].data, {"exception_type": "_AdapterInvocationFailed"})
 
     def test_configured_project_source_root_is_enforced_before_task_creation(self):

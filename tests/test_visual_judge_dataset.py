@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from PIL import Image
+import PIL
 
 from tools.benchmark_visual_judges import load_dataset
 from tools.generate_visual_judge_dataset import CATEGORIES, CHROME_TEXT, build_dataset
@@ -14,6 +15,7 @@ from tools.generate_visual_judge_dataset import CATEGORIES, CHROME_TEXT, build_d
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "benchmarks" / "visual_judge_controlled"
+FONT_PATH = ROOT / "benchmarks" / "assets" / "HanEngineBenchmarkSans.otf"
 
 
 def _snapshot(root: Path) -> dict[str, str]:
@@ -36,6 +38,14 @@ class ControlledVisualJudgeDatasetTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "hanengine.visual-judge-benchmark/v1")
         self.assertEqual(payload["dataset"]["sample_count"], 36)
         self.assertEqual(payload["dataset"]["category_count"], 9)
+        self.assertEqual(payload["dataset"]["generator"], "hanengine.visual-judge-controlled/v3")
+        self.assertEqual(payload["dataset"]["font"], "HanEngine Benchmark Sans")
+        self.assertEqual(payload["dataset"]["font_file"], FONT_PATH.name)
+        self.assertEqual(
+            payload["dataset"]["font_sha256"],
+            hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(payload["dataset"]["pillow_version"], PIL.__version__)
         self.assertEqual(len(payload["samples"]), 36)
         self.assertEqual(sum(not item["expected_defect"] for item in payload["samples"]), 4)
         for category, issue_code in CATEGORIES:

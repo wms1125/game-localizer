@@ -44,6 +44,7 @@ class TranslationRequest:
     source_language: str
     target_language: str
     context: tuple[str, ...] = ()
+    reference_translation: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("segment_id", "text", "source_language", "target_language"):
@@ -56,6 +57,11 @@ class TranslationRequest:
         if any(not isinstance(item, str) for item in context):
             raise TypeError("context must contain strings")
         object.__setattr__(self, "context", context)
+        reference_translation = self.reference_translation
+        if reference_translation is not None and (
+            not isinstance(reference_translation, str) or not reference_translation
+        ):
+            raise ValueError("reference_translation must be a non-empty string or None")
 
 
 @dataclass(frozen=True)
@@ -258,6 +264,8 @@ class LocalModelTranslationProvider:
             "context": list(request.context),
             "protected_tokens": sorted(_placeholder_tokens(request.text)),
         }
+        if request.reference_translation is not None:
+            payload["reference_translation"] = request.reference_translation
         body = json.dumps(
             payload,
             ensure_ascii=False,
@@ -360,6 +368,23 @@ _METADATA_ECHO_RE = re.compile(
 _TRANSLATION_LABEL_RE = re.compile(r"(?i)^(?:translation|translated text|译文)\s*[:：]")
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
+_TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
+_TRAILING_PLACEHOLDER_RE = re.compile(r"(?:\{[^{}]*\}|\[[^\[\]]*\]|%\d+(?:\$[A-Za-z])?)+\s*$")
+_TRAILING_RICH_TEXT_RE = re.compile(r"</?[A-Za-z][^<>]*>\s*$")
+
+
+def has_terminal_punctuation(value: str) -> bool:
+    """Return whether visible text ends in sentence punctuation."""
+
+    visible = value.strip()
+    while visible:
+        previous = visible
+        visible = _TRAILING_PLACEHOLDER_RE.sub("", visible).rstrip()
+        visible = _TRAILING_RICH_TEXT_RE.sub("", visible).rstrip()
+        if visible == previous:
+            break
+    visible = visible.rstrip("\"'”’」』）》)]}")
+    return bool(visible and visible[-1] in _TERMINAL_PUNCTUATION)
 
 
 def _is_model_result(result: TranslationResult) -> bool:
@@ -463,6 +488,25 @@ def translation_quality_issues(
                     f"model confidence {result.confidence:.2f} is below 0.45",
                 )
             )
+        reference = request.reference_translation
+        punctuation_reference = reference if reference is not None else request.text
+        if (
+            re.search(r"[\u3400-\u9fff]", target)
+            and has_terminal_punctuation(punctuation_reference)
+            and not has_terminal_punctuation(target)
+        ):
+            code = (
+                "reference_punctuation_mismatch"
+                if reference is not None
+                else "missing_terminal_punctuation"
+            )
+            issues.append(
+                TranslationQualityIssue(
+                    code,
+                    "warning",
+                    "Chinese translation omits sentence punctuation used by its reference",
+                )
+            )
     return tuple(issues)
 
 
@@ -488,7 +532,14 @@ class TranslationRouter:
     def translate(self, request: TranslationRequest) -> TranslationResult:
         if not isinstance(request, TranslationRequest):
             raise TypeError("request must be a TranslationRequest")
-        key = (request.segment_id, request.text, request.source_language, request.target_language, request.context)
+        key = (
+            request.segment_id,
+            request.text,
+            request.source_language,
+            request.target_language,
+            request.context,
+            request.reference_translation,
+        )
         cached = self._cache.get(key)
         if cached is not None:
             return TranslationResult(cached.text, cached.provider, cached.model, cached.confidence, True)
@@ -538,5 +589,6 @@ __all__ = [
     "TranslationResult",
     "TranslationRouter",
     "enforce_translation_quality",
+    "has_terminal_punctuation",
     "translation_quality_issues",
 ]

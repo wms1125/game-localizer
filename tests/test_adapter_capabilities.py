@@ -31,24 +31,32 @@ class AdapterCapabilityContractTests(unittest.TestCase):
             )
             self.assertEqual(matrix.schema_version, "hanengine.adapter-capabilities/v1")
 
-        renpy = next(item for item in adapters if item.engine_id == "renpy")
-        renpy_statuses = {
-            item.capability: item.status
-            for item in renpy.metadata.capability_matrix.declarations
+        verified_evidence = {
+            "renpy": {
+                "record-renpy-the-question-zhcn-client-language-v11-verified",
+                "record-heartfelt-moments-pristine-validation-final",
+            },
+            "godot": {"godot-dodge-the-creeps-v1"},
         }
-        self.assertIs(
-            renpy_statuses[CapabilityArea.NATIVE_TEXT_REPLACE],
-            CapabilityStatus.VERIFIED,
-        )
         for adapter in adapters:
-            if adapter.engine_id == "renpy":
-                continue
             native = next(
                 item
                 for item in adapter.metadata.capability_matrix.declarations
                 if item.capability is CapabilityArea.NATIVE_TEXT_REPLACE
             )
+            if adapter.engine_id in verified_evidence:
+                self.assertIs(native.status, CapabilityStatus.VERIFIED)
+                self.assertEqual(set(native.evidence), verified_evidence[adapter.engine_id])
+                continue
             self.assertIs(native.status, CapabilityStatus.IMPLEMENTED)
+        for adapter in adapters:
+            raster = next(
+                item
+                for item in adapter.metadata.capability_matrix.declarations
+                if item.capability is CapabilityArea.RASTER_TEXT
+            )
+            self.assertIs(raster.status, CapabilityStatus.IMPLEMENTED)
+            self.assertEqual(raster.evidence, ())
 
     def test_matrix_and_metadata_have_strict_json_round_trip(self):
         adapter = next(item for item in get_adapters_v1() if item.engine_id == "renpy")
@@ -82,6 +90,10 @@ class AdapterCapabilityContractTests(unittest.TestCase):
         statuses = {item.capability: item.status for item in detected.declarations}
         self.assertIs(
             statuses[CapabilityArea.NATIVE_TEXT_REPLACE],
+            CapabilityStatus.DETECT_ONLY,
+        )
+        self.assertIs(
+            statuses[CapabilityArea.RASTER_TEXT],
             CapabilityStatus.DETECT_ONLY,
         )
         self.assertIs(

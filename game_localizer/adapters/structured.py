@@ -17,7 +17,18 @@ from game_localizer.hanengine.multiengine import (
     MultiEngineExtractor,
     MultiEngineWriter,
     extract_placeholders,
+    unity_tsv_candidates,
     validate_resource_syntax,
+)
+from game_localizer.hanengine.godot import GodotStyleError, apply_godot_font_style
+from game_localizer.hanengine.rpg_maker import (
+    RpgMakerStyleError,
+    apply_rpg_maker_font_style,
+)
+from game_localizer.hanengine.raster import (
+    RasterManifest,
+    apply_raster_manifest,
+    load_raster_manifest,
 )
 from game_localizer.hanengine.segments import (
     Segment,
@@ -39,6 +50,7 @@ from game_localizer.hanengine.renpy import (
     validate_renpy_translation_text,
 )
 from game_localizer.hanengine.tasks import TaskCancelled
+from game_localizer.scanner import scan_project
 
 from .contract import (
     CONTRACT_VERSION,
@@ -84,6 +96,7 @@ _BUILD_CAPABILITIES = frozenset(
     }
 )
 _DETECT_CAPABILITIES = frozenset({AdapterCapability.DETECT})
+_RASTER_ASSET_EXTENSIONS = frozenset({".jpeg", ".jpg", ".mp4", ".png", ".webm", ".webp"})
 _COMMON_LIMITATIONS = (
     "Only authorized plaintext structured localization resources are supported",
     "Encrypted and packaged binary assets are detection-only",
@@ -98,8 +111,11 @@ def _capability_matrix(
     native_evidence: tuple[str, ...] = (),
     dynamic_status: CapabilityStatus = CapabilityStatus.DETECT_ONLY,
     dynamic_reason: str = "Dynamic runtime text is preserved for manual review",
-    raster_status: CapabilityStatus = CapabilityStatus.UNSUPPORTED,
-    raster_reason: str = "Rasterized text is outside native structured resource replacement",
+    raster_status: CapabilityStatus = CapabilityStatus.IMPLEMENTED,
+    raster_reason: str = (
+        "Approved image and video artifacts can be hash-checked and merged into a separate candidate; "
+        "OCR, redraw, and runtime certification still require explicit review"
+    ),
 ) -> AdapterCapabilityMatrix:
     return AdapterCapabilityMatrix(
         (
@@ -141,12 +157,46 @@ def _is_untranslated_natural_language(source: str, target: str, language: str) -
     return len(text) >= 8
 
 
+_RPG_MAKER_CONTROL_RE = re.compile(
+    r"\\(?:[A-Za-z]+(?:\[[^\]\r\n]*\])?|[.!|^><{}])"
+)
+
+
+def _rpg_maker_placeholders(value: str) -> tuple[str, ...]:
+    controls = tuple(match.group(0) for match in _RPG_MAKER_CONTROL_RE.finditer(value))
+    visible_text = _RPG_MAKER_CONTROL_RE.sub("", value)
+    generic = tuple(
+        token for token in extract_placeholders(visible_text) if not token.startswith("[")
+    )
+    return controls + generic
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _raster_manifest_option(
+    request: BuildRequest,
+    *,
+    source_language: str,
+    target_language: str,
+) -> tuple[Path, RasterManifest] | None:
+    raw_path = request.output_options.get("raster_manifest")
+    if raw_path is None:
+        return None
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("raster_manifest must be a non-empty path string")
+    path = Path(raw_path).expanduser().resolve(strict=True)
+    manifest = load_raster_manifest(path)
+    if manifest.source_language != source_language:
+        raise ValueError("raster manifest source language does not match the adapter")
+    if manifest.target_language != target_language:
+        raise ValueError("raster manifest target language does not match the adapter")
+    return path, manifest
 
 
 def _candidate_fingerprint(manifest: tuple[BuildManifestEntry, ...]) -> str:
@@ -462,6 +512,10 @@ class StructuredAdapterV1:
             except RenPyValidationError:
                 return False
             return True
+        if self.engine_id in {"rpg_maker_mv", "rpg_maker_mz"}:
+            return Counter(_rpg_maker_placeholders(source)) == Counter(
+                _rpg_maker_placeholders(target)
+            )
         return Counter(extract_placeholders(source)) == Counter(extract_placeholders(target))
 
     def validate(self, request: ValidationRequest) -> ValidationResult | AdapterError:
@@ -660,23 +714,77 @@ class StructuredAdapterV1:
     def build(self, request: BuildRequest) -> BuildResult | AdapterError:
         if not isinstance(request, BuildRequest):
             raise TypeError("request must be a BuildRequest")
+        temporary: Path | None = None
+        removed_placeholder = False
         try:
             request.context.checkpoint()
             catalog = self._catalog_from_segments(request)
+            raster_option = _raster_manifest_option(
+                request,
+                source_language=self.source_language,
+                target_language=self.target_language,
+            )
+            build_root = request.staging_root
+            existing_empty = False
+            if raster_option is not None:
+                if build_root.exists():
+                    if (
+                        build_root.is_symlink()
+                        or not build_root.is_dir()
+                        or next(build_root.iterdir(), None) is not None
+                    ):
+                        raise ValueError("output root already exists and is not empty")
+                    existing_empty = True
+                build_root.parent.mkdir(parents=True, exist_ok=True)
+                temporary = Path(
+                    tempfile.mkdtemp(
+                        prefix=f".{build_root.name}.raster.",
+                        dir=str(build_root.parent),
+                    )
+                ).resolve()
+                candidate_root = temporary
+            else:
+                candidate_root = build_root
             request.context.progress(0, len(catalog.entries), current_item=self.engine_id)
             written = MultiEngineWriter().build(
                 catalog,
                 request.source_root,
-                request.staging_root,
+                candidate_root,
                 allow_existing_empty=True,
+            )
+            raster_result = None
+            if raster_option is not None:
+                raster_path, raster_manifest = raster_option
+                raster_result = apply_raster_manifest(
+                    request.source_root,
+                    candidate_root,
+                    raster_manifest,
+                    manifest_root=raster_path.parent,
+                )
+                if existing_empty:
+                    build_root.rmdir()
+                    removed_placeholder = True
+                candidate_root.replace(build_root)
+                temporary = None
+
+            relative_paths = tuple(
+                dict.fromkeys(
+                    (
+                        *written.files_written,
+                        *(
+                            item.relative_path
+                            for item in (() if raster_result is None else raster_result.applied_assets)
+                        ),
+                    )
+                )
             )
             manifest = tuple(
                 BuildManifestEntry(
                     relative_path=relative,
                     change_kind="modified",
-                    sha256=_sha256_file(request.staging_root / Path(*relative.split("/"))),
+                    sha256=_sha256_file(build_root / Path(*relative.split("/"))),
                 )
-                for relative in written.files_written
+                for relative in relative_paths
             )
             request.context.progress(
                 written.entries_written,
@@ -687,22 +795,25 @@ class StructuredAdapterV1:
                 "structured localization candidate built",
                 {
                     "engine_id": self.engine_id,
-                    "files": len(written.files_written),
+                    "files": len(relative_paths),
                     "segments": written.entries_written,
+                    "raster_assets": 0 if raster_result is None else len(raster_result.applied_assets),
                 },
             )
             return BuildResult(
-                generated_files=written.files_written,
+                generated_files=relative_paths,
                 added_files=(),
-                modified_files=written.files_written,
+                modified_files=relative_paths,
                 deleted_files=(),
                 manifest=manifest,
                 artifacts=(),
                 candidate_fingerprint=_candidate_fingerprint(manifest),
-                warnings=(),
+                warnings=() if raster_result is None else raster_result.warnings,
                 statistics={
-                    "files": len(written.files_written),
+                    "files": len(relative_paths),
                     "segments": written.entries_written,
+                    "raster_assets": 0 if raster_result is None else len(raster_result.applied_assets),
+                    "raster_manual_review": 0 if raster_result is None else len(raster_result.skipped_assets),
                 },
             )
         except TaskCancelled as exc:
@@ -729,6 +840,11 @@ class StructuredAdapterV1:
                 recoverable=False,
                 cause=exc,
             )
+        finally:
+            if temporary is not None:
+                shutil.rmtree(temporary, ignore_errors=True)
+            if removed_placeholder and not request.staging_root.exists():
+                request.staging_root.mkdir()
 
     def _catalog_from_segments(self, request: BuildRequest) -> LocalizationCatalog:
         if not request.validated_segments:
@@ -752,8 +868,9 @@ class StructuredAdapterV1:
                 raise MultiEngineError("segment has no target text")
             if hashlib.sha256(segment.source_text.encode("utf-8")).hexdigest() != segment.source_fingerprint:
                 raise MultiEngineError("segment source fingerprint is invalid")
-            if Counter(extract_placeholders(segment.source_text)) != Counter(
-                extract_placeholders(segment.target_text)
+            if not self._translation_preserves_placeholders(
+                segment.source_text,
+                segment.target_text,
             ):
                 raise MultiEngineError("translation changes placeholders")
             if raw_files is not None:
@@ -857,6 +974,21 @@ class StructuredAdapterV1:
                             suggested_action="Discard and rebuild the candidate",
                         )
                     )
+
+                if path.suffix.casefold() in _RASTER_ASSET_EXTENSIONS:
+                    checks.append(
+                        VerificationCheck(
+                            f"raster_asset:{entry.relative_path}",
+                            True,
+                            "Candidate raster asset is verified by its build-manifest hash",
+                        )
+                    )
+                    request.context.progress(
+                        index,
+                        len(request.manifest),
+                        current_item=entry.relative_path,
+                    )
+                    continue
 
                 try:
                     text = path.read_bytes().decode("utf-8-sig")
@@ -985,13 +1117,17 @@ class RenPyAdapterV1(StructuredAdapterV1):
         )
 
     def _packaged_evidence(self, root: Path) -> tuple[Evidence, ...]:
+        try:
+            snapshot = scan_project(root)
+        except ValueError:
+            return ()
         candidates = tuple(
             sorted(
                 (
-                    path
-                    for suffix in ("*.rpa", "*.rpyc")
-                    for path in root.rglob(suffix)
-                    if path.is_file() and not path.is_symlink()
+                    root / Path(*relative.split("/"))
+                    for relative in snapshot.files
+                    if relative.startswith("game/")
+                    and relative.endswith((".rpa", ".rpyc"))
                 ),
                 key=lambda path: path.as_posix().casefold(),
             )
@@ -1168,6 +1304,11 @@ class RenPyAdapterV1(StructuredAdapterV1):
         try:
             request.context.checkpoint()
             catalog = self._renpy_catalog_from_segments(request)
+            raster_option = _raster_manifest_option(
+                request,
+                source_language=self.source_language,
+                target_language=self.target_language,
+            )
             output = request.staging_root
             existing_empty = False
             if output.exists():
@@ -1206,9 +1347,28 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     font_paths=tuple(Path(path) for path in configured_fonts),
                     font_probe_texts=tuple(configured_probes),
                 )
+                raster_result = None
+                if raster_option is not None:
+                    raster_path, raster_manifest = raster_option
+                    raster_result = apply_raster_manifest(
+                        request.source_root,
+                        temporary,
+                        raster_manifest,
+                        manifest_root=raster_path.parent,
+                    )
                 relative_paths = tuple(
-                    path.relative_to(temporary).as_posix()
-                    for path in written.generated_paths
+                    dict.fromkeys(
+                        (
+                            *(
+                                path.relative_to(temporary).as_posix()
+                                for path in written.generated_paths
+                            ),
+                            *(
+                                item.relative_path
+                                for item in (() if raster_result is None else raster_result.applied_assets)
+                            ),
+                        )
+                    )
                 )
                 change_kinds = tuple(
                     (
@@ -1267,8 +1427,14 @@ class RenPyAdapterV1(StructuredAdapterV1):
                 candidate_fingerprint=_candidate_fingerprint(manifest),
                 warnings=(
                     "Ren'Py SDK compilation and runtime smoke testing were not performed",
+                    *(() if raster_result is None else raster_result.warnings),
                 ),
-                statistics={"files": len(relative_paths), "segments": written.entries_written},
+                statistics={
+                    "files": len(relative_paths),
+                    "segments": written.entries_written,
+                    "raster_assets": 0 if raster_result is None else len(raster_result.applied_assets),
+                    "raster_manual_review": 0 if raster_result is None else len(raster_result.skipped_assets),
+                },
             )
         except TaskCancelled as exc:
             return self._error(
@@ -1357,7 +1523,15 @@ class RenPyAdapterV1(StructuredAdapterV1):
             language = renpy_language_identifier(self.target_language)
             translation_path = f"game/tl/{language}/hanengine_translations.rpy"
             activation_path = "game/hanengine_language.rpy"
-            manifest_paths = [entry.relative_path for entry in request.manifest]
+            raster_manifest = tuple(
+                entry
+                for entry in request.manifest
+                if Path(entry.relative_path).suffix.casefold() in _RASTER_ASSET_EXTENSIONS
+            )
+            renpy_manifest = tuple(
+                entry for entry in request.manifest if entry not in raster_manifest
+            )
+            manifest_paths = [entry.relative_path for entry in renpy_manifest]
             font_paths = sorted(
                 path
                 for path in manifest_paths
@@ -1404,7 +1578,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     )
                 )
 
-            for index, entry in enumerate(request.manifest, 1):
+            for index, entry in enumerate(renpy_manifest, 1):
                 request.context.checkpoint()
                 expected_location = entry.relative_path in expected_paths
                 checks.append(
@@ -1533,6 +1707,45 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     )
                 request.context.progress(index, len(request.manifest), current_item=entry.relative_path)
 
+            for offset, entry in enumerate(raster_manifest, len(renpy_manifest) + 1):
+                request.context.checkpoint()
+                path = _safe_candidate_path(request.staging_root, entry.relative_path)
+                exists = path is not None and path.is_file()
+                checks.append(
+                    VerificationCheck(
+                        f"file_exists:{entry.relative_path}",
+                        exists,
+                        "Candidate raster asset exists"
+                        if exists
+                        else "Candidate raster asset is missing or unsafe",
+                    )
+                )
+                hash_matches = exists and _sha256_file(path).casefold() == entry.sha256.casefold()
+                checks.append(
+                    VerificationCheck(
+                        f"sha256:{entry.relative_path}",
+                        hash_matches,
+                        "Candidate raster asset hash matches"
+                        if hash_matches
+                        else "Candidate raster asset hash differs",
+                    )
+                )
+                if exists:
+                    artifact_hashes[entry.relative_path] = _sha256_file(path)
+                if not exists or not hash_matches:
+                    issues.append(
+                        self._issue(
+                            "renpy_raster_asset_invalid",
+                            "A Ren'Py raster asset is missing or differs from the build manifest",
+                            suggested_action="Discard and rebuild the candidate",
+                        )
+                    )
+                request.context.progress(
+                    offset,
+                    len(request.manifest),
+                    current_item=entry.relative_path,
+                )
+
             copied_fingerprint = RenPyExtractor().extract(
                 request.staging_root,
                 language=self.target_language,
@@ -1587,7 +1800,185 @@ class RenPyAdapterV1(StructuredAdapterV1):
             )
 
 
-class RpgMakerMVAdapterV1(StructuredAdapterV1):
+class _RpgMakerAdapterV1(StructuredAdapterV1):
+    def build(self, request: BuildRequest) -> BuildResult | AdapterError:
+        configured_fonts = request.output_options.get("rpg_maker_font_paths", [])
+        if not configured_fonts:
+            return super().build(request)
+        if not isinstance(configured_fonts, list) or any(
+            not isinstance(path, str) or not path for path in configured_fonts
+        ):
+            return self._error(
+                Operation.BUILD,
+                AdapterErrorCode.BUILD_FAILED,
+                "rpg_maker_font_paths must be a list of non-empty strings",
+                recoverable=False,
+            )
+
+        output = request.staging_root
+        existing_empty = False
+        temporary: Path | None = None
+        try:
+            if output.exists():
+                if output.is_symlink() or not output.is_dir() or next(output.iterdir(), None) is not None:
+                    raise ValueError("output root already exists and is not empty")
+                existing_empty = True
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temporary = Path(
+                tempfile.mkdtemp(prefix=f".{output.name}.rpg-maker-style.", dir=str(output.parent))
+            ).resolve()
+            base = super().build(
+                BuildRequest(
+                    source_root=request.source_root,
+                    staging_root=temporary,
+                    validated_segments=request.validated_segments,
+                    source_tree_fingerprint=request.source_tree_fingerprint,
+                    output_options={
+                        key: request.output_options[key]
+                        for key in ("raster_manifest",)
+                        if key in request.output_options
+                    },
+                    context=request.context,
+                )
+            )
+            if isinstance(base, AdapterError):
+                shutil.rmtree(temporary, ignore_errors=True)
+                return base
+            style = apply_rpg_maker_font_style(
+                temporary,
+                self.engine_id,
+                tuple(Path(path) for path in configured_fonts),
+            )
+            relative_paths = tuple(sorted(set(base.generated_files).union(style.relative_paths)))
+            change_kinds = {
+                relative: (
+                    "modified"
+                    if (request.source_root / Path(*relative.split("/"))).is_file()
+                    else "added"
+                )
+                for relative in relative_paths
+            }
+            manifest = tuple(
+                BuildManifestEntry(
+                    relative_path=relative,
+                    change_kind=change_kinds[relative],
+                    sha256=_sha256_file(temporary / Path(*relative.split("/"))),
+                )
+                for relative in relative_paths
+            )
+            removed_placeholder = False
+            try:
+                if existing_empty:
+                    output.rmdir()
+                    removed_placeholder = True
+                temporary.replace(output)
+            except Exception:
+                if removed_placeholder and not output.exists():
+                    output.mkdir()
+                raise
+            return BuildResult(
+                generated_files=relative_paths,
+                added_files=tuple(path for path in relative_paths if change_kinds[path] == "added"),
+                modified_files=tuple(path for path in relative_paths if change_kinds[path] == "modified"),
+                deleted_files=(),
+                manifest=manifest,
+                artifacts=(),
+                candidate_fingerprint=_candidate_fingerprint(manifest),
+                warnings=base.warnings,
+                statistics={**base.statistics, "files": len(relative_paths)},
+            )
+        except (OSError, UnicodeError, TypeError, ValueError, RpgMakerStyleError) as exc:
+            if temporary is not None:
+                shutil.rmtree(temporary, ignore_errors=True)
+            return self._error(
+                Operation.BUILD,
+                AdapterErrorCode.BUILD_FAILED,
+                "The RPG Maker localization style could not be built",
+                recoverable=False,
+                cause=exc,
+            )
+
+    def verify(self, request: VerifyRequest) -> VerifyResult | AdapterError:
+        structured_manifest = tuple(
+            entry
+            for entry in request.manifest
+            if Path(entry.relative_path).suffix.casefold() == ".json"
+        )
+        base = super().verify(
+            VerifyRequest(
+                request.source_tree_fingerprint,
+                request.staging_root,
+                structured_manifest,
+                request.verification_level,
+                request.context,
+            )
+        )
+        if isinstance(base, AdapterError):
+            return base
+        checks = list(base.checks)
+        issues = list(base.issues)
+        artifact_hashes = dict(base.artifact_hashes)
+        encoding_passed = base.encoding_passed
+        for entry in request.manifest:
+            if entry in structured_manifest:
+                continue
+            path = _safe_candidate_path(request.staging_root, entry.relative_path)
+            exists = path is not None and path.is_file()
+            checks.append(
+                VerificationCheck(
+                    f"file_exists:{entry.relative_path}",
+                    exists,
+                    "Candidate support file exists" if exists else "Candidate support file is missing",
+                )
+            )
+            hash_matches = exists and _sha256_file(path).casefold() == entry.sha256.casefold()
+            checks.append(
+                VerificationCheck(
+                    f"sha256:{entry.relative_path}",
+                    hash_matches,
+                    "Candidate support file hash matches"
+                    if hash_matches
+                    else "Candidate support file hash differs",
+                )
+            )
+            if exists:
+                artifact_hashes[entry.relative_path] = _sha256_file(path)
+            if exists and path.suffix.casefold() == ".css":
+                try:
+                    path.read_bytes().decode("utf-8-sig")
+                    decoded = True
+                except UnicodeDecodeError:
+                    decoded = False
+                    encoding_passed = False
+                checks.append(
+                    VerificationCheck(
+                        f"utf8:{entry.relative_path}",
+                        decoded,
+                        "Candidate support file is valid UTF-8"
+                        if decoded
+                        else "Candidate support file is not valid UTF-8",
+                    )
+                )
+            if not exists or not hash_matches:
+                issues.append(
+                    self._issue(
+                        "rpg_maker_support_file_invalid",
+                        "A generated RPG Maker font support file is missing or changed",
+                        suggested_action="Discard and rebuild the candidate",
+                    )
+                )
+        return VerifyResult(
+            passed=base.passed and all(check.passed for check in checks),
+            checks=tuple(checks),
+            syntax_passed=base.syntax_passed,
+            encoding_passed=encoding_passed,
+            artifact_hashes=artifact_hashes,
+            smoke_test_passed=None,
+            issues=tuple(issues),
+        )
+
+
+class RpgMakerMVAdapterV1(_RpgMakerAdapterV1):
     engine_id = "rpg_maker_mv"
     source_markers = (
         ("rpg_maker_mv_project", "game.rpgproject", 0.70, "RPG Maker MV project marker found"),
@@ -1616,7 +2007,7 @@ class RpgMakerMVAdapterV1(StructuredAdapterV1):
         return "MV"
 
 
-class RpgMakerMZAdapterV1(StructuredAdapterV1):
+class RpgMakerMZAdapterV1(_RpgMakerAdapterV1):
     engine_id = "rpg_maker_mz"
     source_markers = (
         ("rpg_maker_mz_project", "game.rmmzproject", 0.70, "RPG Maker MZ project marker found"),
@@ -1682,6 +2073,183 @@ class GodotAdapterV1(StructuredAdapterV1):
                 return "4.x" if version >= 5 else "3.x"
         return "unknown"
 
+    def build(self, request: BuildRequest) -> BuildResult | AdapterError:
+        configured_fonts = request.output_options.get("godot_font_paths", [])
+        if not configured_fonts:
+            return super().build(request)
+        if not isinstance(configured_fonts, list) or any(
+            not isinstance(path, str) or not path for path in configured_fonts
+        ):
+            return self._error(
+                Operation.BUILD,
+                AdapterErrorCode.BUILD_FAILED,
+                "godot_font_paths must be a list of non-empty strings",
+                recoverable=False,
+            )
+
+        output = request.staging_root
+        existing_empty = False
+        temporary: Path | None = None
+        try:
+            if output.exists():
+                if output.is_symlink() or not output.is_dir() or next(output.iterdir(), None) is not None:
+                    raise ValueError("output root already exists and is not empty")
+                existing_empty = True
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temporary = Path(
+                tempfile.mkdtemp(prefix=f".{output.name}.godot-style.", dir=str(output.parent))
+            ).resolve()
+            base = super().build(
+                BuildRequest(
+                    source_root=request.source_root,
+                    staging_root=temporary,
+                    validated_segments=request.validated_segments,
+                    source_tree_fingerprint=request.source_tree_fingerprint,
+                    output_options={
+                        key: request.output_options[key]
+                        for key in ("raster_manifest",)
+                        if key in request.output_options
+                    },
+                    context=request.context,
+                )
+            )
+            if isinstance(base, AdapterError):
+                shutil.rmtree(temporary, ignore_errors=True)
+                return base
+            style = apply_godot_font_style(
+                temporary,
+                tuple(Path(path) for path in configured_fonts),
+                target_language=self.target_language,
+                source_language=self.source_language,
+            )
+            relative_paths = tuple(sorted(set(base.generated_files).union(style.relative_paths)))
+            change_kinds = {
+                relative: (
+                    "modified"
+                    if (request.source_root / Path(*relative.split("/"))).is_file()
+                    else "added"
+                )
+                for relative in relative_paths
+            }
+            manifest = tuple(
+                BuildManifestEntry(
+                    relative_path=relative,
+                    change_kind=change_kinds[relative],
+                    sha256=_sha256_file(temporary / Path(*relative.split("/"))),
+                )
+                for relative in relative_paths
+            )
+            removed_placeholder = False
+            try:
+                if existing_empty:
+                    output.rmdir()
+                    removed_placeholder = True
+                temporary.replace(output)
+            except Exception:
+                if removed_placeholder and not output.exists():
+                    output.mkdir()
+                raise
+            return BuildResult(
+                generated_files=relative_paths,
+                added_files=tuple(path for path in relative_paths if change_kinds[path] == "added"),
+                modified_files=tuple(path for path in relative_paths if change_kinds[path] == "modified"),
+                deleted_files=(),
+                manifest=manifest,
+                artifacts=(),
+                candidate_fingerprint=_candidate_fingerprint(manifest),
+                warnings=base.warnings,
+                statistics={**base.statistics, "files": len(relative_paths)},
+            )
+        except (OSError, UnicodeError, TypeError, ValueError, GodotStyleError) as exc:
+            if temporary is not None:
+                shutil.rmtree(temporary, ignore_errors=True)
+            return self._error(
+                Operation.BUILD,
+                AdapterErrorCode.BUILD_FAILED,
+                "The Godot localization style could not be built",
+                recoverable=False,
+                cause=exc,
+            )
+
+    def verify(self, request: VerifyRequest) -> VerifyResult | AdapterError:
+        structured_manifest = tuple(
+            entry
+            for entry in request.manifest
+            if Path(entry.relative_path).suffix.casefold() in {".csv", ".po"}
+        )
+        base = super().verify(
+            VerifyRequest(
+                request.source_tree_fingerprint,
+                request.staging_root,
+                structured_manifest,
+                request.verification_level,
+                request.context,
+            )
+        )
+        if isinstance(base, AdapterError):
+            return base
+        checks = list(base.checks)
+        issues = list(base.issues)
+        artifact_hashes = dict(base.artifact_hashes)
+        encoding_passed = base.encoding_passed
+        for entry in request.manifest:
+            if entry in structured_manifest:
+                continue
+            path = _safe_candidate_path(request.staging_root, entry.relative_path)
+            exists = path is not None and path.is_file()
+            checks.append(
+                VerificationCheck(
+                    f"file_exists:{entry.relative_path}",
+                    exists,
+                    "Candidate support file exists" if exists else "Candidate support file is missing",
+                )
+            )
+            hash_matches = exists and _sha256_file(path).casefold() == entry.sha256.casefold()
+            checks.append(
+                VerificationCheck(
+                    f"sha256:{entry.relative_path}",
+                    hash_matches,
+                    "Candidate support file hash matches"
+                    if hash_matches
+                    else "Candidate support file hash differs",
+                )
+            )
+            if exists:
+                artifact_hashes[entry.relative_path] = _sha256_file(path)
+            if exists and path.suffix.casefold() in {".gd", ".godot"}:
+                try:
+                    path.read_bytes().decode("utf-8-sig")
+                    decoded = True
+                except UnicodeDecodeError:
+                    decoded = False
+                    encoding_passed = False
+                checks.append(
+                    VerificationCheck(
+                        f"utf8:{entry.relative_path}",
+                        decoded,
+                        "Candidate support file is valid UTF-8"
+                        if decoded
+                        else "Candidate support file is not valid UTF-8",
+                    )
+                )
+            if not exists or not hash_matches:
+                issues.append(
+                    self._issue(
+                        "godot_support_file_invalid",
+                        "A generated Godot style support file is missing or changed",
+                        suggested_action="Discard and rebuild the candidate",
+                    )
+                )
+        return VerifyResult(
+            passed=base.passed and all(check.passed for check in checks),
+            checks=tuple(checks),
+            syntax_passed=base.syntax_passed,
+            encoding_passed=encoding_passed,
+            artifact_hashes=artifact_hashes,
+            smoke_test_passed=None,
+            issues=tuple(issues),
+        )
+
 
 class UnityAdapterV1(StructuredAdapterV1):
     engine_id = "unity"
@@ -1712,6 +2280,22 @@ class UnityAdapterV1(StructuredAdapterV1):
             evidence.append(Evidence("unity_player", EvidenceSource.FILESYSTEM, player.name, 0.55, "Unity player binary found"))
         if data_dirs:
             evidence.append(Evidence("unity_data", EvidenceSource.FILESYSTEM, data_dirs[0].name, 0.35, "Unity data directory found"))
+        return tuple(evidence)
+
+    def _source_evidence(self, root: Path) -> tuple[Evidence, ...]:
+        evidence = list(super()._source_evidence(root))
+        tsv_paths = unity_tsv_candidates(root)
+        if tsv_paths:
+            relative_directory = tsv_paths[0].parent.relative_to(root).as_posix()
+            evidence.append(
+                Evidence(
+                    "unity_repo_tsv_localization",
+                    EvidenceSource.FILESYSTEM,
+                    f"{relative_directory}/{{Game,HUD,Menu}}.tsv",
+                    0.90,
+                    "Unity plaintext TSV localization resources found",
+                )
+            )
         return tuple(evidence)
 
     def _engine_version(self, root: Path, evidence: tuple[Evidence, ...]) -> str:
@@ -1799,11 +2383,18 @@ register_adapter_capability_matrix(
         dynamic_reason="Complex runtime parameters and string concatenation remain unhandled and require manual review",
     ),
 )
+register_adapter_capability_matrix(
+    "hanengine.godot",
+    _capability_matrix(
+        native_status=CapabilityStatus.VERIFIED,
+        native_reason="Godot PO write-back passed official 4.7.1 validation, font coverage, and paired runtime smoke evidence",
+        native_evidence=("godot-dodge-the-creeps-v1",),
+        dynamic_reason="Runtime-generated text is outside the static structured resource contract",
+    ),
+)
 for _adapter_id in (
     "hanengine.rpg-maker-mv",
     "hanengine.rpg-maker-mz",
-    "hanengine.godot",
-    "hanengine.unity",
     "hanengine.unreal",
 ):
     register_adapter_capability_matrix(
@@ -1814,6 +2405,17 @@ for _adapter_id in (
             dynamic_reason="Runtime-generated text is outside the static structured resource contract",
         ),
     )
+register_adapter_capability_matrix(
+    "hanengine.unity",
+    _capability_matrix(
+        native_status=CapabilityStatus.IMPLEMENTED,
+        native_reason=(
+            "Unity XLIFF/CSV resources and the narrowly profiled Unity Localization Addressables "
+            "English/Simplified Chinese string tables can be built; unknown packaged layouts remain detection-only"
+        ),
+        dynamic_reason="Runtime-generated text is outside the static structured resource contract",
+    ),
+)
 
 
 __all__ = [

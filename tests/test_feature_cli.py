@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import os
 import tempfile
@@ -9,7 +10,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cli
-from game_localizer.hanengine import TranslationResult
+from game_localizer.hanengine import (
+    RASTER_MANIFEST_SCHEMA_VERSION,
+    RasterAsset,
+    RasterAssetKind,
+    RasterManifest,
+    RasterSegmentStatus,
+    RasterTextSegment,
+    RasterTextStyle,
+    ScreenRegion,
+    TranslationResult,
+    write_raster_manifest,
+)
 
 
 class FeatureCliTests(unittest.TestCase):
@@ -54,6 +66,166 @@ class FeatureCliTests(unittest.TestCase):
             )
             self.assertEqual(payload["hanguard"]["phase"], "final")
 
+    def test_raster_prepare_inventories_media_without_modifying_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            (project / "art").mkdir(parents=True)
+            (project / "art" / "title.png").write_bytes(b"title")
+            (project / "art" / "intro.webm").write_bytes(b"intro")
+            before = tuple(
+                (path.relative_to(project).as_posix(), path.read_bytes())
+                for path in sorted(project.rglob("*"))
+                if path.is_file()
+            )
+            output = root / "raster-manifest.json"
+
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as errors:
+                code = cli.run_raster(
+                    ["prepare", str(project), "--output", str(output)]
+                )
+
+            self.assertEqual(code, 0, errors.getvalue())
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [asset["relative_path"] for asset in payload["assets"]],
+                ["art/intro.webm", "art/title.png"],
+            )
+            after = tuple(
+                (path.relative_to(project).as_posix(), path.read_bytes())
+                for path in sorted(project.rglob("*"))
+                if path.is_file()
+            )
+            self.assertEqual(after, before)
+
+            with redirect_stderr(io.StringIO()) as denied_errors:
+                denied = cli.run_raster(
+                    [
+                        "prepare",
+                        str(project),
+                        "--output",
+                        str(project / "forbidden.json"),
+                    ]
+                )
+            self.assertEqual(denied, 1)
+            self.assertIn("outside the source project", denied_errors.getvalue())
+
+    def test_engine_localize_merges_raster_manifest_and_invalid_manifest_fails_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            (project / "data").mkdir(parents=True)
+            (project / "img").mkdir()
+            (project / "fonts").mkdir()
+            (project / "game.rpgproject").write_text("MV", encoding="utf-8")
+            (project / "data" / "Actors.json").write_text(
+                json.dumps([None, {"name": "Hero", "nickname": "", "profile": ""}]),
+                encoding="utf-8",
+            )
+            source_raster = project / "img" / "title.png"
+            source_raster.write_bytes(b"source-title")
+            (project / "fonts" / "gamefont.css").write_text(
+                "@font-face { font-family: GameFont; src: url(\"mplus.ttf\"); }\n",
+                encoding="utf-8",
+            )
+            (project / "fonts" / "mplus.ttf").write_bytes(b"source-font")
+            font = root / "SourceHanSans.ttf"
+            font.write_bytes(b"localized-font")
+            dictionary = root / "dictionary.json"
+            dictionary.write_text(
+                json.dumps({"Hero": "英雄"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            raster_root = root / "raster"
+            raster_root.mkdir()
+            localized_raster = raster_root / "title.zh.png"
+            localized_raster.write_bytes(b"localized-title")
+            manifest_path = write_raster_manifest(
+                RasterManifest(
+                    RASTER_MANIFEST_SCHEMA_VERSION,
+                    "en",
+                    "zh-CN",
+                    (
+                        RasterAsset(
+                            "img/title.png",
+                            RasterAssetKind.IMAGE,
+                            hashlib.sha256(source_raster.read_bytes()).hexdigest(),
+                            "title.zh.png",
+                            hashlib.sha256(localized_raster.read_bytes()).hexdigest(),
+                            (
+                                RasterTextSegment(
+                                    "title-text",
+                                    "img/title.png",
+                                    RasterAssetKind.IMAGE,
+                                    "START",
+                                    "开始",
+                                    ScreenRegion(0, 0, 100, 30),
+                                    None,
+                                    None,
+                                    0.99,
+                                    RasterTextStyle(font_size_px=18, fill_color="#ffffff"),
+                                    RasterSegmentStatus.APPROVED,
+                                    None,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                raster_root / "manifest.json",
+            )
+            output = root / "output"
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as errors:
+                code = cli.run_engine(
+                    [
+                        "localize",
+                        "auto",
+                        str(project),
+                        "--output",
+                        str(output),
+                        "--dictionary",
+                        str(dictionary),
+                        "--raster-manifest",
+                        str(manifest_path),
+                        "--font",
+                        str(font),
+                        "--state-root",
+                        str(root / "state"),
+                        "--quiet-progress",
+                    ]
+                )
+            self.assertEqual(code, 0, errors.getvalue())
+            self.assertEqual((output / "img" / "title.png").read_bytes(), b"localized-title")
+            self.assertEqual(
+                (output / "fonts" / "SourceHanSans.ttf").read_bytes(),
+                b"localized-font",
+            )
+            self.assertIn(
+                'url("SourceHanSans.ttf")',
+                (output / "fonts" / "gamefont.css").read_text(encoding="utf-8"),
+            )
+
+            invalid_manifest = root / "invalid-raster.json"
+            invalid_manifest.write_text("{}", encoding="utf-8")
+            with redirect_stderr(io.StringIO()) as invalid_errors:
+                invalid_code = cli.run_engine(
+                    [
+                        "localize",
+                        "rpg_maker_mv",
+                        str(project),
+                        "--output",
+                        str(root / "invalid-output"),
+                        "--dictionary",
+                        str(dictionary),
+                        "--raster-manifest",
+                        str(invalid_manifest),
+                        "--state-root",
+                        str(root / "invalid-state"),
+                        "--quiet-progress",
+                    ]
+                )
+            self.assertEqual(invalid_code, 1)
+            self.assertNotIn("Traceback", invalid_errors.getvalue())
+
     def test_engine_inspect_keeps_packaged_unity_detection_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -90,10 +262,16 @@ class FeatureCliTests(unittest.TestCase):
             (project / "game.rpgproject").write_text("MV", encoding="utf-8")
             (project / "data" / "Actors.json").write_text(
                 json.dumps(
+                    [None, {"name": "Hero", "nickname": "", "profile": ""}]
+                ),
+                encoding="utf-8",
+            )
+            (project / "data" / "Map001.json").write_text(
+                json.dumps(
                     {
-                        "name": "Hero",
+                        "displayName": "",
                         "events": [
-                            {"code": 401, "parameters": ["Hello, {name}!"]}
+                            {"list": [{"code": 401, "parameters": ["Hello, {name}!"]}]}
                         ],
                     }
                 ),
@@ -159,7 +337,7 @@ class FeatureCliTests(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
-            self.assertEqual(localized["name"], "英雄")
+            self.assertEqual(localized[1]["name"], "英雄")
 
     def test_engine_localize_uses_cloud_provider_without_persisting_token(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -231,6 +409,62 @@ class FeatureCliTests(unittest.TestCase):
                 )
             )
             self.assertEqual(localized["gameTitle"], "云端译文")
+
+    def test_engine_localize_uses_local_model_provider_without_dictionary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            (project / "data").mkdir(parents=True)
+            (project / "game.rpgproject").write_text("MV", encoding="utf-8")
+            (project / "data" / "System.json").write_text(
+                json.dumps({"gameTitle": "Demo"}),
+                encoding="utf-8",
+            )
+            provider = unittest.mock.Mock()
+            provider.translate.return_value = TranslationResult(
+                "本地译文",
+                "local-runtime",
+                "test-q4",
+                0.91,
+            )
+            with (
+                patch.object(
+                    cli,
+                    "LocalModelTranslationProvider",
+                    return_value=provider,
+                ) as constructor,
+                redirect_stdout(io.StringIO()),
+            ):
+                code = cli.run_engine(
+                    [
+                        "localize",
+                        "rpg_maker_mv",
+                        str(project),
+                        "--output",
+                        str(root / "output"),
+                        "--local-model-endpoint",
+                        "http://127.0.0.1:8080/translate",
+                        "--local-model-name",
+                        "test-q4",
+                        "--state-root",
+                        str(root / "state"),
+                        "--quiet-progress",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            constructor.assert_called_once_with(
+                "http://127.0.0.1:8080/translate",
+                timeout=120.0,
+                model_name="test-q4",
+            )
+            provider.translate.assert_called_once()
+            localized = json.loads(
+                (root / "output" / "data" / "System.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(localized["gameTitle"], "本地译文")
 
     def test_engine_cli_hanguard_restriction_blocks_extract_without_catalog(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -404,6 +638,35 @@ class FeatureCliTests(unittest.TestCase):
             self.assertEqual(payload["selected_engine"], "renpy")
             self.assertEqual(payload["status"], "detect_only")
             self.assertEqual(payload["capabilities"], ["detect"])
+            self.assertEqual(payload["candidate"]["reasons"], ["packaged_resource_only"])
+
+    def test_engine_inspect_ignores_nested_compiled_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            nested_game = project / ".tmp" / "authorized" / "game"
+            nested_game.mkdir(parents=True)
+            (nested_game / "gui.rpyc").write_bytes(b"compiled fixture")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = cli.run_engine(
+                    [
+                        "inspect",
+                        "auto",
+                        str(project),
+                        "--json",
+                        "--mode",
+                        "player",
+                        "--state-root",
+                        str(root / "state"),
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(code, 2)
+            self.assertEqual(payload["status"], "unknown")
+            self.assertIsNone(payload["selected_engine"])
+            self.assertEqual(payload["reasons"], ["no_supported_project_markers"])
 
     def test_package_command_builds_copy_and_apply_gate_preserves_source(self):
         with tempfile.TemporaryDirectory() as directory:

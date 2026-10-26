@@ -21,12 +21,16 @@ class RenPyAdapter(EngineAdapter):
             )
         if snapshot.has_dir("renpy"):
             evidence.append(DetectionEvidence("renpy_runtime", "renpy", "发现 Ren'Py 运行库", 15))
-        compiled = snapshot.files_with_suffix(".rpyc")
+        compiled = tuple(
+            path for path in snapshot.files_with_suffix(".rpyc") if path.startswith("game/")
+        )
         if compiled:
             evidence.append(
                 DetectionEvidence("renpy_compiled", compiled[0], "发现编译脚本", 10)
             )
-        archives = snapshot.files_with_suffix(".rpa")
+        archives = tuple(
+            path for path in snapshot.files_with_suffix(".rpa") if path.startswith("game/")
+        )
         if archives:
             evidence.append(DetectionEvidence("renpy_archive", archives[0], "发现 RPA 归档", 25))
         if not evidence:

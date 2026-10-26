@@ -308,8 +308,9 @@ class ProcessingTests(unittest.TestCase):
             dictionary.write_text('{"New Game":"新游戏"}', encoding="utf-8")
             os.symlink(loop, loop, target_is_directory=True)
 
-            with self.assertRaisesRegex(TranslationError, "Symlink loop"):
+            with self.assertRaises(TranslationError) as error:
                 process_resource(resource, dictionary, output_path=cyclic_output)
+            self.assertIn(str(loop), str(error.exception))
 
     def test_atomic_write_many_wraps_lstat_errors(self):
         with tempfile.TemporaryDirectory() as directory:

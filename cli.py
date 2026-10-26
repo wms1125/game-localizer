@@ -23,6 +23,7 @@ from game_localizer.hanengine import (
     HanStore,
     PipelineTranslationFailed,
     OfficialValidatorConfig,
+    NwjsRpgMakerValidatorConfig,
     PytesseractOcrProvider,
     RapidOcrProvider,
     ProjectBusyError,
@@ -37,18 +38,31 @@ from game_localizer.hanengine import (
     RoutePlan,
     TranslationRequest,
     TranslationRouter,
+    LocalModelTranslationProvider,
     TaskRetrySpec,
     TaskState,
     TtsRequest,
     WindowsSapiTts,
     ZipPackageModifier,
     ZhipuImageVisualJudge,
+    discover_raster_assets,
+    load_raster_manifest,
     prepare_visual_evidence_manifest,
     renpy_sdk_validator,
     run_renpy_capture_pair,
     run_visual_evidence,
+    verify_raster_manifest,
+    write_raster_manifest,
+    build_quality_report,
+    build_translation_review_queue,
+    compare_unity_catalog,
+    write_comparison_html,
+    write_comparison_report,
+    write_quality_report,
+    write_translation_review_queue,
 )
 from game_localizer.hanengine.multiengine import LocalizationCatalog
+from game_localizer.hanengine.adapter_runtime import AdapterNotDetectedError
 from game_localizer.hanengine.auth import AuthError, UserStore, auth_payload
 from game_localizer.structured_workflow import (
     STRUCTURED_ENGINE_IDS,
@@ -281,8 +295,27 @@ def _add_engine_runtime_options(parser: argparse.ArgumentParser) -> None:
 def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dictionary", help="UTF-8 JSON exact-match translation dictionary")
     parser.add_argument(
+        "--local-model-endpoint",
+        help="HTTP loopback endpoint for a local model runtime",
+    )
+    parser.add_argument(
+        "--local-model-name",
+        default="unknown",
+        help="model label recorded for local translation results",
+    )
+    parser.add_argument(
+        "--local-model-timeout",
+        type=float,
+        default=120.0,
+        help="local model request timeout in seconds",
+    )
+    parser.add_argument(
+        "--reference-report",
+        help="Unity comparison JSON used as per-entry style and terminology reference for the local model",
+    )
+    parser.add_argument(
         "--cloud-endpoint",
-        help="HTTPS translation endpoint used after dictionary misses",
+        help="HTTPS translation endpoint used after earlier providers miss or fail",
     )
     parser.add_argument(
         "--token-env",
@@ -298,6 +331,10 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
         "--translated-catalog",
         help="optional path for the completed translated catalog JSON",
     )
+    parser.add_argument(
+        "--review-queue",
+        help="optional JSON path for entries that need human translation review",
+    )
 
 
 def _translation_router(args) -> TranslationRouter | None:
@@ -308,6 +345,14 @@ def _translation_router(args) -> TranslationRouter | None:
                 load_translation_dictionary(args.dictionary)
             )
         )
+    if args.local_model_endpoint:
+        providers.append(
+            LocalModelTranslationProvider(
+                args.local_model_endpoint,
+                timeout=args.local_model_timeout,
+                model_name=args.local_model_name,
+            )
+        )
     if args.cloud_endpoint:
         providers.append(
             CloudTranslationProvider(
@@ -315,7 +360,51 @@ def _translation_router(args) -> TranslationRouter | None:
                 token_provider=lambda: os.environ.get(args.token_env),
             )
         )
+    if args.reference_report and not args.local_model_endpoint:
+        raise ValueError("--reference-report requires --local-model-endpoint")
     return None if not providers else TranslationRouter(providers)
+
+
+def _load_reference_translations(path: Path, catalog: LocalizationCatalog) -> dict[str, str]:
+    report_path = path.expanduser().resolve(strict=True)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(report, dict)
+        or report.get("schema_version") != "hanengine.translation-comparison/v1"
+    ):
+        raise ValueError("reference report has an unsupported schema")
+    if report.get("engine_id") != catalog.engine_id:
+        raise ValueError("reference report engine does not match the catalog")
+    if report.get("project_fingerprint") != catalog.project_fingerprint:
+        raise ValueError("reference report belongs to a different project snapshot")
+    raw_entries = report.get("entries")
+    if not isinstance(raw_entries, list):
+        raise ValueError("reference report entries must be a list")
+    catalog_entries = {entry.segment_id: entry for entry in catalog.entries}
+    references: dict[str, str] = {}
+    seen_segment_ids: set[str] = set()
+    for item in raw_entries:
+        if not isinstance(item, dict):
+            raise ValueError("reference report entries must be objects")
+        segment_id = item.get("segment_id")
+        if not isinstance(segment_id, str):
+            raise ValueError("reference report entry is missing a segment ID")
+        entry = catalog_entries.get(segment_id)
+        if entry is None:
+            continue
+        if segment_id in seen_segment_ids:
+            raise ValueError(f"reference report contains duplicate segment {segment_id}")
+        seen_segment_ids.add(segment_id)
+        if item.get("source_text") != entry.source_text:
+            raise ValueError(f"reference report source changed for segment {segment_id}")
+        official = item.get("official_zh")
+        if official is not None:
+            if not isinstance(official, str) or not official.strip():
+                raise ValueError(f"reference translation is invalid for segment {segment_id}")
+            references[segment_id] = official
+    if not references:
+        raise ValueError("reference report has no matching official translations")
+    return references
 
 
 def _write_localization_catalog(catalog: LocalizationCatalog, path: Path) -> Path:
@@ -327,6 +416,47 @@ def _write_localization_catalog(catalog: LocalizationCatalog, path: Path) -> Pat
         newline="\n",
     )
     return output
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    return first == second or first in second.parents or second in first.parents
+
+
+def _engine_report_paths(args, project: Path) -> tuple[Path, Path | None]:
+    output_path = Path(args.output).expanduser().resolve(strict=False)
+    quality_path = (
+        Path(args.quality_report).expanduser().resolve(strict=False)
+        if args.quality_report
+        else Path(f"{output_path}.quality.json")
+    )
+    review_path = (
+        Path(args.review_queue).expanduser().resolve(strict=False)
+        if args.review_queue
+        else None
+    )
+    named_paths = [("quality report", quality_path)]
+    if review_path is not None:
+        named_paths.append(("review queue", review_path))
+    translated_catalog = getattr(args, "translated_catalog", None)
+    if translated_catalog:
+        named_paths.append(
+            (
+                "translated catalog",
+                Path(translated_catalog).expanduser().resolve(strict=False),
+            )
+        )
+
+    project_path = project.resolve(strict=True)
+    for label, path in named_paths:
+        if _paths_overlap(path, project_path):
+            raise ValueError(f"{label} must be outside the source project")
+        if _paths_overlap(path, output_path):
+            raise ValueError(f"{label} must be outside the candidate output")
+    for index, (label, path) in enumerate(named_paths):
+        for other_label, other_path in named_paths[index + 1 :]:
+            if _paths_overlap(path, other_path):
+                raise ValueError(f"{label} and {other_label} must not overlap")
+    return quality_path, review_path
 
 
 def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLevel) -> tuple[str, ...]:
@@ -356,6 +486,25 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
     cloud_endpoint = getattr(args, "cloud_endpoint", None)
     if cloud_endpoint:
         arguments.extend(["--cloud-endpoint", cloud_endpoint])
+    local_model_endpoint = getattr(args, "local_model_endpoint", None)
+    if local_model_endpoint:
+        arguments.extend(["--local-model-endpoint", local_model_endpoint])
+    local_model_name = getattr(args, "local_model_name", "unknown")
+    if local_model_name != "unknown":
+        arguments.extend(["--local-model-name", local_model_name])
+    local_model_timeout = getattr(args, "local_model_timeout", 120.0)
+    if local_model_timeout != 120.0:
+        arguments.extend(["--local-model-timeout", str(local_model_timeout)])
+    reference_report = getattr(args, "reference_report", None)
+    if reference_report:
+        arguments.extend(
+            [
+                "--reference-report",
+                str(Path(reference_report).expanduser().resolve(strict=True)),
+            ]
+        )
+    if getattr(args, "no_resume", False):
+        arguments.append("--no-resume")
     token_env = getattr(args, "token_env", "HANENGINE_TRANSLATION_TOKEN")
     if token_env != "HANENGINE_TRANSLATION_TOKEN":
         arguments.extend(["--token-env", token_env])
@@ -371,6 +520,26 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
                 ),
             ]
         )
+    review_queue = getattr(args, "review_queue", None)
+    if review_queue:
+        arguments.extend(
+            [
+                "--review-queue",
+                str(Path(review_queue).expanduser().resolve(strict=False)),
+            ]
+        )
+    raster_manifest = getattr(args, "raster_manifest", None)
+    if raster_manifest:
+        arguments.extend(
+            [
+                "--raster-manifest",
+                str(Path(raster_manifest).expanduser().resolve(strict=True)),
+            ]
+        )
+    for font in getattr(args, "font", ()):
+        arguments.extend(
+            ["--font", str(Path(font).expanduser().resolve(strict=True))]
+        )
     arguments.extend(
         [
             "--state-root",
@@ -382,6 +551,45 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
         ]
     )
     return tuple(arguments)
+
+
+def _write_engine_quality_report(
+    *,
+    args,
+    project: Path,
+    catalog: LocalizationCatalog,
+    extract_result=None,
+    translation=None,
+    build_outcome=None,
+    validation_result=None,
+    partial_segments=(),
+    translation_failure=None,
+) -> Path:
+    quality_path, queue_path = _engine_report_paths(args, project)
+    report = build_quality_report(
+        catalog=catalog,
+        engine_id=catalog.engine_id,
+        source_language=catalog.source_language,
+        target_language=catalog.language,
+        extract_result=extract_result,
+        translation=translation,
+        build_outcome=build_outcome,
+        validation_result=validation_result,
+        partial_segments=partial_segments,
+        translation_failure=translation_failure,
+    )
+    write_quality_report(report, quality_path)
+    print(f"Quality report: {quality_path} (status={report['status']})")
+    if queue_path is not None:
+        queue = build_translation_review_queue(
+            catalog,
+            translation=translation,
+            partial_segments=partial_segments,
+            translation_failure=translation_failure,
+        )
+        write_translation_review_queue(queue, queue_path)
+        print(f"Translation review queue: {queue_path} (items={queue['count']})")
+    return quality_path
 
 
 def run_engine(
@@ -414,8 +622,35 @@ def run_engine(
     build.add_argument("project")
     build.add_argument("catalog")
     build.add_argument("--output", required=True)
+    build.add_argument(
+        "--raster-manifest",
+        help="approved image/video localization manifest to merge into the candidate",
+    )
+    build.add_argument(
+        "--font",
+        action="append",
+        default=[],
+        help="font to package using the detected engine's native configuration",
+    )
+    build.add_argument(
+        "--quality-report",
+        help="portable quality report path; defaults to <output>.quality.json",
+    )
     _add_pipeline_translation_options(build)
     _add_engine_runtime_options(build)
+    compare = commands.add_parser(
+        "compare",
+        help="compare packaged Simplified Chinese with a translated catalog",
+    )
+    compare.add_argument("engine", choices=("unity",))
+    compare.add_argument("project", help="source Unity project containing the official Chinese bundle")
+    compare.add_argument("catalog", help="translated localization catalog JSON")
+    compare.add_argument(
+        "--official-bundle",
+        help="optional original Simplified Chinese bundle; useful when the installed bundle was already replaced",
+    )
+    compare.add_argument("--output", required=True, help="JSON comparison report path")
+    compare.add_argument("--html-output", help="optional filterable HTML comparison report path")
     localize = commands.add_parser(
         "localize",
         help="extract, translate, validate, build and verify in one resumable pipeline",
@@ -425,13 +660,58 @@ def run_engine(
     localize.add_argument("--output", required=True)
     localize.add_argument("--language", default="zh-CN")
     localize.add_argument("--source-language", default="en")
+    localize.add_argument(
+        "--raster-manifest",
+        help="approved image/video localization manifest to merge into the candidate",
+    )
+    localize.add_argument(
+        "--font",
+        action="append",
+        default=[],
+        help="font to package using the detected engine's native configuration",
+    )
+    localize.add_argument(
+        "--quality-report",
+        help="portable quality report path; defaults to <output>.quality.json",
+    )
     _add_pipeline_translation_options(localize)
     _add_engine_runtime_options(localize)
     args = _parse_args(parser, argv)
     if isinstance(args, int):
         return args
+    if args.command == "compare":
+        try:
+            project = Path(args.project).expanduser().resolve(strict=True)
+            catalog = LocalizationCatalog.from_dict(
+                json.loads(
+                    Path(args.catalog).expanduser().resolve(strict=True).read_text(encoding="utf-8")
+                )
+            )
+            report = compare_unity_catalog(
+                project,
+                catalog,
+                official_bundle=(
+                    Path(args.official_bundle) if args.official_bundle else None
+                ),
+            )
+            output = write_comparison_report(report, Path(args.output))
+            print(
+                f"Comparison report: {output} "
+                f"(entries={report['summary']['entry_count']}, "
+                f"differences={report['summary']['difference_count']}, "
+                f"errors={report['summary']['error_count']})"
+            )
+            if args.html_output:
+                html_output = write_comparison_html(report, Path(args.html_output))
+                print(f"Comparison HTML: {html_output}")
+            return 0
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     try:
         project = Path(args.project).expanduser().resolve(strict=True)
+        if args.command in {"build", "localize"}:
+            _engine_report_paths(args, project)
         mode = DeclaredMode(args.mode)
         risk = (
             RiskLevel[args.risk_level]
@@ -459,6 +739,12 @@ def run_engine(
                 capability_matrix = adapter.metadata.capability_matrix.for_detection(
                     detection.capabilities
                 ).to_dict()
+                detection_reasons = []
+                if (
+                    capabilities == ["detect"]
+                    and detection.evidence
+                ):
+                    detection_reasons.append("packaged_resource_only")
                 required = {"extract", "validate", "build", "verify"}
                 localize_ready = required.issubset(set(capabilities)) and required.issubset(set(allowed))
                 payload = {
@@ -471,6 +757,7 @@ def run_engine(
                         "capability": capabilities,
                         "maturity": detection.maturity.value,
                         "limitations": list(detection.limitations),
+                        "reasons": detection_reasons,
                         "evidence": [
                             {
                                 "code": item.code,
@@ -545,11 +832,14 @@ def run_engine(
                 )
                 return 0
 
+            extracted = None
+            translation = None
             if args.command == "localize":
                 router = _translation_router(args)
                 if router is None:
                     raise ValueError(
-                        "localize requires --dictionary and/or --cloud-endpoint"
+                        "localize requires --dictionary, --local-model-endpoint, "
+                        "and/or --cloud-endpoint"
                     )
                 extracted = workflow.extract()
                 catalog = extracted.catalog
@@ -564,11 +854,17 @@ def run_engine(
                 raise ValueError("catalog engine does not match the requested engine")
 
             if router is not None:
+                reference_translations = (
+                    _load_reference_translations(Path(args.reference_report), catalog)
+                    if args.reference_report
+                    else None
+                )
                 translation = workflow.translate(
                     catalog,
                     router,
                     resume=not args.no_resume,
                     retry_spec=retry_spec,
+                    reference_translations=reference_translations,
                 )
                 catalog = translation.catalog
                 print(
@@ -585,7 +881,46 @@ def run_engine(
                         Path(args.translated_catalog),
                     )
                     print(f"Translated catalog: {translated_path}")
-            outcome = workflow.build(catalog, Path(args.output))
+                if args.command == "localize" and translation.untranslated_count:
+                    _write_engine_quality_report(
+                        args=args,
+                        project=project,
+                        catalog=catalog,
+                        extract_result=None if extracted is None else extracted.execution.result,
+                        translation=translation,
+                    )
+                    print(
+                        "Error: translation incomplete; "
+                        f"{translation.untranslated_count} segment(s) need review before build",
+                        file=sys.stderr,
+                    )
+                    return 1
+            output_options = {}
+            if args.raster_manifest:
+                output_options["raster_manifest"] = str(
+                    Path(args.raster_manifest).expanduser().resolve(strict=True)
+                )
+            configured_fonts = [
+                str(Path(path).expanduser().resolve(strict=True))
+                for path in args.font
+            ]
+            if configured_fonts:
+                selected_engine = catalog.engine_id
+                if selected_engine == "renpy":
+                    output_options["renpy_font_paths"] = configured_fonts
+                elif selected_engine == "godot":
+                    output_options["godot_font_paths"] = configured_fonts
+                elif selected_engine in {"rpg_maker_mv", "rpg_maker_mz"}:
+                    output_options["rpg_maker_font_paths"] = configured_fonts
+                else:
+                    raise ValueError(
+                        f"--font is not supported for detected engine {selected_engine}"
+                    )
+            outcome = workflow.build(
+                catalog,
+                Path(args.output),
+                output_options=output_options,
+            )
             build_result = outcome.build_result
             print(
                 f"Built {build_result.statistics.get('segments', 0)} entries in {args.output} "
@@ -595,17 +930,73 @@ def run_engine(
                 f"Verified {len(build_result.manifest)} files "
                 f"(task={outcome.verification.task.task_id})"
             )
+            for warning in build_result.warnings:
+                print(f"Warning: {warning}", file=sys.stderr)
+            _write_engine_quality_report(
+                args=args,
+                project=project,
+                catalog=catalog,
+                extract_result=None if extracted is None else extracted.execution.result,
+                translation=translation,
+                build_outcome=outcome,
+            )
             return 0
+    except AdapterNotDetectedError as exc:
+        if args.command != "inspect":
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        payload = {
+            "status": "unknown",
+            "selected_engine": None,
+            "candidates": [],
+            "reasons": list(exc.reasons),
+            "allowed_operations": ["detect"],
+            "hanguard": exc.provisional_route.to_dict(),
+            "task_id": exc.task.task_id,
+            "state_root": str(state_root),
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+        else:
+            print("Engine: -")
+            print(f"Status: {payload['status']}")
+            print(f"Reason: {', '.join(exc.reasons) or 'no_supported_project_markers'}")
+        return 2
     except PipelineTranslationFailed as exc:
+        failed_catalog = exc.partial_catalog or catalog
+        failure = {
+            "code": exc.failure_code or "translation_failed",
+            "message": exc.failure_message or "translation task did not complete",
+            "segment_id": exc.failure_segment_id,
+            "task_id": exc.task.task_id,
+            "retry_count": exc.failure_retry_count,
+        }
+        _write_engine_quality_report(
+            args=args,
+            project=project,
+            catalog=failed_catalog,
+            extract_result=None if extracted is None else extracted.execution.result,
+            partial_segments=exc.partial_segments,
+            translation_failure=failure,
+        )
         print(
             "Error: translation task failed after "
             f"{exc.translated_count} new and {exc.resumed_count} resumed segments "
-            f"(task={exc.task.task_id}); rerun to continue",
+            f"(task={exc.task.task_id}; code={failure['code']}; "
+            f"retries={failure['retry_count']}); rerun to continue",
             file=sys.stderr,
         )
         return 1
     except StructuredValidationFailed as exc:
         result = exc.execution.result
+        _write_engine_quality_report(
+            args=args,
+            project=project,
+            catalog=catalog,
+            extract_result=None if extracted is None else extracted.execution.result,
+            translation=translation,
+            validation_result=result,
+        )
         codes = ", ".join(issue.code for issue in result.issues)
         print(f"Error: validation failed: {codes}", file=sys.stderr)
         return 1
@@ -635,6 +1026,10 @@ def run_project(argv: list[str]) -> int:
     validate.add_argument("project")
     validate.add_argument("--output", required=True)
     validate.add_argument("--dictionary", required=True)
+    validate.add_argument(
+        "--reviewed-catalog",
+        help="translated catalog whose segment-specific targets are matched to a fresh extraction",
+    )
     validate.add_argument("--state-root", required=True)
     validate.add_argument("--record", required=True)
     validate.add_argument("--record-id", required=True)
@@ -648,6 +1043,10 @@ def run_project(argv: list[str]) -> int:
     validate.add_argument("--language", default="zh-CN")
     validate.add_argument("--source-language", default="en")
     validate.add_argument("--font", action="append", default=[])
+    validate.add_argument(
+        "--raster-manifest",
+        help="approved image/video localization manifest to merge and verify",
+    )
     validate.add_argument(
         "--font-probe-text",
         action="append",
@@ -663,6 +1062,15 @@ def run_project(argv: list[str]) -> int:
         "--renpy-sdk",
         help="Ren'Py launcher executable, invoked as <launcher> {output} compile",
     )
+    validator.add_argument(
+        "--nwjs",
+        help="NW.js executable used to smoke-test RPG Maker startup and optionally approved videos",
+    )
+    validate.add_argument(
+        "--nwjs-evidence",
+        help="new directory where candidate-bound NW.js runtime evidence is written",
+    )
+    validate.add_argument("--nwjs-timeout", type=int, default=180)
     validate.add_argument(
         "--validator-arg",
         action="append",
@@ -684,6 +1092,15 @@ def run_project(argv: list[str]) -> int:
             raise ValueError("project validate requires explicit --authorized confirmation")
         if args.validator_arg and not args.validator:
             raise ValueError("--validator-arg requires --validator")
+        if args.nwjs_evidence and not args.nwjs:
+            raise ValueError("--nwjs-evidence requires --nwjs")
+        if args.nwjs:
+            if args.engine not in {"auto", "rpg_maker_mv", "rpg_maker_mz"}:
+                raise ValueError("--nwjs is only valid for an RPG Maker MV or MZ project")
+            if not args.nwjs_evidence:
+                raise ValueError("--nwjs requires --nwjs-evidence")
+            if args.runtime_smoke != "not_run" or args.runtime_smoke_reference:
+                raise ValueError("--nwjs provides the runtime smoke result")
         if args.renpy_sdk:
             if args.engine not in {"auto", "renpy"}:
                 raise ValueError("--renpy-sdk is only valid for a Ren'Py project")
@@ -699,6 +1116,15 @@ def run_project(argv: list[str]) -> int:
             )
         else:
             official_validator = None
+        nwjs_validator = (
+            NwjsRpgMakerValidatorConfig(
+                executable=Path(args.nwjs),
+                evidence_root=Path(args.nwjs_evidence),
+                timeout_seconds=args.nwjs_timeout,
+            )
+            if args.nwjs
+            else None
+        )
         request = ProjectValidationRequest(
             record_id=args.record_id,
             project_label=args.project_label,
@@ -707,6 +1133,9 @@ def run_project(argv: list[str]) -> int:
             engine_id=args.engine,
             output_root=Path(args.output),
             dictionary_path=Path(args.dictionary),
+            reviewed_catalog_path=(
+                Path(args.reviewed_catalog) if args.reviewed_catalog else None
+            ),
             state_root=Path(args.state_root),
             record_path=Path(args.record),
             target_language=args.language,
@@ -716,11 +1145,83 @@ def run_project(argv: list[str]) -> int:
             official_validator=official_validator,
             runtime_smoke=args.runtime_smoke,
             runtime_smoke_reference=args.runtime_smoke_reference,
+            raster_manifest_path=(
+                Path(args.raster_manifest) if args.raster_manifest else None
+            ),
+            nwjs_validator=nwjs_validator,
         )
         record = ProjectValidationRunner().run(request)
         print(f"Validation conclusion: {record.conclusion}")
         print(f"Record: {request.record_path}")
         return 1 if record.conclusion == "failed" else 0
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def run_raster(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Prepare and verify image/video localization manifests without modifying source assets."
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    prepare = commands.add_parser(
+        "prepare",
+        help="inventory supported images and videos for OCR, translation, redraw and review",
+    )
+    prepare.add_argument("project")
+    prepare.add_argument("--output", required=True)
+    prepare.add_argument("--language", default="zh-CN")
+    prepare.add_argument("--source-language", default="en")
+    verify = commands.add_parser(
+        "verify",
+        help="verify source, localized artifacts, approval state and candidate hashes",
+    )
+    verify.add_argument("project")
+    verify.add_argument("manifest")
+    verify.add_argument("--candidate", required=True)
+    verify.add_argument("--output", help="optional JSON verification report path")
+    args = _parse_args(parser, argv)
+    if isinstance(args, int):
+        return args
+    try:
+        project = Path(args.project).expanduser().resolve(strict=True)
+        if args.command == "prepare":
+            output_path = Path(args.output).expanduser().resolve(strict=False)
+            if output_path == project or project in output_path.parents:
+                raise ValueError("raster manifest output must be outside the source project")
+            manifest = discover_raster_assets(
+                project,
+                source_language=args.source_language,
+                target_language=args.language,
+            )
+            output = write_raster_manifest(manifest, output_path)
+            print(
+                f"Prepared {len(manifest.assets)} raster assets for manual review: {output}"
+            )
+            return 0
+
+        manifest_path = Path(args.manifest).expanduser().resolve(strict=True)
+        manifest = load_raster_manifest(manifest_path)
+        candidate = Path(args.candidate).expanduser().resolve(strict=True)
+        report = verify_raster_manifest(
+            project,
+            candidate,
+            manifest,
+            manifest_root=manifest_path.parent,
+        )
+        payload = json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True, indent=2)
+        if args.output:
+            report_path = Path(args.output).expanduser().resolve(strict=False)
+            if report_path == project or project in report_path.parents:
+                raise ValueError("raster verification report must be outside the source project")
+            if report_path == candidate or candidate in report_path.parents:
+                raise ValueError("raster verification report must be outside the candidate project")
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(payload + "\n", encoding="utf-8", newline="\n")
+            print(f"Raster verification report: {report_path}")
+        else:
+            print(payload)
+        return 0 if report.passed else 1
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -1239,6 +1740,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_engine(arguments[1:])
     if arguments and arguments[0] == "project":
         return run_project(arguments[1:])
+    if arguments and arguments[0] == "raster":
+        return run_raster(arguments[1:])
     if arguments and arguments[0] == "visual":
         return run_visual(arguments[1:])
     if arguments and arguments[0] == "tasks":

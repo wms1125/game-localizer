@@ -104,6 +104,19 @@ class DetectorTests(unittest.TestCase):
             }
         self.assertEqual(after, before)
 
+    def test_nested_compiled_renpy_resource_does_not_make_directory_a_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "tests" / "fixtures" / "game"
+            nested.mkdir(parents=True)
+            (nested / "gui.rpyc").write_bytes(b"compiled fixture")
+
+            report = detect_project(root)
+
+            self.assertEqual(report.status, DetectionStatus.UNKNOWN)
+            self.assertIsNone(report.selected_engine)
+            self.assertEqual(report.candidates, ())
+
     @staticmethod
     def empty_snapshot() -> ProjectSnapshot:
         return ProjectSnapshot(

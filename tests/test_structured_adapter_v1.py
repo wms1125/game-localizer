@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -34,7 +35,19 @@ from game_localizer.adapters.contract import (
     VerifyResult,
 )
 from game_localizer.hanengine.routing import RiskLevel
-from game_localizer.hanengine.segments import Segment
+from game_localizer.hanengine.godot import run_godot_style_hard_gate
+from game_localizer.hanengine.rpg_maker import run_rpg_maker_style_hard_gate
+from game_localizer.hanengine.raster import (
+    RASTER_MANIFEST_SCHEMA_VERSION,
+    RasterAsset,
+    RasterAssetKind,
+    RasterManifest,
+    RasterSegmentStatus,
+    RasterTextSegment,
+    RasterTextStyle,
+    write_raster_manifest,
+)
+from game_localizer.hanengine.segments import ScreenRegion, Segment
 from game_localizer.hanengine.tasks import TaskContext, TaskControl
 from tests.adapter_contract_v1 import AdapterV1ContractMixin, snapshot_tree
 
@@ -121,10 +134,16 @@ class StructuredPipelineTests(unittest.TestCase):
         source_file = data / "Actors.json"
         source_file.write_text(
             json.dumps(
+                [None, {"name": "Hero", "nickname": "", "profile": ""}]
+            ),
+            encoding="utf-8",
+        )
+        (data / "Map001.json").write_text(
+            json.dumps(
                 {
-                    "name": "Hero",
+                    "displayName": "",
                     "events": [
-                        {"code": 401, "parameters": ["Hello, {name}!"]},
+                        {"list": [{"code": 401, "parameters": ["Hello, {name}!"]}]},
                     ],
                 }
             ),
@@ -194,11 +213,14 @@ class StructuredPipelineTests(unittest.TestCase):
         )
         self.assertIsInstance(built, BuildResult)
         self.assertEqual(snapshot_tree(source), before_source)
-        self.assertEqual(built.modified_files, ("data/Actors.json",))
+        self.assertEqual(built.modified_files, ("data/Actors.json", "data/Map001.json"))
         localized = json.loads((staging / "data" / "Actors.json").read_text(encoding="utf-8"))
-        self.assertEqual(localized["name"], "英雄")
-        self.assertEqual(localized["events"][0]["parameters"][0], "你好，{name}!")
-        self.assertEqual(json.loads(source_file.read_text(encoding="utf-8"))["name"], "Hero")
+        localized_map = json.loads(
+            (staging / "data" / "Map001.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(localized[1]["name"], "英雄")
+        self.assertEqual(localized_map["events"][0]["list"][0]["parameters"][0], "你好，{name}!")
+        self.assertEqual(json.loads(source_file.read_text(encoding="utf-8"))[1]["name"], "Hero")
 
         verified = adapter.verify(
             VerifyRequest(
@@ -227,6 +249,98 @@ class StructuredPipelineTests(unittest.TestCase):
         self.assertIsInstance(rollback, AdapterError)
         self.assertIs(rollback.code, AdapterErrorCode.UNSUPPORTED_INPUT)
         self.assertIs(rollback.operation, Operation.ROLLBACK)
+
+    def test_rpg_maker_build_merges_approved_raster_asset_into_candidate_manifest(self):
+        source, _ = self._make_mv_project()
+        (source / "img").mkdir()
+        (source / "fonts").mkdir()
+        (source / "fonts" / "gamefont.css").write_text(
+            "@font-face { font-family: GameFont; src: url(\"mplus.ttf\"); }\n",
+            encoding="utf-8",
+        )
+        (source / "fonts" / "mplus.ttf").write_bytes(b"source-font")
+        source_raster = source / "img" / "title.png"
+        source_raster.write_bytes(b"source-title")
+        source_before = snapshot_tree(source)
+        cjk_font = self.root / "SourceHanSans.ttf"
+        cjk_font.write_bytes(b"localized-font")
+        artifact_root = self.root / "raster"
+        artifact_root.mkdir()
+        localized_raster = artifact_root / "title.zh.png"
+        localized_raster.write_bytes(b"localized-title-zh")
+        manifest = RasterManifest(
+            RASTER_MANIFEST_SCHEMA_VERSION,
+            "en",
+            "zh-CN",
+            (
+                RasterAsset(
+                    "img/title.png",
+                    RasterAssetKind.IMAGE,
+                    hashlib.sha256(source_raster.read_bytes()).hexdigest(),
+                    "title.zh.png",
+                    hashlib.sha256(localized_raster.read_bytes()).hexdigest(),
+                    (
+                        RasterTextSegment(
+                            "title-raster-text",
+                            "img/title.png",
+                            RasterAssetKind.IMAGE,
+                            "HELLO UNDERWORLD",
+                            "你好，地下世界",
+                            ScreenRegion(20, 30, 320, 64),
+                            None,
+                            None,
+                            0.98,
+                            RasterTextStyle(
+                                font_family="Source Han Sans",
+                                font_size_px=30,
+                                fill_color="#ffffff",
+                                stroke_color="#000000",
+                                stroke_width_px=2,
+                            ),
+                            RasterSegmentStatus.APPROVED,
+                            None,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        manifest_path = write_raster_manifest(manifest, artifact_root / "manifest.json")
+        extracted = self._extract_mv(source)
+        _, translated = self._segments(extracted)
+        output = self.root / "raster-output"
+        adapter = RpgMakerMVAdapterV1()
+
+        built = adapter.build(
+            BuildRequest(
+                source,
+                output,
+                translated,
+                extracted.source_tree_fingerprint,
+                {
+                    "raster_manifest": str(manifest_path),
+                    "rpg_maker_font_paths": [str(cjk_font)],
+                },
+                make_context("build"),
+            )
+        )
+
+        self.assertIsInstance(built, BuildResult)
+        self.assertIn("img/title.png", built.modified_files)
+        self.assertIn("data/Actors.json", built.modified_files)
+        self.assertIn("fonts/SourceHanSans.ttf", built.added_files)
+        self.assertEqual((output / "img" / "title.png").read_bytes(), b"localized-title-zh")
+        self.assertEqual(snapshot_tree(source), source_before)
+        verified = adapter.verify(
+            VerifyRequest(
+                extracted.source_tree_fingerprint,
+                output,
+                built.manifest,
+                "full",
+                make_context("verify"),
+            )
+        )
+        self.assertIsInstance(verified, VerifyResult)
+        self.assertTrue(verified.passed)
 
     def test_validation_blocks_placeholder_and_source_metadata_changes(self):
         source, _ = self._make_mv_project()
@@ -259,6 +373,83 @@ class StructuredPipelineTests(unittest.TestCase):
                 {issue.code for issue in result.issues}
             )
         )
+
+    def test_rpg_maker_validation_distinguishes_visible_text_from_control_codes(self):
+        source, _ = self._make_mv_project()
+        map_path = source / "data" / "Map001.json"
+        document = json.loads(map_path.read_text(encoding="utf-8"))
+        document["events"][0]["list"].extend(
+            [
+                {"code": 401, "parameters": ["[Hades]"]},
+                {"code": 401, "parameters": [r"Over \{TWELVE HOURS\}."]},
+                {"code": 401, "parameters": [r"Score: \v[1]"]},
+            ]
+        )
+        map_path.write_text(json.dumps(document), encoding="utf-8")
+        extracted = self._extract_mv(source)
+        originals = tuple(
+            Segment.from_draft("project-mv", "zh-CN", draft) for draft in extracted.segments
+        )
+        translations = {
+            "Hero": "英雄",
+            "Hello, {name}!": "你好，{name}!",
+            "[Hades]": "[哈迪斯]",
+            r"Over \{TWELVE HOURS\}.": r"已经\{十二个小时\}了。",
+            r"Score: \v[1]": r"分数：\v[1]",
+        }
+        translated = tuple(
+            replace(
+                segment,
+                target_text=translations[segment.source_text],
+                translation_source="test",
+            )
+            for segment in originals
+        )
+        adapter = RpgMakerMVAdapterV1()
+
+        valid = adapter.validate(
+            ValidationRequest(
+                extracted.source_tree_fingerprint,
+                originals,
+                translated,
+                "utf-8",
+                {},
+                make_context("validate"),
+            )
+        )
+        self.assertIsInstance(valid, ValidationResult)
+        self.assertTrue(valid.valid)
+        built = adapter.build(
+            BuildRequest(
+                source,
+                self.root / "rpg-maker-control-output",
+                translated,
+                extracted.source_tree_fingerprint,
+                {},
+                make_context("build"),
+            )
+        )
+        self.assertIsInstance(built, BuildResult)
+
+        broken = tuple(
+            replace(segment, target_text="分数：1")
+            if segment.source_text == r"Score: \v[1]"
+            else segment
+            for segment in translated
+        )
+        invalid = adapter.validate(
+            ValidationRequest(
+                extracted.source_tree_fingerprint,
+                originals,
+                broken,
+                "utf-8",
+                {},
+                make_context("validate"),
+            )
+        )
+        self.assertIsInstance(invalid, ValidationResult)
+        self.assertFalse(invalid.valid)
+        self.assertIn("placeholder_mismatch", {issue.code for issue in invalid.issues})
 
     def test_validation_warns_when_english_natural_language_is_left_unchanged(self):
         source, _ = self._make_mv_project()
@@ -355,6 +546,41 @@ class StructuredPipelineTests(unittest.TestCase):
                 self.assertIs(result.maturity, AdapterMaturity.DETECT_ONLY)
                 self.assertEqual(result.capabilities, frozenset({AdapterCapability.DETECT}))
 
+    def test_unity_packaged_tsv_resources_are_build_ready(self):
+        root = self.root / "repo"
+        default = root / "REPO_Data" / "StreamingAssets" / "Localizations" / "Default"
+        default.mkdir(parents=True)
+        (root / "UnityPlayer.dll").write_bytes(b"fixture")
+        (default / "Game.tsv").write_text("GAME.START\tStart\n", encoding="utf-8")
+        (default / "HUD.tsv").write_text("HUD.OK\tOK\n", encoding="utf-8")
+        (default / "Menu.tsv").write_text("MAIN.SETTINGS\tSettings\n", encoding="utf-8")
+
+        result = UnityAdapterV1().detect(
+            DetectionRequest(
+                root,
+                DeclaredMode.PLAYER,
+                "project-repo-tsv",
+                RiskLevel.H0_PROJECT,
+                frozenset({Operation.DETECT}),
+                make_context("detect"),
+            )
+        )
+
+        self.assertTrue(result.matched)
+        self.assertIs(result.maturity, AdapterMaturity.BUILD_READY)
+        self.assertEqual(
+            result.capabilities,
+            frozenset(
+                {
+                    AdapterCapability.DETECT,
+                    AdapterCapability.EXTRACT,
+                    AdapterCapability.VALIDATE,
+                    AdapterCapability.BUILD,
+                    AdapterCapability.VERIFY,
+                }
+            ),
+        )
+
     def test_each_adapter_extracts_its_plaintext_format(self):
         fixtures = []
 
@@ -409,6 +635,249 @@ class StructuredPipelineTests(unittest.TestCase):
                 self.assertIsInstance(result, ExtractResult)
                 self.assertIn(expected, {segment.source_text for segment in result.segments})
                 self.assertEqual(snapshot_tree(source), before)
+
+    def test_godot_style_build_packages_font_and_preserves_source_typography(self):
+        source = self.root / "godot-style-project"
+        (source / "translations").mkdir(parents=True)
+        (source / "ui").mkdir()
+        (source / "project.godot").write_text(
+            'config_version=5\n\n[gui]\n\ntheme/custom="res://ui/game.theme"\n',
+            encoding="utf-8",
+        )
+        theme_bytes = b"source-theme-style"
+        (source / "ui" / "game.theme").write_bytes(theme_bytes)
+        scene_text = '[gd_scene format=3]\n[node name="Title" type="Label"]\ntheme_override_font_sizes/font_size = 18\n'
+        (source / "ui" / "title.tscn").write_text(scene_text, encoding="utf-8")
+        (source / "translations" / "game.csv").write_text(
+            "keys,en\nStart,Start\n", encoding="utf-8"
+        )
+        font = self.root / "PixelCJK.ttf"
+        font.write_bytes(b"font-fixture")
+        adapter = GodotAdapterV1()
+        working = self.root / "godot-style-working"
+        working.mkdir()
+        extracted = adapter.extract(
+            ExtractRequest(source, working, (), (), "godot-style", make_context("extract"))
+        )
+        self.assertIsInstance(extracted, ExtractResult)
+        originals = tuple(
+            Segment.from_draft("godot-style", "zh-CN", draft)
+            for draft in extracted.segments
+        )
+        translated = tuple(
+            replace(segment, target_text="\u5f00\u59cb", translation_source="test")
+            for segment in originals
+        )
+        output = self.root / "godot-style-output"
+
+        built = adapter.build(
+            BuildRequest(
+                source,
+                output,
+                translated,
+                extracted.source_tree_fingerprint,
+                {"godot_font_paths": [str(font)]},
+                make_context("build"),
+            )
+        )
+
+        self.assertIsInstance(built, BuildResult)
+        self.assertIn("hanengine/fonts/PixelCJK.ttf", built.added_files)
+        self.assertIn("hanengine/locale_style.gd", built.added_files)
+        self.assertIn("project.godot", built.modified_files)
+        self.assertEqual((output / "ui" / "game.theme").read_bytes(), theme_bytes)
+        self.assertEqual((output / "ui" / "title.tscn").read_text(encoding="utf-8"), scene_text)
+        style_script = (output / "hanengine" / "locale_style.gd").read_text(encoding="utf-8")
+        self.assertIn("project_theme.default_font = cjk_font", style_script)
+        self.assertNotIn("font_size", style_script)
+        self.assertNotIn("font_color", style_script)
+
+        gate = run_godot_style_hard_gate(source, output, (font,))
+        self.assertTrue(gate.passed)
+        verified = adapter.verify(
+            VerifyRequest(
+                extracted.source_tree_fingerprint,
+                output,
+                built.manifest,
+                "full",
+                make_context("verify"),
+            )
+        )
+        self.assertIsInstance(verified, VerifyResult)
+        self.assertTrue(verified.passed)
+
+        (output / "hanengine" / "locale_style.gd").write_text(
+            style_script + "\n# default_font_size\n", encoding="utf-8"
+        )
+        blocked = run_godot_style_hard_gate(source, output, (font,))
+        self.assertFalse(blocked.passed)
+        self.assertIn("godot_font_size_preserved", blocked.failed_codes)
+
+    def test_rpg_maker_mv_style_build_packages_font_and_preserves_source_typography(self):
+        source = self.root / "rpg-mv-style-project"
+        (source / "data").mkdir(parents=True)
+        (source / "fonts").mkdir()
+        (source / "js" / "plugins").mkdir(parents=True)
+        (source / "img" / "system").mkdir(parents=True)
+        (source / "game.rpgproject").write_text("RPGMV 1.5.2", encoding="utf-8")
+        (source / "data" / "Actors.json").write_text(
+            json.dumps([None, {"name": "Hero", "nickname": "", "profile": ""}]),
+            encoding="utf-8",
+        )
+        source_css = (
+            "@font-face {\n"
+            "    font-family: GameFont;\n"
+            '    src: url("mplus-1m-regular.ttf");\n'
+            "}\n"
+        )
+        (source / "fonts" / "gamefont.css").write_text(source_css, encoding="utf-8")
+        (source / "fonts" / "mplus-1m-regular.ttf").write_bytes(b"source-font")
+        source_script = "Window_Base.prototype.standardFontSize = function() { return 28; };\n"
+        (source / "js" / "rpg_windows.js").write_text(source_script, encoding="utf-8")
+        (source / "js" / "plugins" / "style.js").write_text(
+            "// source style plugin\n", encoding="utf-8"
+        )
+        (source / "img" / "system" / "Window.png").write_bytes(b"source-window-skin")
+        font = self.root / "SourceHanSans.ttf"
+        font.write_bytes(b"cjk-font")
+        adapter = RpgMakerMVAdapterV1()
+        working = self.root / "rpg-mv-style-working"
+        working.mkdir()
+        extracted = adapter.extract(
+            ExtractRequest(source, working, (), (), "rpg-mv-style", make_context("extract"))
+        )
+        self.assertIsInstance(extracted, ExtractResult)
+        translated = tuple(
+            replace(
+                Segment.from_draft("rpg-mv-style", "zh-CN", draft),
+                target_text="\u82f1\u96c4",
+                translation_source="test",
+            )
+            for draft in extracted.segments
+        )
+        output = self.root / "rpg-mv-style-output"
+
+        built = adapter.build(
+            BuildRequest(
+                source,
+                output,
+                translated,
+                extracted.source_tree_fingerprint,
+                {"rpg_maker_font_paths": [str(font)]},
+                make_context("build"),
+            )
+        )
+
+        self.assertIsInstance(built, BuildResult)
+        self.assertIn("fonts/SourceHanSans.ttf", built.added_files)
+        self.assertIn("fonts/gamefont.css", built.modified_files)
+        self.assertEqual((source / "fonts" / "gamefont.css").read_text(encoding="utf-8"), source_css)
+        candidate_css = (output / "fonts" / "gamefont.css").read_text(encoding="utf-8")
+        self.assertIn('src: url("SourceHanSans.ttf")', candidate_css)
+        self.assertNotIn("font-size", candidate_css)
+        self.assertEqual((output / "js" / "rpg_windows.js").read_text(encoding="utf-8"), source_script)
+        gate = run_rpg_maker_style_hard_gate(
+            source, output, "rpg_maker_mv", (font,)
+        )
+        self.assertTrue(gate.passed)
+        verified = adapter.verify(
+            VerifyRequest(
+                extracted.source_tree_fingerprint,
+                output,
+                built.manifest,
+                "full",
+                make_context("verify"),
+            )
+        )
+        self.assertIsInstance(verified, VerifyResult)
+        self.assertTrue(verified.passed)
+
+        (output / "js" / "rpg_windows.js").write_text(
+            source_script + "// font size override\n", encoding="utf-8"
+        )
+        blocked = run_rpg_maker_style_hard_gate(
+            source, output, "rpg_maker_mv", (font,)
+        )
+        self.assertFalse(blocked.passed)
+        self.assertIn("rpg_maker_typography_scripts_preserved", blocked.failed_codes)
+
+    def test_rpg_maker_mz_style_build_updates_native_main_font_setting(self):
+        source = self.root / "rpg-mz-style-project"
+        (source / "data").mkdir(parents=True)
+        (source / "fonts").mkdir()
+        (source / "js").mkdir()
+        (source / "img" / "system").mkdir(parents=True)
+        (source / "game.rmmzproject").write_text("RPGMZ 1.8.0", encoding="utf-8")
+        (source / "data" / "System.json").write_text(
+            json.dumps(
+                {
+                    "gameTitle": "Test Game",
+                    "currencyUnit": "G",
+                    "armorTypes": [],
+                    "elements": [],
+                    "equipTypes": [],
+                    "skillTypes": [],
+                    "weaponTypes": [],
+                    "terms": {"basic": [], "commands": [], "params": [], "messages": {}},
+                    "advanced": {"mainFontFilename": "mplus-2m-regular.woff"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source / "js" / "rmmz_windows.js").write_text(
+            "Window_Base.prototype.resetFontSettings = function() {};\n", encoding="utf-8"
+        )
+        (source / "img" / "system" / "Window.png").write_bytes(b"source-window-skin")
+        font = self.root / "FusionPixel.ttf"
+        font.write_bytes(b"cjk-font")
+        adapter = RpgMakerMZAdapterV1()
+        working = self.root / "rpg-mz-style-working"
+        working.mkdir()
+        extracted = adapter.extract(
+            ExtractRequest(source, working, (), (), "rpg-mz-style", make_context("extract"))
+        )
+        self.assertIsInstance(extracted, ExtractResult)
+        translated = tuple(
+            replace(
+                Segment.from_draft("rpg-mz-style", "zh-CN", draft),
+                target_text={"Test Game": "\u6d4b\u8bd5\u6e38\u620f", "G": "\u91d1"}[draft.source_text],
+                translation_source="test",
+            )
+            for draft in extracted.segments
+        )
+        output = self.root / "rpg-mz-style-output"
+
+        built = adapter.build(
+            BuildRequest(
+                source,
+                output,
+                translated,
+                extracted.source_tree_fingerprint,
+                {"rpg_maker_font_paths": [str(font)]},
+                make_context("build"),
+            )
+        )
+
+        self.assertIsInstance(built, BuildResult)
+        system = json.loads((output / "data" / "System.json").read_text(encoding="utf-8"))
+        self.assertEqual(system["gameTitle"], "\u6d4b\u8bd5\u6e38\u620f")
+        self.assertEqual(system["advanced"]["mainFontFilename"], "FusionPixel.ttf")
+        self.assertIn("fonts/FusionPixel.ttf", built.added_files)
+        gate = run_rpg_maker_style_hard_gate(
+            source, output, "rpg_maker_mz", (font,)
+        )
+        self.assertTrue(gate.passed)
+        verified = adapter.verify(
+            VerifyRequest(
+                extracted.source_tree_fingerprint,
+                output,
+                built.manifest,
+                "full",
+                make_context("verify"),
+            )
+        )
+        self.assertIsInstance(verified, VerifyResult)
+        self.assertTrue(verified.passed)
 
     def test_v1_adapters_do_not_replace_legacy_detection_registry(self):
         legacy = get_adapters()

@@ -10,7 +10,7 @@ import sys
 import tempfile
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -23,6 +23,17 @@ from game_localizer.adapters.contract import (
     VerifyResult,
 )
 from game_localizer.hanengine.translation import DictionaryTranslationProvider
+from game_localizer.hanengine.godot import run_godot_style_hard_gate
+from game_localizer.hanengine.multiengine import LocalizationCatalog
+from game_localizer.hanengine.nwjs import (
+    NwjsRpgMakerValidatorConfig,
+    run_nwjs_rpg_maker_validation,
+)
+from game_localizer.hanengine.raster import (
+    load_raster_manifest,
+    verify_raster_manifest,
+)
+from game_localizer.hanengine.rpg_maker import run_rpg_maker_style_hard_gate
 from game_localizer.structured_workflow import (
     StructuredValidationFailed,
     StructuredVerificationFailed,
@@ -47,6 +58,8 @@ class OfficialValidatorConfig:
     arguments: tuple[str, ...]
     timeout_seconds: int = 120
     kind: str = "external"
+    clean_passes: int = 1
+    failure_markers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.command, Path):
@@ -71,6 +84,22 @@ class OfficialValidatorConfig:
             raise ValueError("timeout_seconds must be between 1 and 900")
         if not isinstance(self.kind, str) or not self.kind:
             raise ValueError("kind must be a non-empty string")
+        if (
+            isinstance(self.clean_passes, bool)
+            or not isinstance(self.clean_passes, int)
+            or not 1 <= self.clean_passes <= 3
+        ):
+            raise ValueError("clean_passes must be between 1 and 3")
+        markers = tuple(self.failure_markers)
+        if any(
+            not isinstance(marker, str)
+            or not marker
+            or "\r" in marker
+            or "\n" in marker
+            for marker in markers
+        ):
+            raise ValueError("failure_markers must contain non-empty single-line strings")
+        object.__setattr__(self, "failure_markers", markers)
 
 
 @dataclass(frozen=True)
@@ -84,6 +113,7 @@ class ProjectValidationRequest:
     dictionary_path: Path
     state_root: Path
     record_path: Path
+    reviewed_catalog_path: Path | None = None
     target_language: str = "zh-CN"
     source_language: str = "en"
     font_paths: tuple[Path, ...] = ()
@@ -91,6 +121,8 @@ class ProjectValidationRequest:
     official_validator: OfficialValidatorConfig | None = None
     runtime_smoke: Literal["not_run", "passed", "failed"] = "not_run"
     runtime_smoke_reference: str | None = None
+    raster_manifest_path: Path | None = None
+    nwjs_validator: NwjsRpgMakerValidatorConfig | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.record_id, str) or _RECORD_ID_RE.fullmatch(self.record_id) is None:
@@ -116,6 +148,15 @@ class ProjectValidationRequest:
             raise ValueError("project_root must be an existing directory")
         if not self.dictionary_path.is_file():
             raise ValueError("dictionary_path must be an existing file")
+        if self.reviewed_catalog_path is not None:
+            if not isinstance(self.reviewed_catalog_path, Path):
+                raise TypeError("reviewed_catalog_path must be a Path or None")
+            reviewed_catalog = self.reviewed_catalog_path.expanduser().resolve(strict=False)
+            if not reviewed_catalog.is_file():
+                raise ValueError("reviewed_catalog_path must be an existing file")
+            if reviewed_catalog == self.output_root or self.output_root in reviewed_catalog.parents:
+                raise ValueError("reviewed_catalog_path must be outside output_root")
+            object.__setattr__(self, "reviewed_catalog_path", reviewed_catalog)
         if self.output_root == self.project_root or self.project_root in self.output_root.parents:
             raise ValueError("output_root must be outside project_root")
         if self.record_path == self.project_root or self.project_root in self.record_path.parents:
@@ -154,6 +195,31 @@ class ProjectValidationRequest:
                 raise ValueError("a passed runtime smoke test requires a short reference")
         elif self.runtime_smoke_reference is not None:
             raise ValueError("runtime_smoke_reference is only allowed for a passed smoke test")
+        if self.raster_manifest_path is not None:
+            if not isinstance(self.raster_manifest_path, Path):
+                raise TypeError("raster_manifest_path must be a Path or None")
+            raster_manifest = self.raster_manifest_path.expanduser().resolve(strict=False)
+            if not raster_manifest.is_file():
+                raise ValueError("raster_manifest_path must be an existing file")
+            object.__setattr__(self, "raster_manifest_path", raster_manifest)
+        if self.nwjs_validator is not None:
+            if not isinstance(self.nwjs_validator, NwjsRpgMakerValidatorConfig):
+                raise TypeError(
+                    "nwjs_validator must be an NwjsRpgMakerValidatorConfig or None"
+                )
+            if self.official_validator is not None:
+                raise ValueError("nwjs_validator cannot be combined with official_validator")
+            if self.runtime_smoke != "not_run":
+                raise ValueError("nwjs_validator provides the runtime smoke result")
+            if self.engine_id not in {"auto", "rpg_maker_mv", "rpg_maker_mz"}:
+                raise ValueError("nwjs_validator requires an RPG Maker MV or MZ project")
+            evidence = self.nwjs_validator.evidence_root
+            for root, name in (
+                (self.project_root, "project_root"),
+                (self.output_root, "output_root"),
+            ):
+                if evidence == root or root in evidence.parents or evidence in root.parents:
+                    raise ValueError(f"NW.js evidence root must be outside {name}")
 
 
 @dataclass(frozen=True)
@@ -177,6 +243,40 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _merge_reviewed_catalog(
+    extracted: LocalizationCatalog,
+    reviewed: LocalizationCatalog,
+) -> LocalizationCatalog:
+    for field_name in (
+        "engine_id",
+        "language",
+        "source_language",
+        "project_fingerprint",
+        "files",
+    ):
+        if getattr(reviewed, field_name) != getattr(extracted, field_name):
+            raise ProjectValidationError(
+                f"reviewed catalog {field_name} does not match the fresh extraction"
+            )
+
+    reviewed_by_id = {entry.segment_id: entry for entry in reviewed.entries}
+    extracted_ids = {entry.segment_id for entry in extracted.entries}
+    if set(reviewed_by_id) != extracted_ids:
+        raise ProjectValidationError(
+            "reviewed catalog segment IDs do not match the fresh extraction"
+        )
+
+    merged_entries = []
+    for entry in extracted.entries:
+        reviewed_entry = reviewed_by_id[entry.segment_id]
+        if reviewed_entry.source_hash != entry.source_hash:
+            raise ProjectValidationError(
+                f"reviewed catalog source hash does not match segment {entry.segment_id}"
+            )
+        merged_entries.append(replace(entry, target_text=reviewed_entry.target_text))
+    return replace(extracted, entries=tuple(merged_entries))
 
 
 def tree_sha256(root: Path) -> str:
@@ -364,14 +464,25 @@ def run_official_validator(
                 str(shadow_root) if argument == _OUTPUT_PLACEHOLDER else argument
                 for argument in config.arguments
             )
-            completed = subprocess.run(
-                [str(config.command), *arguments],
-                cwd=shadow_root,
-                capture_output=True,
-                check=False,
-                timeout=config.timeout_seconds,
-                text=False,
+            completed = None
+            for _ in range(config.clean_passes):
+                completed = subprocess.run(
+                    [str(config.command), *arguments],
+                    cwd=shadow_root,
+                    capture_output=True,
+                    check=False,
+                    timeout=config.timeout_seconds,
+                    text=False,
+                )
+                if completed.returncode != 0:
+                    break
+            assert completed is not None
+            final_output = (completed.stdout + b"\n" + completed.stderr).decode(
+                "utf-8", errors="replace"
             )
+            reported_failure_markers = [
+                marker for marker in config.failure_markers if marker in final_output
+            ]
             after = _tree_file_hashes(shadow_root)
             modified_paths = sorted(
                 path
@@ -393,10 +504,16 @@ def run_official_validator(
             "failure": type(exc).__name__,
         }
     return {
-        "status": "passed" if completed.returncode == 0 else "failed",
+        "status": (
+            "passed"
+            if completed.returncode == 0 and not reported_failure_markers
+            else "failed"
+        ),
         "kind": config.kind,
         "tool": config.command.name,
         "exit_code": completed.returncode,
+        "passes_run": config.clean_passes,
+        "reported_failure_markers": reported_failure_markers,
         "validator_tree_preserved": not modified_paths,
         "validator_modified_paths": modified_paths,
     }
@@ -412,6 +529,21 @@ def renpy_sdk_validator(
         arguments=(_OUTPUT_PLACEHOLDER, "compile"),
         timeout_seconds=timeout_seconds,
         kind="renpy_sdk_compile",
+    )
+
+
+def godot_editor_validator(
+    godot_executable: Path, *, timeout_seconds: int = 300
+) -> OfficialValidatorConfig:
+    """Configure a cold import followed by a clean Godot editor validation pass."""
+
+    return OfficialValidatorConfig(
+        command=godot_executable,
+        arguments=("--headless", "--editor", "--path", _OUTPUT_PLACEHOLDER, "--quit"),
+        timeout_seconds=timeout_seconds,
+        kind="godot_headless_editor",
+        clean_passes=2,
+        failure_markers=("SCRIPT ERROR:", "FATAL ERROR:", "CRASH HANDLER:"),
     )
 
 
@@ -435,6 +567,26 @@ class ProjectValidationRunner:
 
     def run(self, request: ProjectValidationRequest) -> ProjectValidationRecord:
         source_before = tree_sha256(request.project_root)
+        reviewed_catalog_evidence: dict[str, object] = {
+            "configured": request.reviewed_catalog_path is not None,
+        }
+        if request.reviewed_catalog_path is not None:
+            reviewed_catalog_evidence.update(
+                {
+                    "name": request.reviewed_catalog_path.name,
+                    "sha256": _sha256_file(request.reviewed_catalog_path),
+                }
+            )
+        raster_resources: dict[str, object] = {
+            "configured": request.raster_manifest_path is not None,
+        }
+        if request.raster_manifest_path is not None:
+            raster_resources.update(
+                {
+                    "manifest_name": request.raster_manifest_path.name,
+                    "manifest_sha256": _sha256_file(request.raster_manifest_path),
+                }
+            )
         payload: dict[str, object] = {
             "schema_version": VALIDATION_SCHEMA_VERSION,
             "record_id": request.record_id,
@@ -461,6 +613,22 @@ class ProjectValidationRunner:
                 "source_language": request.source_language,
                 "target_language": request.target_language,
             },
+            "reviewed_catalog": reviewed_catalog_evidence,
+            "raster_resources": raster_resources,
+            "raster_verification": {
+                "status": (
+                    "not_run"
+                    if request.raster_manifest_path is not None
+                    else "not_configured"
+                )
+            },
+            "runtime_validation": {
+                "status": (
+                    "not_run"
+                    if request.nwjs_validator is not None
+                    else "not_configured"
+                )
+            },
             "conclusion": "failed",
         }
         try:
@@ -476,10 +644,30 @@ class ProjectValidationRunner:
             ) as workflow:
                 selection = workflow.detect()
                 adapter = workflow.runtime.registry.get(selection.adapter_id)
+                selected_engine = getattr(adapter, "engine_id", request.engine_id)
                 extracted = workflow.extract()
-                translated = workflow.translate(extracted.catalog, dictionary)
+                translation_catalog = extracted.catalog
+                if request.reviewed_catalog_path is not None:
+                    reviewed_payload = json.loads(
+                        request.reviewed_catalog_path.read_text(encoding="utf-8")
+                    )
+                    reviewed_catalog = LocalizationCatalog.from_dict(reviewed_payload)
+                    translation_catalog = _merge_reviewed_catalog(
+                        extracted.catalog,
+                        reviewed_catalog,
+                    )
+                    reviewed_catalog_evidence.update(
+                        {
+                            "matched_segment_count": len(translation_catalog.entries),
+                            "target_segment_count": sum(
+                                entry.target_text is not None
+                                for entry in translation_catalog.entries
+                            ),
+                        }
+                    )
+                translated = workflow.translate(translation_catalog, dictionary)
                 output_options: dict[str, object] = {}
-                if request.engine_id == "renpy" and request.font_paths:
+                if selected_engine == "renpy" and request.font_paths:
                     output_options["renpy_font_paths"] = [
                         str(path) for path in request.font_paths
                     ]
@@ -487,6 +675,18 @@ class ProjectValidationRunner:
                         output_options["renpy_font_probe_texts"] = list(
                             request.font_probe_texts
                         )
+                elif selected_engine == "godot" and request.font_paths:
+                    output_options["godot_font_paths"] = [
+                        str(path) for path in request.font_paths
+                    ]
+                elif selected_engine in {"rpg_maker_mv", "rpg_maker_mz"} and request.font_paths:
+                    output_options["rpg_maker_font_paths"] = [
+                        str(path) for path in request.font_paths
+                    ]
+                if request.raster_manifest_path is not None:
+                    output_options["raster_manifest"] = str(
+                        request.raster_manifest_path
+                    )
                 built = workflow.build(
                     translated.catalog,
                     request.output_root,
@@ -497,8 +697,99 @@ class ProjectValidationRunner:
             verify_result = built.verify_result
             source_after = tree_sha256(request.project_root)
             output_before_validator = tree_sha256(request.output_root)
-            official = run_official_validator(request.official_validator, request.output_root)
+            if request.raster_manifest_path is None:
+                raster_verification: dict[str, object] = {
+                    "status": "not_configured"
+                }
+            else:
+                raster_manifest = load_raster_manifest(request.raster_manifest_path)
+                raster_report = verify_raster_manifest(
+                    request.project_root,
+                    request.output_root,
+                    raster_manifest,
+                    manifest_root=request.raster_manifest_path.parent,
+                )
+                raster_status = (
+                    "failed"
+                    if not raster_report.passed
+                    else "manual_review"
+                    if raster_report.issues
+                    else "passed"
+                )
+                raster_verification = {
+                    "status": raster_status,
+                    **raster_report.to_dict(),
+                }
+                raster_resources.update(
+                    {
+                        "source_language": raster_manifest.source_language,
+                        "target_language": raster_manifest.target_language,
+                        "asset_count": len(raster_manifest.assets),
+                        "segment_count": sum(
+                            len(asset.segments) for asset in raster_manifest.assets
+                        ),
+                    }
+                )
+            if request.nwjs_validator is None:
+                runtime_validation: dict[str, object] = {"status": "not_configured"}
+                official = run_official_validator(
+                    request.official_validator,
+                    request.output_root,
+                )
+                runtime_smoke = {
+                    "status": request.runtime_smoke,
+                    "reference": request.runtime_smoke_reference,
+                }
+            else:
+                if selected_engine not in {"rpg_maker_mv", "rpg_maker_mz"}:
+                    raise ProjectValidationError(
+                        "NW.js validation requires a detected RPG Maker MV or MZ project"
+                    )
+                runtime_manifest = (
+                    raster_manifest
+                    if request.raster_manifest_path is not None
+                    else None
+                )
+                runtime_validation = run_nwjs_rpg_maker_validation(
+                    request.nwjs_validator,
+                    request.project_root,
+                    request.output_root,
+                    runtime_manifest,
+                )
+                report_sha256 = runtime_validation.get("report_sha256")
+                runtime_status = (
+                    "passed"
+                    if runtime_validation.get("status") == "passed"
+                    and isinstance(report_sha256, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", report_sha256) is not None
+                    else "failed"
+                )
+                official = {
+                    "status": runtime_status,
+                    "kind": "nwjs_rpg_maker_runtime",
+                    "command_name": request.nwjs_validator.executable.name,
+                    "command_sha256": _sha256_file(
+                        request.nwjs_validator.executable
+                    ),
+                    "report_sha256": report_sha256,
+                    "approved_video_count": runtime_validation.get(
+                        "approved_video_count"
+                    ),
+                    "approved_segment_count": runtime_validation.get(
+                        "approved_segment_count"
+                    ),
+                }
+                runtime_smoke = {
+                    "status": runtime_status,
+                    "reference": (
+                        f"nwjs-report-sha256:{report_sha256}"
+                        if runtime_status == "passed"
+                        and isinstance(report_sha256, str)
+                        else None
+                    ),
+                }
             output_after_validator = tree_sha256(request.output_root)
+            source_after = tree_sha256(request.project_root)
             coverage_texts = tuple(
                 entry.target_text or "" for entry in translated.catalog.entries
             ) + request.font_probe_texts
@@ -506,20 +797,42 @@ class ProjectValidationRunner:
                 request.font_paths,
                 coverage_texts,
             )
-            runtime_smoke = {
-                "status": request.runtime_smoke,
-                "reference": request.runtime_smoke_reference,
-            }
+            if selected_engine == "godot" and request.font_paths:
+                style_report = run_godot_style_hard_gate(
+                    request.project_root,
+                    request.output_root,
+                    request.font_paths,
+                )
+                visual_style = {
+                    "status": "passed" if style_report.passed else "failed",
+                    **style_report.to_dict(),
+                }
+            elif selected_engine in {"rpg_maker_mv", "rpg_maker_mz"} and request.font_paths:
+                style_report = run_rpg_maker_style_hard_gate(
+                    request.project_root,
+                    request.output_root,
+                    selected_engine,
+                    request.font_paths,
+                )
+                visual_style = {
+                    "status": "passed" if style_report.passed else "failed",
+                    **style_report.to_dict(),
+                }
+            else:
+                visual_style = {"status": "not_applicable"}
             internal_passed = (
                 verify_result.passed
                 and source_before == source_after
                 and built.validation.result.valid
                 and translated.untranslated_count == 0
+                and raster_verification["status"] != "failed"
             )
             attempted_failure = (
                 official.get("status") == "failed"
                 or font["status"] == "failed"
                 or runtime_smoke["status"] == "failed"
+                or visual_style["status"] == "failed"
+                or raster_verification["status"] == "failed"
                 or output_before_validator != output_after_validator
             )
             fully_verified = (
@@ -528,6 +841,8 @@ class ProjectValidationRunner:
                 and runtime_smoke["status"] == "passed"
                 and font["status"] == "passed"
                 and output_before_validator == output_after_validator
+                and visual_style["status"] in {"passed", "not_applicable"}
+                and raster_verification["status"] in {"passed", "not_configured"}
             )
             conclusion = (
                 "failed"
@@ -541,6 +856,12 @@ class ProjectValidationRunner:
                 deviations.append(f"font_coverage_{font['status']}")
             if runtime_smoke["status"] != "passed":
                 deviations.append(f"runtime_smoke_{runtime_smoke['status']}")
+            if visual_style["status"] == "failed":
+                deviations.append("visual_style_failed")
+            if raster_verification["status"] == "manual_review":
+                deviations.append("raster_manual_review_required")
+            elif raster_verification["status"] == "failed":
+                deviations.append("raster_verification_failed")
             if output_before_validator != output_after_validator:
                 deviations.append("official_validator_modified_output")
             if translated.untranslated_count:
@@ -568,6 +889,7 @@ class ProjectValidationRunner:
                     "translation": {
                         "translated_count": translated.translated_count,
                         "resumed_count": translated.resumed_count,
+                        "catalog_count": translated.catalog_count,
                         "untranslated_count": translated.untranslated_count,
                     },
                     "build": _build_payload(build_result, output_before_validator),
@@ -583,6 +905,9 @@ class ProjectValidationRunner:
                         "output_tree_sha256_after": output_after_validator,
                     },
                     "font_coverage": font,
+                    "visual_style": visual_style,
+                    "raster_verification": raster_verification,
+                    "runtime_validation": runtime_validation,
                     "runtime_smoke": runtime_smoke,
                     "known_deviations": deviations,
                     "conclusion": conclusion,
@@ -623,6 +948,7 @@ __all__ = [
     "ProjectValidationRequest",
     "ProjectValidationRunner",
     "VALIDATION_SCHEMA_VERSION",
+    "godot_editor_validator",
     "renpy_sdk_validator",
     "run_official_validator",
     "tree_sha256",

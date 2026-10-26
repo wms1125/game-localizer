@@ -11,6 +11,8 @@ from unittest.mock import patch
 from game_localizer.adapters import UnityAdapterV1
 from game_localizer.adapters.contract import (
     AdapterCapability,
+    AdapterError,
+    AdapterErrorCode,
     AdapterMaturity,
     BuildRequest,
     BuildResult,
@@ -24,6 +26,7 @@ from game_localizer.adapters.contract import (
 )
 from game_localizer.adapters.unity_addressables import (
     UnityAddressablesAdapterV1,
+    UnityAddressablesError,
     _AddressablesLayout,
     _AddressablesProfile,
     _TableRecord,
@@ -208,7 +211,7 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different entry IDs"):
                 _profile(self.source)
 
-    def test_missing_catalog_crc_keeps_packaged_detection_only(self):
+    def test_invalid_catalog_crc_is_reported_instead_of_downgraded(self):
         def read_records(bundle: Path, _suffix: str):
             text = "Start" if bundle == self.english else "开始"
             return (_TableRecord("Menu", 7, text, 101, 0),)
@@ -222,9 +225,9 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
         ):
             detected = UnityAdapterV1().detect(self._detection())
 
-        self.assertTrue(detected.matched)
-        self.assertIs(detected.maturity, AdapterMaturity.DETECT_ONLY)
-        self.assertEqual(detected.capabilities, frozenset({AdapterCapability.DETECT}))
+        self.assertIsInstance(detected, AdapterError)
+        self.assertIs(detected.code, AdapterErrorCode.UNSUPPORTED_INPUT)
+        self.assertIn("catalog.bin", detected.message)
 
     def test_unknown_packaged_layout_remains_detect_only(self):
         with patch("game_localizer.adapters.unity_addressables._profile", return_value=None):
@@ -233,6 +236,17 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
         self.assertTrue(result.matched)
         self.assertIs(result.maturity, AdapterMaturity.DETECT_ONLY)
         self.assertEqual(result.capabilities, frozenset({AdapterCapability.DETECT}))
+
+    def test_addressables_profile_inspection_failure_is_reported_instead_of_downgraded(self):
+        with patch(
+            "game_localizer.adapters.unity_addressables._profile",
+            side_effect=UnityAddressablesError("UnityPy is required for Unity Localization bundles"),
+        ):
+            result = UnityAdapterV1().detect(self._detection())
+
+        self.assertIsInstance(result, AdapterError)
+        self.assertIn("install UnityPy", result.message)
+        self.assertIs(result.code, AdapterErrorCode.UNSUPPORTED_INPUT)
 
     def test_supported_profile_opens_player_capabilities_and_extracts_stable_segments(self):
         with patch.object(UnityAddressablesAdapterV1, "_supported_profile", side_effect=self._profile):
@@ -396,7 +410,12 @@ class UnityAddressablesAdapterTests(unittest.TestCase):
 
         self.assertIsInstance(verified, VerifyResult)
         self.assertTrue(verified.passed)
-        self.assertEqual(make_temporary.call_args.kwargs, {"prefix": "hnu-addr-"})
+        # The temporary tree must stay beside the output so promotion is an
+        # atomic same-volume rename on Windows; the prefix is derived from the
+        # output name to keep the full path short.
+        temporary_kwargs = make_temporary.call_args.kwargs
+        self.assertEqual(Path(temporary_kwargs["dir"]), candidate.parent)
+        self.assertEqual(temporary_kwargs["prefix"], f".{candidate.name}.unity.")
         self.assertEqual(len(built.modified_files), 2)
         self.assertEqual(built.statistics["english_entries_preserved"], 1)
         self.assertEqual(built.statistics["chinese_entries"], 1)

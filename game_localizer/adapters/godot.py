@@ -16,10 +16,11 @@ class GodotAdapter(EngineAdapter):
             evidence.append(
                 DetectionEvidence("godot_project", "project.godot", "发现 Godot 项目文件", 85)
             )
-        if snapshot.has_dir(".godot"):
+        has_project_marker = snapshot.has_file("project.godot")
+        if has_project_marker and snapshot.has_dir(".godot"):
             evidence.append(DetectionEvidence("godot_cache", ".godot", "发现 Godot 项目缓存", 10))
         resources = snapshot.files_with_suffix(".gd") + snapshot.files_with_suffix(".tscn")
-        if resources:
+        if has_project_marker and resources:
             evidence.append(
                 DetectionEvidence("godot_resources", resources[0], "发现 Godot 项目资源", 5)
             )

@@ -22,7 +22,11 @@ class UnrealAdapter(EngineAdapter):
         if projects and snapshot.has_dir("content"):
             evidence.append(DetectionEvidence("unreal_content", "Content", "发现 Unreal Content 目录", 10))
         containers = {
-            suffix: snapshot.files_with_suffix(suffix)
+            suffix: tuple(
+                path
+                for path in snapshot.files_with_suffix(suffix)
+                if "/" not in path or path.startswith("content/paks/")
+            )
             for suffix in (".pak", ".ucas", ".utoc")
         }
         package_sets: dict[tuple[str, str], dict[str, str]] = {}

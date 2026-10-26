@@ -24,6 +24,20 @@ class ProjectScannerTests(unittest.TestCase):
             self.assertFalse(snapshot.has_file("library/secret.asset"))
             self.assertIn("library", snapshot.ignored_directories)
 
+    def test_snapshot_ignores_nested_worktrees_and_build_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in (".tmp", ".worktrees", "node_modules", "dist", "release"):
+                nested = root / name / "nested" / "game"
+                nested.mkdir(parents=True)
+                (nested / "script.rpy").write_text("label nested:", encoding="utf-8")
+
+            snapshot = scan_project(root)
+
+            self.assertEqual(snapshot.files, frozenset())
+            for name in (".tmp", ".worktrees", "node_modules", "dist", "release"):
+                self.assertIn(name, snapshot.ignored_directories)
+
     def test_snapshot_does_not_follow_directory_symlinks(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             root = Path(directory)

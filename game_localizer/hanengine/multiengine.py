@@ -15,33 +15,75 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from game_localizer.scanner import scan_project
+
 from .segments import JsonValue, normalize_relative_path
 
 
 _PERCENT_PLACEHOLDER_RE = re.compile(r"%(?:\d+\$)?[A-Za-z]")
-_RPG_TEXT_KEYS = frozenset(
-    {
-        "name",
-        "nickname",
-        "profile",
-        "description",
-        "message",
-        "text",
-        "help",
-        "title",
-        "gametitle",
-        "currencyunit",
-        "locationname",
-        "mapname",
-        "command",
-    }
+_MARKUP_TAG_RE = re.compile(r"</?[A-Za-z][^<>\r\n]*>")
+_RPG_DATABASE_FIELDS = {
+    "actors.json": frozenset({"name", "nickname", "profile"}),
+    "armors.json": frozenset({"name", "description"}),
+    "classes.json": frozenset({"name"}),
+    "enemies.json": frozenset({"name"}),
+    "items.json": frozenset({"name", "description"}),
+    "skills.json": frozenset(
+        {"name", "description", "message1", "message2", "message3", "message4"}
+    ),
+    "states.json": frozenset(
+        {"name", "message1", "message2", "message3", "message4"}
+    ),
+    "weapons.json": frozenset({"name", "description"}),
+}
+_RPG_SYSTEM_SCALAR_FIELDS = ("gameTitle", "currencyUnit")
+_RPG_SYSTEM_ARRAY_FIELDS = (
+    "armorTypes",
+    "elements",
+    "equipTypes",
+    "skillTypes",
+    "weaponTypes",
 )
-_RPG_EVENT_CODES = frozenset({101, 102, 401, 405, 408})
+_RPG_SYSTEM_TERM_ARRAY_FIELDS = ("basic", "commands", "params")
 _CSV_KEY_NAMES = frozenset({"key", "keys", "id", "key id", "entry", "entry id"})
+_GODOT_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_GODOT_CLASS_RE = re.compile(rf"(?m)^\s*class_name\s+({_GODOT_IDENTIFIER})\b")
+_GODOT_VARIABLE_TYPE_RE = re.compile(
+    rf"(?m)^\s*(?:@\w+(?:\([^\n]*\))?\s+)*var\s+({_GODOT_IDENTIFIER})\s*:\s*({_GODOT_IDENTIFIER})\b"
+)
+_GODOT_VARIABLE_CAST_RE = re.compile(
+    rf"(?m)^\s*(?:@\w+(?:\([^\n]*\))?\s+)*var\s+({_GODOT_IDENTIFIER})[^\n]*\bas\s+({_GODOT_IDENTIFIER})\b"
+)
+_GODOT_FUNCTION_RE = re.compile(
+    rf"(?m)^func\s+({_GODOT_IDENTIFIER})\s*\(([^\n)]*)\)[^\n]*:\s*$"
+)
+_GODOT_EXT_RESOURCE_RE = re.compile(
+    r'^\[ext_resource\b[^]]*\btype="Script"[^]]*\bpath="([^"]+)"[^]]*\bid="([^"]+)"[^]]*\]$'
+)
+_GODOT_NODE_RE = re.compile(r'^\[node\b[^]]*\bname="([^"]+)"[^]]*\]$')
+_GODOT_NODE_SCRIPT_RE = re.compile(r'^\s*script\s*=\s*ExtResource\("([^"]+)"\)\s*$')
 
 
 class MultiEngineError(ValueError):
     """Raised when an engine resource is unsupported or fails closed."""
+
+
+def _project_files_with_suffixes(root: Path, suffixes: Iterable[str]) -> tuple[Path, ...]:
+    suffix_set = frozenset(item.casefold() for item in suffixes)
+    try:
+        snapshot = scan_project(root)
+    except ValueError as exc:
+        raise MultiEngineError(str(exc)) from exc
+    return tuple(
+        sorted(
+            (
+                root / Path(*relative.split("/"))
+                for relative in snapshot.files
+                if Path(relative).suffix.casefold() in suffix_set
+            ),
+            key=lambda path: path.as_posix().casefold(),
+        )
+    )
 
 
 def _require_text(value: object, name: str, *, allow_empty: bool = False) -> str:
@@ -57,6 +99,11 @@ def extract_placeholders(value: str) -> tuple[str, ...]:
     tokens: list[str] = []
     index = 0
     while index < len(value):
+        markup = _MARKUP_TAG_RE.match(value, index)
+        if markup is not None:
+            tokens.append(markup.group(0))
+            index = markup.end()
+            continue
         if value.startswith("${", index):
             balanced = _balanced_placeholder(value, index + 1)
             if balanced is not None:
@@ -142,6 +189,26 @@ def _fingerprint(root: Path, files: Iterable[str]) -> str:
         digest.update(hashlib.sha256(path.read_bytes()).digest())
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def _godot_project_files(root: Path) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            _relative(path, root)
+            for path in _project_files_with_suffixes(
+                root, {".gd", ".godot", ".theme", ".tres", ".tscn"}
+            )
+            if path.name.casefold() == "project.godot"
+            or path.suffix.casefold() in {".gd", ".theme", ".tres", ".tscn"}
+        )
+    )
+
+
+def _project_fingerprint(root: Path, engine_id: str, files: Iterable[str]) -> str:
+    fingerprint_files = set(files)
+    if engine_id == "godot":
+        fingerprint_files.update(_godot_project_files(root))
+    return _fingerprint(root, fingerprint_files)
 
 
 def _copy_tree(source: Path, output: Path) -> None:
@@ -339,7 +406,14 @@ def _entry(engine_id: str, relative: str, text: str, kind: str, locator: dict[st
 
 
 def _catalog(engine_id: str, root: Path, language: str, source_language: str, files: tuple[str, ...], entries: list[LocalizationEntry]) -> LocalizationCatalog:
-    return LocalizationCatalog(engine_id, language, source_language, _fingerprint(root, files), files, tuple(entries))
+    return LocalizationCatalog(
+        engine_id,
+        language,
+        source_language,
+        _project_fingerprint(root, engine_id, files),
+        files,
+        tuple(entries),
+    )
 
 
 def _rpg_data_files(root: Path) -> tuple[Path, ...]:
@@ -350,28 +424,103 @@ def _rpg_data_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(path for path in data.glob("*.json") if path.is_file() and not path.is_symlink()))
 
 
-def _walk_rpg(value: object, pointer: tuple[str | int, ...], emit) -> None:
+def _walk_rpg_fields(
+    value: object,
+    pointer: tuple[str | int, ...],
+    fields: frozenset[str],
+    emit,
+) -> None:
     if isinstance(value, dict):
-        code = value.get("code")
-        parameters = value.get("parameters")
-        if isinstance(code, int) and code in _RPG_EVENT_CODES and isinstance(parameters, list):
-            if code == 101 and len(parameters) > 4 and isinstance(parameters[4], str):
-                emit(parameters[4], pointer + ("parameters", 4), "event")
-            elif code in {401, 405, 408} and parameters and isinstance(parameters[0], str):
-                emit(parameters[0], pointer + ("parameters", 0), "event")
-            elif code == 102 and parameters and isinstance(parameters[0], list):
-                for index, choice in enumerate(parameters[0]):
-                    if isinstance(choice, str):
-                        emit(choice, pointer + ("parameters", 0, index), "choice")
         for key, child in value.items():
-            if isinstance(child, str) and key.casefold() in _RPG_TEXT_KEYS and child:
+            if isinstance(child, str) and key in fields and child:
                 emit(child, pointer + (key,), "field")
             elif isinstance(child, (dict, list)):
-                _walk_rpg(child, pointer + (key,), emit)
+                _walk_rpg_fields(child, pointer + (key,), fields, emit)
     elif isinstance(value, list):
         for index, child in enumerate(value):
             if isinstance(child, (dict, list)):
-                _walk_rpg(child, pointer + (index,), emit)
+                _walk_rpg_fields(child, pointer + (index,), fields, emit)
+
+
+def _walk_rpg_events(value: object, pointer: tuple[str | int, ...], emit) -> None:
+    if isinstance(value, dict):
+        code = value.get("code")
+        parameters = value.get("parameters")
+        if isinstance(code, int) and isinstance(parameters, list):
+            if (
+                code == 101
+                and len(parameters) > 4
+                and isinstance(parameters[4], str)
+                and parameters[4]
+            ):
+                emit(parameters[4], pointer + ("parameters", 4), "event")
+            elif (
+                code in {401, 405}
+                and parameters
+                and isinstance(parameters[0], str)
+                and parameters[0]
+            ):
+                emit(parameters[0], pointer + ("parameters", 0), "event")
+            elif code == 102 and parameters and isinstance(parameters[0], list):
+                for index, choice in enumerate(parameters[0]):
+                    if isinstance(choice, str) and choice:
+                        emit(choice, pointer + ("parameters", 0, index), "choice")
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                _walk_rpg_events(child, pointer + (key,), emit)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            if isinstance(child, (dict, list)):
+                _walk_rpg_events(child, pointer + (index,), emit)
+
+
+def _walk_rpg_string_array(
+    value: object,
+    pointer: tuple[str | int, ...],
+    emit,
+) -> None:
+    if not isinstance(value, list):
+        return
+    for index, child in enumerate(value):
+        if isinstance(child, str) and child:
+            emit(child, pointer + (index,), "field")
+
+
+def _walk_rpg_system(value: object, emit) -> None:
+    if not isinstance(value, dict):
+        return
+    for key in _RPG_SYSTEM_SCALAR_FIELDS:
+        child = value.get(key)
+        if isinstance(child, str) and child:
+            emit(child, (key,), "field")
+    for key in _RPG_SYSTEM_ARRAY_FIELDS:
+        _walk_rpg_string_array(value.get(key), (key,), emit)
+    terms = value.get("terms")
+    if not isinstance(terms, dict):
+        return
+    for key in _RPG_SYSTEM_TERM_ARRAY_FIELDS:
+        _walk_rpg_string_array(terms.get(key), ("terms", key), emit)
+    messages = terms.get("messages")
+    if isinstance(messages, dict):
+        for key, child in messages.items():
+            if isinstance(child, str) and child:
+                emit(child, ("terms", "messages", key), "field")
+
+
+def _walk_rpg(value: object, resource_name: str, emit) -> None:
+    folded = resource_name.casefold()
+    fields = _RPG_DATABASE_FIELDS.get(folded)
+    if fields is not None:
+        _walk_rpg_fields(value, (), fields, emit)
+    elif re.fullmatch(r"map\d+\.json", folded):
+        _walk_rpg_fields(value, (), frozenset({"displayName"}), emit)
+    elif folded == "system.json":
+        _walk_rpg_system(value, emit)
+
+    if folded in {"commonevents.json", "troops.json"} or re.fullmatch(
+        r"map\d+\.json", folded
+    ):
+        _walk_rpg_events(value, (), emit)
 
 
 class RpgMakerExtractor:
@@ -391,7 +540,7 @@ class RpgMakerExtractor:
                 raise MultiEngineError(f"invalid RPG Maker JSON: {relative}") from exc
             _walk_rpg(
                 document,
-                (),
+                path.name,
                 lambda text, pointer, kind: entries.append(
                     _entry(self.engine_id, relative, text, kind, {"type": "json", "pointer": _json_pointer(pointer)})
                 ),
@@ -417,10 +566,12 @@ def _language_column(header: list[str], language: str, excluded: set[int]) -> in
     return None
 
 
+def _csv_target_header(engine_id: str, language: str) -> str:
+    return language.replace("-", "_") if engine_id == "godot" else language
+
+
 def _extract_csv(engine_id: str, root: Path, language: str, source_language: str) -> LocalizationCatalog:
-    candidates = tuple(
-        sorted(path for path in root.rglob("*.csv") if path.is_file() and not path.is_symlink())
-    )
+    candidates = _project_files_with_suffixes(root, {".csv"})
     entries: list[LocalizationEntry] = []
     files: list[str] = []
     for path in candidates:
@@ -455,7 +606,7 @@ def _extract_csv(engine_id: str, root: Path, language: str, source_language: str
                         "row": row_index,
                         "source_column": source_col,
                         "target_column": target_index,
-                        "target_header": language,
+                        "target_header": _csv_target_header(engine_id, language),
                         "key_column": min(key_columns) if key_columns else None,
                         "delimiter": dialect.delimiter,
                     },
@@ -464,6 +615,213 @@ def _extract_csv(engine_id: str, root: Path, language: str, source_language: str
     if not files:
         raise MultiEngineError(f"no supported {engine_id} CSV resources found")
     return _catalog(engine_id, root, language, source_language, tuple(files), entries)
+
+
+def _godot_script_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in _project_files_with_suffixes(root, {".gd"})
+        if "addons" not in path.relative_to(root).parts
+    )
+
+
+def _godot_variable_types(text: str) -> dict[str, str]:
+    result = dict(_GODOT_VARIABLE_TYPE_RE.findall(text))
+    result.update(_GODOT_VARIABLE_CAST_RE.findall(text))
+    return result
+
+
+def _godot_translated_parameter_positions(text: str) -> dict[str, set[int]]:
+    matches = list(_GODOT_FUNCTION_RE.finditer(text))
+    result: dict[str, set[int]] = {}
+    for index, match in enumerate(matches):
+        body_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[match.end() : body_end]
+        parameters = [item.strip() for item in match.group(2).split(",")]
+        for position, parameter in enumerate(parameters):
+            name_match = re.match(rf"({_GODOT_IDENTIFIER})\s*(?::|=|$)", parameter)
+            if name_match is None:
+                continue
+            name = name_match.group(1)
+            if re.search(rf"\btr\(\s*{re.escape(name)}\s*\)", body):
+                result.setdefault(match.group(1), set()).add(position)
+    return result
+
+
+def _godot_runtime_name_classes(root: Path) -> tuple[dict[str, str], tuple[str, ...]]:
+    scripts = _godot_script_files(root)
+    script_text = {path: _read_text(path) for path in scripts}
+    class_paths: dict[str, str] = {}
+    class_methods: dict[tuple[str, str], set[int]] = {}
+    variables: dict[Path, dict[str, str]] = {}
+
+    for path, text in script_text.items():
+        class_match = _GODOT_CLASS_RE.search(text)
+        variables[path] = _godot_variable_types(text)
+        if class_match is None:
+            continue
+        class_name = class_match.group(1)
+        relative = _relative(path, root)
+        if class_name in class_paths and class_paths[class_name] != relative:
+            raise MultiEngineError(f"duplicate Godot class_name declaration: {class_name}")
+        class_paths[class_name] = relative
+        for method, positions in _godot_translated_parameter_positions(text).items():
+            class_methods[(class_name, method)] = positions
+
+    displayed_classes: set[str] = set()
+    direct_name_re = re.compile(rf"\btr\(\s*({_GODOT_IDENTIFIER})\.name\s*\)")
+    call_re = re.compile(
+        rf"\b({_GODOT_IDENTIFIER})\.({_GODOT_IDENTIFIER})\s*\(([^\n)]*)\)"
+    )
+    for path, text in script_text.items():
+        typed = variables[path]
+        for match in direct_name_re.finditer(text):
+            source_type = typed.get(match.group(1))
+            if source_type in class_paths:
+                displayed_classes.add(source_type)
+        for match in call_re.finditer(text):
+            receiver_type = typed.get(match.group(1))
+            if receiver_type is None:
+                continue
+            translated_positions = class_methods.get((receiver_type, match.group(2)), set())
+            if not translated_positions:
+                continue
+            arguments = [item.strip() for item in match.group(3).split(",")]
+            for position in translated_positions:
+                if position >= len(arguments):
+                    continue
+                source_match = re.fullmatch(
+                    rf"({_GODOT_IDENTIFIER})\.name", arguments[position]
+                )
+                if source_match is None:
+                    continue
+                source_type = typed.get(source_match.group(1))
+                if source_type in class_paths:
+                    displayed_classes.add(source_type)
+
+    return class_paths, tuple(sorted(displayed_classes))
+
+
+def _godot_runtime_node_names(root: Path) -> tuple[dict[str, set[str]], tuple[str, ...]]:
+    class_paths, displayed_classes = _godot_runtime_name_classes(root)
+    displayed_paths = {
+        class_paths[class_name]: class_name for class_name in displayed_classes
+    }
+    names: dict[str, set[str]] = {}
+    unstable_names: set[str] = set()
+    read_files = {_relative(path, root) for path in _godot_script_files(root)}
+    if not displayed_paths:
+        return names, tuple(sorted(read_files))
+
+    for path in _project_files_with_suffixes(root, {".tscn"}):
+        text = _read_text(path)
+        resource_classes: dict[str, str] = {}
+        for line in text.splitlines():
+            match = _GODOT_EXT_RESOURCE_RE.match(line)
+            if match is None:
+                continue
+            resource_path = match.group(1)
+            if resource_path.startswith("res://"):
+                relative = normalize_relative_path(resource_path[6:])
+                class_name = displayed_paths.get(relative)
+                if class_name is not None:
+                    resource_classes[match.group(2)] = class_name
+        if not resource_classes:
+            continue
+        current_name: str | None = None
+        found = False
+        for line in text.splitlines():
+            node_match = _GODOT_NODE_RE.match(line)
+            if node_match is not None:
+                current_name = node_match.group(1)
+                continue
+            script_match = _GODOT_NODE_SCRIPT_RE.match(line)
+            if current_name is None or script_match is None:
+                continue
+            class_name = resource_classes.get(script_match.group(1))
+            if class_name is None:
+                continue
+            compact_name = re.sub(r"[ _-]", "", current_name)
+            if re.fullmatch(rf"{re.escape(class_name)}\d*", compact_name, re.IGNORECASE):
+                unstable_names.add(current_name)
+                found = True
+                continue
+            if len(current_name) <= 120 and any(character.isalpha() for character in current_name):
+                names.setdefault(current_name, set()).add(class_name)
+                found = True
+        if found:
+            read_files.add(_relative(path, root))
+    if unstable_names:
+        raise MultiEngineError(
+            "unstable Godot runtime node display name: "
+            + ", ".join(sorted(unstable_names))
+        )
+    return names, tuple(sorted(read_files))
+
+
+def _godot_runtime_csv(catalog: LocalizationCatalog) -> str:
+    candidates = [item for item in catalog.files if Path(item).suffix.casefold() == ".csv"]
+    if len(candidates) == 1:
+        return candidates[0]
+    priorities = (
+        lambda path: Path(path).stem.casefold() == "hanengine_runtime_names",
+        lambda path: "game_ui" in Path(path).stem.casefold(),
+        lambda path: "ui" in Path(path).stem.casefold(),
+    )
+    for predicate in priorities:
+        matches = [path for path in candidates if predicate(path)]
+        if len(matches) == 1:
+            return matches[0]
+    raise MultiEngineError("ambiguous Godot runtime-name CSV target")
+
+
+def _with_godot_project_files(root: Path, catalog: LocalizationCatalog) -> LocalizationCatalog:
+    return replace(
+        catalog,
+        project_fingerprint=_project_fingerprint(root, "godot", catalog.files),
+    )
+
+
+def _with_godot_runtime_names(root: Path, catalog: LocalizationCatalog) -> LocalizationCatalog:
+    names, _ = _godot_runtime_node_names(root)
+    ambiguous = sorted(name for name, classes in names.items() if len(classes) > 1)
+    if ambiguous:
+        raise MultiEngineError(
+            "ambiguous Godot runtime node display name: " + ", ".join(ambiguous)
+        )
+    existing = {entry.source_text for entry in catalog.entries}
+    missing = sorted(name for name in names if name not in existing)
+    catalog = _with_godot_project_files(root, catalog)
+    if not missing:
+        return catalog
+
+    target_csv = _godot_runtime_csv(catalog)
+    sample = next(entry for entry in catalog.entries if entry.relative_path == target_csv)
+    locator = sample.locator
+    if locator.get("type") != "csv" or locator.get("key_column") is None:
+        raise MultiEngineError("Godot runtime names require a CSV resource with a key column")
+    entries = list(catalog.entries)
+    for name in missing:
+        entries.append(
+            _entry(
+                "godot",
+                target_csv,
+                name,
+                "godot_runtime_node_name",
+                {
+                    "type": "godot_csv_append",
+                    "source_column": locator["source_column"],
+                    "target_column": locator["target_column"],
+                    "target_header": locator.get("target_header", catalog.language),
+                    "key_column": locator["key_column"],
+                    "node_class": next(iter(names[name])),
+                },
+            )
+        )
+    return replace(
+        catalog,
+        entries=tuple(entries),
+    )
 
 
 @dataclass(frozen=True)
@@ -583,6 +941,8 @@ def validate_resource_syntax(relative_path: str, text: str) -> None:
                 raise MultiEngineError("PO resource contains no parseable records")
         elif suffix in {".xlf", ".xliff"}:
             ET.fromstring(text)
+        elif suffix == ".tsv":
+            _parse_tsv_rows(text, relative_path)
         else:
             raise MultiEngineError(f"unsupported localization resource: {normalized}")
     except (csv.Error, json.JSONDecodeError, ET.ParseError) as exc:
@@ -590,9 +950,7 @@ def validate_resource_syntax(relative_path: str, text: str) -> None:
 
 
 def _extract_po(engine_id: str, root: Path, language: str, source_language: str) -> LocalizationCatalog:
-    candidates = tuple(
-        sorted(path for path in root.rglob("*.po") if path.is_file() and not path.is_symlink())
-    )
+    candidates = _project_files_with_suffixes(root, {".po"})
     files: list[str] = []
     entries: list[LocalizationEntry] = []
     for path in candidates:
@@ -624,8 +982,7 @@ def _extract_po(engine_id: str, root: Path, language: str, source_language: str)
 def _extract_xliff(engine_id: str, root: Path, language: str, source_language: str) -> LocalizationCatalog:
     candidates = tuple(
         sorted(
-            path for path in (*root.rglob("*.xlf"), *root.rglob("*.xliff"))
-            if path.is_file() and not path.is_symlink()
+            path for path in _project_files_with_suffixes(root, {".xlf", ".xliff"})
         )
     )
     files: list[str] = []
@@ -665,15 +1022,134 @@ def _extract_xliff(engine_id: str, root: Path, language: str, source_language: s
 class GodotExtractor:
     def extract(self, project_root: Path, *, language: str = "zh-CN", source_language: str = "en") -> LocalizationCatalog:
         root = project_root.resolve(strict=True)
-        po_candidates = tuple(root.rglob("*.po"))
+        po_candidates = _project_files_with_suffixes(root, {".po"})
         if po_candidates:
-            return _extract_po("godot", root, language, source_language)
-        return _extract_csv("godot", root, language, source_language)
+            return _with_godot_project_files(
+                root,
+                _extract_po("godot", root, language, source_language),
+            )
+        catalog = _extract_csv("godot", root, language, source_language)
+        return _with_godot_runtime_names(root, catalog)
+
+
+def unity_tsv_candidates(root: Path) -> tuple[Path, ...]:
+    """Return the complete plaintext override set used by R.E.P.O.-style Unity builds."""
+    data_roots = [root]
+    data_roots.extend(
+        sorted(
+            (
+                path
+                for path in root.glob("*_Data")
+                if path.is_dir() and not path.is_symlink()
+            ),
+            key=lambda path: path.name.casefold(),
+        )
+    )
+    for data_root in data_roots:
+        directory = data_root / "StreamingAssets" / "Localizations" / "Default"
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        files = {
+            path.name.casefold(): path
+            for path in directory.iterdir()
+            if path.is_file() and not path.is_symlink()
+        }
+        required = ("game.tsv", "hud.tsv", "menu.tsv")
+        if all(name in files for name in required):
+            return tuple(files[name] for name in required)
+    return ()
+
+
+def _tsv_override_relative(relative: str) -> str:
+    parts = normalize_relative_path(relative).split("/")
+    for index, part in enumerate(parts):
+        if (
+            part.casefold() == "default"
+            and index > 0
+            and parts[index - 1].casefold() == "localizations"
+        ):
+            return "/".join((*parts[:index], *parts[index + 1 :]))
+    raise MultiEngineError(
+        f"TSV localization resource is not under Localizations/Default: {relative}"
+    )
+
+
+def _tsv_line_parts(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith(("\n", "\r")):
+        return line[:-1], line[-1]
+    return line, ""
+
+
+def _parse_tsv_rows(text: str, relative: str) -> tuple[tuple[int, str, str], ...]:
+    rows: list[tuple[int, str, str]] = []
+    keys: set[str] = set()
+    for line_number, line in enumerate(text.splitlines(keepends=True)):
+        content, _ending = _tsv_line_parts(line)
+        if not content:
+            continue
+        columns = content.split("\t")
+        if len(columns) != 2 or not columns[0]:
+            raise MultiEngineError(
+                f"invalid TSV row {line_number + 1} in {relative}; expected KEY<TAB>TEXT"
+            )
+        key, value = columns
+        if key in keys:
+            raise MultiEngineError(f"duplicate TSV key in {relative}: {key}")
+        keys.add(key)
+        if value:
+            rows.append((line_number, key, value))
+    if not rows:
+        raise MultiEngineError(f"TSV resource contains no translatable rows: {relative}")
+    return tuple(rows)
+
+
+def _extract_tsv(
+    engine_id: str,
+    root: Path,
+    paths: tuple[Path, ...],
+    language: str,
+    source_language: str,
+) -> LocalizationCatalog:
+    files: list[str] = []
+    entries: list[LocalizationEntry] = []
+    keys: set[str] = set()
+    for path in paths:
+        relative = _relative(path, root)
+        text = _read_text(path)
+        rows = _parse_tsv_rows(text, relative)
+        output_relative = _tsv_override_relative(relative)
+        files.append(relative)
+        for line_number, key, value in rows:
+            if key in keys:
+                raise MultiEngineError(f"duplicate TSV key across resources: {key}")
+            keys.add(key)
+            entries.append(
+                _entry(
+                    engine_id,
+                    relative,
+                    value,
+                    "tsv",
+                    {
+                        "type": "tsv",
+                        "line": line_number,
+                        "key": key,
+                        "output_relative_path": output_relative,
+                    },
+                )
+            )
+    if not files:
+        raise MultiEngineError(f"no supported {engine_id} TSV resources found")
+    return _catalog(engine_id, root, language, source_language, tuple(files), entries)
 
 
 class UnityExtractor:
     def extract(self, project_root: Path, *, language: str = "zh-CN", source_language: str = "en") -> LocalizationCatalog:
         root = project_root.resolve(strict=True)
+        tsv_candidates = unity_tsv_candidates(root)
+        if tsv_candidates:
+            return _extract_tsv("unity", root, tsv_candidates, language, source_language)
         try:
             return _extract_xliff("unity", root, language, source_language)
         except MultiEngineError:
@@ -719,7 +1195,10 @@ class MultiEngineWriter:
         if type(allow_existing_empty) is not bool:
             raise TypeError("allow_existing_empty must be a bool")
         source = source_root.resolve(strict=True)
-        if _fingerprint(source, catalog.files) != catalog.project_fingerprint:
+        if (
+            _project_fingerprint(source, catalog.engine_id, catalog.files)
+            != catalog.project_fingerprint
+        ):
             raise MultiEngineError("source project changed since extraction")
         grouped: dict[str, list[LocalizationEntry]] = {}
         for entry in catalog.entries:
@@ -750,6 +1229,7 @@ class MultiEngineWriter:
             for relative, entries in grouped.items():
                 path = staging / Path(*relative.split("/"))
                 formats = {str(entry.locator.get("type")) for entry in entries}
+                written_relative = relative
                 if formats == {"json"}:
                     document = json.loads(_read_text(path))
                     for entry in entries:
@@ -759,12 +1239,12 @@ class MultiEngineWriter:
                             raise MultiEngineError(f"source text changed: {relative}")
                         _json_set(document, pointer, target)
                     path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-                elif formats == {"csv"}:
+                elif formats <= {"csv", "godot_csv_append"}:
                     text = _read_text(path)
                     dialect = _csv_dialect(text)
                     rows = list(csv.reader(io.StringIO(text), dialect))
                     header = rows[0]
-                    for entry in entries:
+                    for entry in (item for item in entries if item.locator["type"] == "csv"):
                         locator = entry.locator
                         row_index = int(locator["row"])
                         source_col = int(locator["source_column"])
@@ -778,9 +1258,68 @@ class MultiEngineWriter:
                         while len(header) <= target_col:
                             header.append(str(locator.get("target_header", catalog.language)))
                         rows[row_index][target_col] = entry.target_text or ""
+                    for entry in (
+                        item for item in entries if item.locator["type"] == "godot_csv_append"
+                    ):
+                        locator = entry.locator
+                        source_col = int(locator["source_column"])
+                        target_col = int(locator["target_column"])
+                        key_col = int(locator["key_column"])
+                        while len(header) <= target_col:
+                            header.append(str(locator.get("target_header", catalog.language)))
+                        if any(
+                            source_col < len(row) and row[source_col] == entry.source_text
+                            for row in rows[1:]
+                        ):
+                            raise MultiEngineError(f"source text changed: {relative}")
+                        row = [""] * max(len(header), source_col + 1, target_col + 1, key_col + 1)
+                        row[key_col] = entry.source_text
+                        row[source_col] = entry.source_text
+                        row[target_col] = entry.target_text or ""
+                        rows.append(row)
                     buffer = io.StringIO(newline="")
                     csv.writer(buffer, dialect).writerows(rows)
                     path.write_text(buffer.getvalue(), encoding="utf-8", newline="")
+                elif formats == {"tsv"}:
+                    text = _read_text(path)
+                    _parse_tsv_rows(text, relative)
+                    lines = text.splitlines(keepends=True)
+                    output_relative: str | None = None
+                    for entry in entries:
+                        locator = entry.locator
+                        line_number = locator.get("line")
+                        key = locator.get("key")
+                        candidate_relative = locator.get("output_relative_path")
+                        if (
+                            not isinstance(line_number, int)
+                            or line_number < 0
+                            or not isinstance(key, str)
+                            or not isinstance(candidate_relative, str)
+                        ):
+                            raise MultiEngineError(f"invalid TSV locator: {relative}")
+                        candidate_relative = normalize_relative_path(candidate_relative)
+                        if output_relative is None:
+                            output_relative = candidate_relative
+                        elif output_relative != candidate_relative:
+                            raise MultiEngineError(f"mixed TSV output paths: {relative}")
+                        if line_number >= len(lines):
+                            raise MultiEngineError(f"source text changed: {relative}")
+                        content, ending = _tsv_line_parts(lines[line_number])
+                        columns = content.split("\t")
+                        if len(columns) != 2 or columns[0] != key or columns[1] != entry.source_text:
+                            raise MultiEngineError(f"source text changed: {relative}")
+                        target = entry.target_text or ""
+                        if any(character in target for character in "\r\n"):
+                            raise MultiEngineError(
+                                f"TSV translation contains a physical newline: {relative}"
+                            )
+                        lines[line_number] = f"{key}\t{target}{ending}"
+                    if output_relative is None:
+                        raise MultiEngineError(f"TSV resource has no translated entries: {relative}")
+                    output_path = staging / Path(*output_relative.split("/"))
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_text("".join(lines), encoding="utf-8", newline="")
+                    written_relative = output_relative
                 elif formats == {"po"}:
                     records = _parse_po(_read_text(path))
                     for entry in entries:
@@ -809,7 +1348,7 @@ class MultiEngineWriter:
                     ET.ElementTree(document).write(path, encoding="utf-8", xml_declaration=True)
                 else:
                     raise MultiEngineError(f"mixed or unsupported resource format: {relative}")
-                files_written.append(relative)
+                files_written.append(written_relative)
                 count += len(entries)
             removed_placeholder = False
             try:
@@ -839,5 +1378,6 @@ __all__ = [
     "RpgMakerExtractor",
     "UnityExtractor",
     "UnrealExtractor",
+    "unity_tsv_candidates",
     "validate_resource_syntax",
 ]

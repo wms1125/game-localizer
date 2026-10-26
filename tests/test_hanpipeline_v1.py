@@ -13,6 +13,7 @@ from game_localizer.hanengine import (
     TranslationProviderError,
     TranslationResult,
     TranslationRouter,
+    build_translation_review_queue,
 )
 from game_localizer.structured_workflow import StructuredWorkflowSession
 
@@ -47,6 +48,29 @@ class _PrefixProvider:
         )
 
 
+class _ResidualEnglishProvider:
+    TRANSLATIONS = {"Hello, {name}!": "你好，{name}！"}
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def translate(self, request):
+        self.calls.append(request.segment_id)
+        if request.text == "Hero":
+            raise TranslationProviderError(
+                "model echoed English",
+                code="residual_english",
+                failure_codes=("residual_english",),
+                retry_count=2,
+            )
+        return TranslationResult(
+            self.TRANSLATIONS.get(request.text, "中文"),
+            "local-model",
+            "test-model",
+            0.9,
+        )
+
+
 class HanPipelineV1Tests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -60,10 +84,16 @@ class HanPipelineV1Tests(unittest.TestCase):
         )
         (self.project / "data" / "Actors.json").write_text(
             json.dumps(
+                [None, {"name": "Hero", "nickname": "", "profile": ""}]
+            ),
+            encoding="utf-8",
+        )
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
                 {
-                    "name": "Hero",
+                    "displayName": "",
                     "events": [
-                        {"code": 401, "parameters": ["Hello, {name}!"]},
+                        {"list": [{"code": 401, "parameters": ["Hello, {name}!"]}]}
                     ],
                 }
             ),
@@ -124,6 +154,55 @@ class HanPipelineV1Tests(unittest.TestCase):
 
             built = workflow.build(resumed.catalog, self.root / "output")
             self.assertTrue(built.verify_result.passed)
+
+    def test_residual_english_is_queued_and_translation_continues(self):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            provider = _ResidualEnglishProvider()
+
+            outcome = workflow.translate(catalog, TranslationRouter((provider,)))
+
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(outcome.translated_count, 1)
+            self.assertEqual(outcome.untranslated_count, 1)
+            failed_segment = next(
+                segment for segment in outcome.segments if segment.source_text == "Hero"
+            )
+            self.assertIsNone(failed_segment.target_text)
+            self.assertEqual(
+                failed_segment.metadata["translation_failure"]["code"],
+                "residual_english",
+            )
+            queue = build_translation_review_queue(
+                outcome.catalog,
+                translation=outcome,
+            )
+            queued_failure = next(
+                item for item in queue["items"] if item["source_text"] == "Hero"
+            )
+            self.assertIn("translation_failed", queued_failure["reasons"])
+            self.assertEqual(
+                queued_failure["failure"]["retry_count"],
+                2,
+            )
+
+            resumed_provider = _PrefixProvider()
+            resumed = workflow.translate(
+                catalog,
+                TranslationRouter((resumed_provider,)),
+            )
+
+            self.assertEqual(resumed.translated_count, 1)
+            self.assertEqual(resumed.resumed_count, 1)
+            self.assertEqual(resumed.untranslated_count, 0)
+            retried_segment = next(
+                segment for segment in resumed.segments if segment.source_text == "Hero"
+            )
+            self.assertNotIn("translation_failure", retried_segment.metadata)
 
     def test_dictionary_precedes_cloud_and_cloud_only_handles_misses(self):
         with StructuredWorkflowSession(

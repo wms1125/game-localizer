@@ -77,12 +77,17 @@ from .translation import (
     CloudTranslationProvider,
     DictionaryTranslationProvider,
     HttpResponse,
+    LocalModelTranslationProvider,
     TranslationNotFoundError,
     TranslationProvider,
     TranslationProviderError,
+    TranslationQualityError,
+    TranslationQualityIssue,
     TranslationRequest,
     TranslationResult,
     TranslationRouter,
+    enforce_translation_quality,
+    translation_quality_issues,
 )
 from .pipeline import (
     HanPipelineV1,
@@ -186,7 +191,40 @@ from .multiengine import (
     extract_placeholders,
     validate_resource_syntax,
 )
-
+from .raster import (
+    RASTER_MANIFEST_SCHEMA_VERSION,
+    RASTER_VERIFICATION_REPORT_SCHEMA_VERSION,
+    RasterAppliedAsset,
+    RasterAsset,
+    RasterAssetKind,
+    RasterBuildResult,
+    RasterManifest,
+    RasterSegmentStatus,
+    RasterTextSegment,
+    RasterTextStyle,
+    RasterVerificationIssue,
+    RasterVerificationReport,
+    apply_raster_manifest,
+    discover_raster_assets,
+    load_raster_manifest,
+    verify_raster_manifest,
+    write_raster_manifest,
+)
+from .local_model import (
+    LOCAL_MODEL_BENCHMARK_SCHEMA_VERSION,
+    LocalModelBenchmarkItem,
+    LocalModelBenchmarkReport,
+    benchmark_local_model,
+    select_local_model_samples,
+    write_local_model_benchmark,
+)
+from .comparison import (
+    COMPARISON_SCHEMA_VERSION,
+    compare_unity_catalog,
+    comparison_html,
+    write_comparison_html,
+    write_comparison_report,
+)
 _ADAPTER_RUNTIME_EXPORTS = frozenset(
     {
         "AdapterAmbiguityError",
@@ -210,10 +248,30 @@ _VALIDATION_EXPORTS = frozenset(
         "ProjectValidationRequest",
         "ProjectValidationRunner",
         "VALIDATION_SCHEMA_VERSION",
+        "godot_editor_validator",
         "renpy_sdk_validator",
         "run_official_validator",
         "tree_sha256",
         "validate_font_coverage",
+    }
+)
+_NWJS_EXPORTS = frozenset(
+    {
+        "NWJS_RPG_MAKER_PROBE_SCHEMA_VERSION",
+        "NWJS_RPG_MAKER_VALIDATION_SCHEMA_VERSION",
+        "NwjsRpgMakerValidatorConfig",
+        "NwjsValidationError",
+        "run_nwjs_rpg_maker_validation",
+    }
+)
+_QUALITY_EXPORTS = frozenset(
+    {
+        "QUALITY_REPORT_SCHEMA_VERSION",
+        "REVIEW_QUEUE_SCHEMA_VERSION",
+        "build_translation_review_queue",
+        "build_quality_report",
+        "write_translation_review_queue",
+        "write_quality_report",
     }
 )
 
@@ -229,6 +287,18 @@ def __getattr__(name: str):
         from . import validation
 
         value = getattr(validation, name)
+        globals()[name] = value
+        return value
+    if name in _NWJS_EXPORTS:
+        from . import nwjs
+
+        value = getattr(nwjs, name)
+        globals()[name] = value
+        return value
+    if name in _QUALITY_EXPORTS:
+        from . import quality
+
+        value = getattr(quality, name)
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -311,12 +381,17 @@ __all__ = [
     "CloudTranslationProvider",
     "DictionaryTranslationProvider",
     "HttpResponse",
+    "LocalModelTranslationProvider",
     "TranslationProviderError",
+    "TranslationQualityError",
+    "TranslationQualityIssue",
     "TranslationNotFoundError",
     "TranslationProvider",
     "TranslationRequest",
     "TranslationResult",
     "TranslationRouter",
+    "enforce_translation_quality",
+    "translation_quality_issues",
     "PipelineTranslationError",
     "PipelineTranslationFailed",
     "PipelineTranslationOutcome",
@@ -397,6 +472,10 @@ __all__ = [
     "SESSION_TTL",
     "UserStore",
     "OfficialValidatorConfig",
+    "NWJS_RPG_MAKER_PROBE_SCHEMA_VERSION",
+    "NWJS_RPG_MAKER_VALIDATION_SCHEMA_VERSION",
+    "NwjsRpgMakerValidatorConfig",
+    "NwjsValidationError",
     "ProjectValidationError",
     "ProjectValidationRecord",
     "ProjectValidationRequest",
@@ -404,6 +483,7 @@ __all__ = [
     "VALIDATION_SCHEMA_VERSION",
     "renpy_sdk_validator",
     "run_official_validator",
+    "run_nwjs_rpg_maker_validation",
     "tree_sha256",
     "validate_font_coverage",
     "UnsafePackageError",
@@ -422,4 +502,38 @@ __all__ = [
     "UnrealExtractor",
     "extract_placeholders",
     "validate_resource_syntax",
+    "RASTER_MANIFEST_SCHEMA_VERSION",
+    "RASTER_VERIFICATION_REPORT_SCHEMA_VERSION",
+    "RasterAppliedAsset",
+    "RasterAsset",
+    "RasterAssetKind",
+    "RasterBuildResult",
+    "RasterManifest",
+    "RasterSegmentStatus",
+    "RasterTextSegment",
+    "RasterTextStyle",
+    "RasterVerificationIssue",
+    "RasterVerificationReport",
+    "apply_raster_manifest",
+    "discover_raster_assets",
+    "load_raster_manifest",
+    "verify_raster_manifest",
+    "write_raster_manifest",
+    "LOCAL_MODEL_BENCHMARK_SCHEMA_VERSION",
+    "LocalModelBenchmarkItem",
+    "LocalModelBenchmarkReport",
+    "benchmark_local_model",
+    "select_local_model_samples",
+    "write_local_model_benchmark",
+    "COMPARISON_SCHEMA_VERSION",
+    "compare_unity_catalog",
+    "comparison_html",
+    "write_comparison_html",
+    "write_comparison_report",
+    "QUALITY_REPORT_SCHEMA_VERSION",
+    "REVIEW_QUEUE_SCHEMA_VERSION",
+    "build_translation_review_queue",
+    "build_quality_report",
+    "write_translation_review_queue",
+    "write_quality_report",
 ]

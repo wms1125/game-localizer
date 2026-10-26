@@ -7,14 +7,140 @@ from game_localizer.hanengine.translation import (
     CloudTranslationProvider,
     DictionaryTranslationProvider,
     HttpResponse,
+    LocalModelTranslationProvider,
     TranslationProviderError,
     TranslationRequest,
+    TranslationResult,
     TranslationRouter,
+    translation_quality_issues,
 )
 from game_localizer.hanengine.tts import CloudTtsProvider, TtsRequest, WindowsSapiTts
 
 
 class CloudTranslationTests(unittest.TestCase):
+    def test_local_model_uses_loopback_endpoint_and_structured_request(self):
+        calls = []
+
+        def transport(url, headers, body, timeout):
+            calls.append((url, headers, json.loads(body), timeout))
+            return HttpResponse(
+                200,
+                "application/json",
+                json.dumps(
+                    {
+                        "translation": "使用 [move] 移动。",
+                        "provider": "local-runtime",
+                        "model": "test-q4",
+                        "confidence": 0.88,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:8080/translate",
+            transport=transport,
+            model_name="test-q4",
+        )
+        result = provider.translate(
+            TranslationRequest(
+                "line-1",
+                "Use [move] to move.",
+                "en",
+                "zh-CN",
+                context=("tutorial",),
+            )
+        )
+
+        self.assertEqual(result.text, "使用 [move] 移动。")
+        self.assertEqual(calls[0][0], "http://127.0.0.1:8080/translate")
+        self.assertEqual(calls[0][2]["segment_id"], "line-1")
+        self.assertEqual(calls[0][2]["context"], ["tutorial"])
+        self.assertEqual(calls[0][2]["protected_tokens"], ["[move]"])
+        self.assertNotIn("Authorization", calls[0][1])
+
+    def test_local_model_protects_rich_text_tags(self):
+        calls = []
+
+        def transport(url, headers, body, timeout):
+            calls.append(json.loads(body))
+            return HttpResponse(
+                200,
+                "application/json",
+                json.dumps(
+                    {
+                        "translation": "提取 <b><u>装扮箱</u></b>。",
+                        "provider": "local-runtime",
+                        "model": "test-q4",
+                        "confidence": 0.88,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:8080/translate",
+            transport=transport,
+            model_name="test-q4",
+        )
+        result = provider.translate(
+            TranslationRequest(
+                "line-rich-text",
+                "Extract <b><u>COSMETIC BOX</u></b>.",
+                "en",
+                "zh-CN",
+            )
+        )
+        self.assertEqual(result.text, "提取 <b><u>装扮箱</u></b>。")
+        self.assertEqual(
+            calls[0]["protected_tokens"],
+            ["</b>", "</u>", "<b>", "<u>"],
+        )
+
+    def test_local_model_sends_physical_line_breaks_unchanged(self):
+        calls = []
+
+        def transport(url, headers, body, timeout):
+            calls.append(json.loads(body))
+            return HttpResponse(
+                200,
+                "application/json",
+                json.dumps({"translation": "如何\n捕鱼"}, ensure_ascii=False).encode("utf-8"),
+            )
+
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:8080/translate",
+            transport=transport,
+            model_name="test-q4",
+        )
+        result = provider.translate(
+            TranslationRequest("line-break", "How to\nFish", "en", "zh-CN")
+        )
+
+        self.assertEqual(result.text, "如何\n捕鱼")
+        self.assertEqual(calls[0]["text"], "How to\nFish")
+        self.assertEqual(calls[0]["protected_tokens"], [])
+
+    def test_local_model_leaves_physical_line_break_validation_to_the_router(self):
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:8080/translate",
+            transport=lambda *args: HttpResponse(
+                200,
+                "application/json",
+                json.dumps({"translation": "如何"}, ensure_ascii=False).encode("utf-8"),
+            ),
+            model_name="test-q4",
+        )
+
+        result = provider.translate(
+            TranslationRequest("line-break", "How to\nFish", "en", "zh-CN")
+        )
+        self.assertEqual(result.text, "如何")
+
+    def test_local_model_rejects_non_loopback_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            LocalModelTranslationProvider("https://translate.example.test")
+
     def test_cloud_request_uses_runtime_bearer_token_and_structured_context(self):
         calls = []
 
@@ -67,6 +193,27 @@ class CloudTranslationTests(unittest.TestCase):
         request = TranslationRequest("line-1", "Hello [name]", "en", "zh-CN")
         self.assertEqual(router.translate(request).provider, "dictionary")
         self.assertTrue(router.translate(request).cached)
+
+    def test_router_rejects_literal_newline_marker_loss(self):
+        provider = DictionaryTranslationProvider({"First\\nSecond": "第一行"})
+        router = TranslationRouter((provider,))
+        with self.assertRaisesRegex(TranslationProviderError, "all translation providers failed"):
+            router.translate(TranslationRequest("line-1", "First\\nSecond", "en", "zh-CN"))
+
+    def test_residual_english_gate_allows_the_preserved_kg_unit_only(self):
+        unit_request = TranslationRequest("unit-kg", "kg", "en", "zh-CN")
+        unit_result = TranslationResult("kg", "ollama", "qwen2.5:3b", 0.3)
+        self.assertNotIn(
+            "residual_english",
+            {issue.code for issue in translation_quality_issues(unit_request, unit_result)},
+        )
+
+        phrase_request = TranslationRequest("phrase", "Host Game", "en", "zh-CN")
+        phrase_result = TranslationResult("Host Game", "ollama", "qwen2.5:3b", 0.3)
+        self.assertIn(
+            "residual_english",
+            {issue.code for issue in translation_quality_issues(phrase_request, phrase_result)},
+        )
 
     def test_cloud_errors_are_sanitized(self):
         provider = CloudTranslationProvider(

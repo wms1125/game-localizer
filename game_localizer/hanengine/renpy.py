@@ -11,6 +11,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
+from game_localizer.scanner import scan_project
+
 from .multiengine import extract_placeholders as _extract_generic_placeholders
 from .segments import JsonValue
 
@@ -367,20 +369,25 @@ def renpy_language_identifier(language: str) -> str:
 def renpy_project_files(root: Path) -> tuple[Path, ...]:
     if not isinstance(root, Path):
         raise TypeError("root must be a Path")
-    game = root / "game"
-    if not game.is_dir():
+    snapshot = scan_project(root)
+    if not snapshot.has_dir("game"):
         raise ValueError("Ren'Py project must contain a game directory")
+    prefix = "game/"
     return tuple(
         sorted(
-            path
-            for path in game.rglob("*.rpy")
-            if path.is_file()
-            and "tl" not in path.relative_to(root).parts
-            and path.relative_to(root).as_posix()
-            not in {
+            (
+                root / Path(*relative.split("/"))
+                for relative in snapshot.files
+                if relative.startswith(prefix)
+                and relative.endswith(".rpy")
+                and "tl" not in Path(relative).parts
+                and relative
+                not in {
                 _LANGUAGE_ACTIVATION_PATH.as_posix(),
                 _FONT_CONFIG_PATH.as_posix(),
-            }
+                }
+            ),
+            key=lambda path: path.as_posix().casefold(),
         )
     )
 

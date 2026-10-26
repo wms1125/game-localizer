@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .core import HanCore, RouteBlockedError
@@ -13,7 +14,9 @@ from .tasks import EventSink, StepResult, TaskPlan, TaskState, TaskStep
 from .translation import (
     TranslationNotFoundError,
     TranslationProvider,
+    TranslationProviderError,
     TranslationRequest,
+    enforce_translation_quality,
 )
 
 
@@ -31,11 +34,23 @@ class PipelineTranslationFailed(PipelineTranslationError):
         *,
         translated_count: int,
         resumed_count: int,
+        partial_catalog: LocalizationCatalog | None = None,
+        partial_segments: tuple[Segment, ...] = (),
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        failure_segment_id: str | None = None,
+        failure_retry_count: int = 0,
     ) -> None:
         super().__init__("HanPipelineV1 translation task did not complete")
         self.task = task
         self.translated_count = translated_count
         self.resumed_count = resumed_count
+        self.partial_catalog = partial_catalog
+        self.partial_segments = tuple(partial_segments)
+        self.failure_code = failure_code
+        self.failure_message = failure_message
+        self.failure_segment_id = failure_segment_id
+        self.failure_retry_count = failure_retry_count
 
 
 @dataclass(frozen=True)
@@ -147,7 +162,14 @@ def _catalog_with_segments(
 ) -> LocalizationCatalog:
     by_id = {segment.segment_id: segment for segment in segments}
     entries = tuple(
-        replace(entry, target_text=by_id[entry.segment_id].target_text)
+        replace(
+            entry,
+            target_text=(
+                by_id[entry.segment_id].target_text
+                if entry.segment_id in by_id
+                else entry.target_text
+            ),
+        )
         for entry in catalog.entries
     )
     return replace(catalog, entries=entries)
@@ -179,6 +201,7 @@ class HanPipelineV1:
         resume: bool = True,
         task_id: str | None = None,
         retry_spec: TaskRetrySpec | None = None,
+        reference_translations: Mapping[str, str] | None = None,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -190,6 +213,17 @@ class HanPipelineV1:
             raise TypeError("resume must be a bool")
         if retry_spec is not None and not isinstance(retry_spec, TaskRetrySpec):
             raise TypeError("retry_spec must be a TaskRetrySpec or None")
+        if reference_translations is not None:
+            if not isinstance(reference_translations, Mapping):
+                raise TypeError("reference_translations must be a mapping or None")
+            if any(
+                not isinstance(segment_id, str)
+                or not segment_id
+                or not isinstance(text, str)
+                or not text
+                for segment_id, text in reference_translations.items()
+            ):
+                raise ValueError("reference_translations must map segment IDs to non-empty text")
         required_operations = frozenset(
             {RouteOperation.EXTRACT, RouteOperation.VALIDATE}
         )
@@ -222,6 +256,12 @@ class HanPipelineV1:
             lease.close()
             raise
         completed_segments: list[Segment] = []
+        failure: dict[str, object] = {
+            "code": None,
+            "message": None,
+            "segment_id": None,
+            "retry_count": 0,
+        }
         counts = {
             "translated": 0,
             "resumed": 0,
@@ -247,10 +287,13 @@ class HanPipelineV1:
                 result_model: str | None = None
                 result_confidence: float | None = None
                 if entry.target_text is not None:
+                    metadata = dict(persisted.metadata)
+                    metadata.pop("translation_failure", None)
                     current = replace(
                         persisted,
                         target_text=entry.target_text,
                         translation_source="catalog",
+                        metadata=metadata,
                     )
                     disposition = "catalog"
                     counts["catalog"] += 1
@@ -265,12 +308,19 @@ class HanPipelineV1:
                         source_language=persisted.source_language,
                         target_language=persisted.target_language,
                         context=_translation_context(persisted),
+                        reference_translation=(
+                            None
+                            if reference_translations is None
+                            else reference_translations.get(persisted.segment_id)
+                        ),
                     )
                     try:
                         translation = provider.translate(request)
+                        quality_issues = enforce_translation_quality(request, translation)
                     except TranslationNotFoundError:
                         metadata = dict(persisted.metadata)
                         metadata.pop("translation", None)
+                        metadata.pop("translation_failure", None)
                         current = replace(
                             persisted,
                             target_text=None,
@@ -279,14 +329,61 @@ class HanPipelineV1:
                         )
                         disposition = "untranslated"
                         counts["untranslated"] += 1
+                    except TranslationProviderError as exc:
+                        provider_codes = getattr(exc, "failure_codes", ())
+                        error_codes = tuple(provider_codes)
+                        if not error_codes:
+                            error_codes = (
+                                getattr(exc, "code", type(exc).__name__),
+                            )
+                        error_code = ",".join(error_codes)
+                        retry_count = getattr(exc, "retry_count", 0)
+                        error_message = str(exc)
+                        context.warning(
+                            "Translation failed for segment",
+                            {
+                                "segment_id": persisted.segment_id,
+                                "error_code": error_code,
+                                "error_message": error_message,
+                                "retry_count": retry_count,
+                            },
+                        )
+                        if set(error_codes) == {"residual_english"}:
+                            metadata = dict(persisted.metadata)
+                            metadata.pop("translation", None)
+                            metadata.pop("translation_quality", None)
+                            metadata["translation_failure"] = {
+                                "code": error_code,
+                                "message": error_message,
+                                "retry_count": retry_count,
+                            }
+                            current = replace(
+                                persisted,
+                                target_text=None,
+                                translation_source=None,
+                                metadata=metadata,
+                            )
+                            disposition = "untranslated"
+                            counts["untranslated"] += 1
+                        else:
+                            failure["code"] = error_code
+                            failure["message"] = error_message
+                            failure["segment_id"] = persisted.segment_id
+                            failure["retry_count"] = retry_count
+                            raise
                     else:
                         metadata = dict(persisted.metadata)
+                        metadata.pop("translation_failure", None)
                         metadata["translation"] = {
                             "provider": translation.provider,
                             "model": translation.model,
                             "confidence": translation.confidence,
                             "cached": translation.cached,
                         }
+                        if quality_issues:
+                            metadata["translation_quality"] = [
+                                issue.to_dict() for issue in quality_issues
+                            ]
                         current = replace(
                             persisted,
                             target_text=translation.text,
@@ -357,6 +454,12 @@ class HanPipelineV1:
                 completed,
                 translated_count=counts["translated"],
                 resumed_count=counts["resumed"],
+                partial_catalog=_catalog_with_segments(catalog, tuple(completed_segments)),
+                partial_segments=tuple(completed_segments),
+                failure_code=failure["code"],
+                failure_message=failure["message"],
+                failure_segment_id=failure["segment_id"],
+                failure_retry_count=int(failure["retry_count"] or 0),
             )
         segment_items = tuple(completed_segments)
         return PipelineTranslationOutcome(

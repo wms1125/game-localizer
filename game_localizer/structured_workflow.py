@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -426,6 +427,7 @@ class StructuredWorkflowSession:
         resume: bool = True,
         task_id: str | None = None,
         retry_spec: TaskRetrySpec | None = None,
+        reference_translations: Mapping[str, str] | None = None,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -445,6 +447,7 @@ class StructuredWorkflowSession:
             resume=resume,
             task_id=task_id,
             retry_spec=self.retry_spec if retry_spec is None else retry_spec,
+            reference_translations=reference_translations,
         )
 
     def persisted_events(self, task_id: str) -> tuple[TaskEvent, ...]:
