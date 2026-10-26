@@ -126,6 +126,33 @@ type QualityReportSummary = {
   review: { required: boolean; reasons: string[] };
   issues: QualityIssue[];
 };
+type ComparisonEntry = {
+  segmentId: string;
+  tableName: string;
+  entryId: number | null;
+  sourceText: string;
+  officialZh: string;
+  candidateZh: string;
+  recommendedText: string;
+  category: string;
+  severity: string;
+  reasons: string[];
+};
+type ComparisonReportSummary = {
+  kind: "comparison";
+  reportPath: string;
+  engineId: string;
+  projectFingerprint: string;
+  summary: {
+    entryCount: number;
+    matchCount: number;
+    differenceCount: number;
+    untranslatedCount: number;
+    missingTargetCount: number;
+    categories: Record<string, number>;
+  };
+  entries: ComparisonEntry[];
+};
 type VisualReportSummary = {
   decision: "pass" | "blocked" | "escalate";
   hardGatePassed: boolean;
@@ -168,6 +195,7 @@ interface Window {
     readCatalog: (filePath: string) => Promise<CatalogPayload>;
     writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;
     readQualityReport: (filePath: string) => Promise<QualityReportSummary>;
+    readComparisonReport: (filePath: string) => Promise<ComparisonReportSummary>;
     readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
     readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
     readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;
