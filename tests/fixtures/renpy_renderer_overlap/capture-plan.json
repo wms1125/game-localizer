@@ -1,0 +1,14 @@
+{
+  "schema_version": "hanengine.renpy-capture-plan/v2",
+  "window_title": "HanEngine Renderer Overlap Fixture",
+  "window_timeout_seconds": 30,
+  "post_focus_wait_seconds": 1,
+  "scenarios": [
+    {
+      "sample_id": "main-menu",
+      "actions": [],
+      "expected_screen": "main_menu",
+      "screen_timeout_seconds": 5
+    }
+  ]
+}

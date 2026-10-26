@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "corpus_id": "renpy-synthetic-v1",
+  "engine": "renpy",
+  "authority": {
+    "tier": "synthetic",
+    "description": "Repository-owned fixtures for extraction and build contract regression; not real-project or translation-quality evidence."
+  },
+  "cases": [
+    {
+      "id": "dialogue-menu",
+      "project": "cases/dialogue-menu",
+      "expected": "cases/dialogue-menu/expected.json",
+      "source_tree_sha256": "562c54778d5125da0c9223748f47fc666f885977a7dd50235709004d6b15ad18",
+      "features": ["dialogue", "menu", "interpolation"]
+    },
+    {
+      "id": "wrapped-screen-text",
+      "project": "cases/wrapped-screen-text",
+      "expected": "cases/wrapped-screen-text/expected.json",
+      "source_tree_sha256": "2e14b766ad163d032aa8d8cd456802032275543994d9c455eb9803b8bfcd1f5e",
+      "features": ["wrapped_text", "screen_text", "textbutton", "screen_label"]
+    },
+    {
+      "id": "rich-context",
+      "project": "cases/rich-context",
+      "expected": "cases/rich-context/expected.json",
+      "source_tree_sha256": "2ccb5af2c598654419f35389962f5880435e751684187a1013dfa58bb4de9cae",
+      "features": ["translation_context", "rich_text_tags", "nested_interpolation"]
+    },
+    {
+      "id": "duplicate-source",
+      "project": "cases/duplicate-source",
+      "expected": "cases/duplicate-source/expected.json",
+      "source_tree_sha256": "896a5004c603ca9962dabded67ec052f9e6460b898b4651070060089446b4052",
+      "features": ["duplicate_source", "speaker_context"]
+    }
+  ]
+}

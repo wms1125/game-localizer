@@ -1,0 +1,9 @@
+[
+  null,
+  {
+    "name": "Ari",
+    "nickname": "Harbor Scout",
+    "profile": "Hello, {player}!",
+    "note": "<keep:engine-metadata>"
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-08-05T00:00:00Z",
+    "creators": [
+      "Tool: HanEngine compliance foundation"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://github.com/wms1125/game-localizer/sbom/hanengine-foundation",
+  "name": "HanEngine compliance foundation SBOM",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-HanEngine",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "HanEngine",
+      "versionInfo": "0.0.0-foundation"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-HanEngine",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}
