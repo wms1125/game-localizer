@@ -351,6 +351,14 @@ tbody tr:hover,tbody tr.selected-row{background:rgba(125,162,255,.06)}
 .review-actions-row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
 .review-reasons{color:var(--faint);font-family:var(--mono);font-size:10px;margin-left:auto}
 
+/* ---------- glossary view ---------- */
+.glossary-view .operation-heading{align-items:center}
+.glossary-table{max-height:520px;overflow:auto}
+.glossary-src-col{width:44%}
+.glossary-act-col{width:70px}
+.glossary-input{width:100%;background:var(--bg-raise);border:1px solid var(--line);border-radius:3px;color:var(--ink);padding:6px 9px;font-size:12px}
+.glossary-input:focus{border-color:var(--blue);outline:none}
+
 /* ---------- statusbar ---------- */
 .statusbar{color:var(--faint);border-top:1px solid var(--line);background:var(--bg-raise);align-items:center;gap:20px;min-height:34px;padding:0 18px;font-size:10.5px;font-family:var(--mono);display:flex;letter-spacing:.04em}
 .statusbar>span{align-items:center;gap:6px;display:inline-flex}
