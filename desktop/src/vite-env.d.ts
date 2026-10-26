@@ -196,6 +196,8 @@ interface Window {
     writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;
     readQualityReport: (filePath: string) => Promise<QualityReportSummary>;
     readComparisonReport: (filePath: string) => Promise<ComparisonReportSummary>;
+    readDictionary: (filePath: string) => Promise<{ updated: number; path: string; rows: { id: string; source: string; target: string }[] }>;
+    writeDictionary: (filePath: string, updates: { source: string; target: string }[]) => Promise<{ updated: number; path: string }>;
     readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
     readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
     readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;

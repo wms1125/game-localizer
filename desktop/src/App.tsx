@@ -17,6 +17,8 @@ import {
   Folder,
   FolderOpen,
   Languages,
+  Plus,
+  FilePlus2,
   LayoutPanelLeft,
   ListChecks,
   LoaderCircle,
@@ -38,7 +40,7 @@ import {
   X,
 } from "lucide-react";
 
-type View = "quick" | "workspace" | "review" | "single" | "package" | "tasks" | "visual";
+type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "tasks" | "visual";
 
 const BACKEND_MODE = "player";
 
@@ -175,6 +177,8 @@ function App() {
   const [view, setView] = useState<View>("quick");
   const [comparisonPath, setComparisonPath] = useState("");
   const [comparison, setComparison] = useState<ComparisonReportSummary | null>(null);
+  const [glossaryRows, setGlossaryRows] = useState<{ source: string; target: string }[]>([]);
+  const [glossaryDirty, setGlossaryDirty] = useState(false);
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -554,6 +558,55 @@ function App() {
     }
   }
 
+  async function loadGlossary() {
+    if (!dictionaryPath) return appendLog("[术语表] 请先在翻译工作台加载术语表，或新建一个。");
+    try {
+      const result = await window.hanengine.readDictionary(dictionaryPath);
+      setGlossaryRows(result.rows.map((row) => ({ source: row.source, target: row.target })));
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已加载 ${result.rows.length} 条：${dictionaryPath}`);
+    } catch (error) {
+      appendLog(`[术语表] 读取失败：${String(error)}`);
+    }
+  }
+
+  async function newGlossary() {
+    const result = await window.hanengine?.saveFile({ title: "新建术语表", defaultPath: "glossary.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePath) return;
+    await window.hanengine.writeDictionary(result.filePath, []);
+    setDictionaryPath(result.filePath);
+    setGlossaryRows([]);
+    setGlossaryDirty(false);
+    appendLog(`[术语表] 已新建：${result.filePath}`);
+  }
+
+  async function saveGlossary() {
+    if (!dictionaryPath) return appendLog("[术语表] 请先加载或新建术语表。");
+    try {
+      const result = await window.hanengine.writeDictionary(dictionaryPath, glossaryRows);
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已保存 ${result.updated} 条：${result.path}`);
+    } catch (error) {
+      appendLog(`[术语表] 保存失败：${String(error)}`);
+    }
+  }
+
+  async function chooseGlossaryAndLoad() {
+    const result = await window.hanengine?.selectFile({ title: "加载术语表", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selected = result.filePaths[0];
+    setDictionaryPath(selected);
+    try {
+      const loaded = await window.hanengine.readDictionary(selected);
+      setGlossaryRows(loaded.rows.map((row) => ({ source: row.source, target: row.target })));
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已加载 ${loaded.rows.length} 条：${selected}`);
+    } catch (error) {
+      setGlossaryRows([]);
+      appendLog(`[术语表] 读取失败：${String(error)}`);
+    }
+  }
+
   async function loadQualityReport(output: string) {
     const reportPath = `${output}.quality.json`;
     try {
@@ -779,6 +832,7 @@ function App() {
     { id: "quick" as View, label: "快速汉化", icon: <Play size={16} /> },
     { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
     { id: "review" as View, label: "审阅", icon: <CircleAlert size={16} />, badge: comparison ? comparison.entries.filter((entry) => entry.category !== "match").length : 0 },
+    { id: "glossary" as View, label: "术语表", icon: <Languages size={16} />, badge: glossaryDirty ? 1 : 0 },
     { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
     { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
     { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
@@ -840,6 +894,17 @@ function App() {
             onChooseReport={chooseComparisonReport}
             onAdopt={adoptReviewTarget}
             onOpenWorkspace={() => setView("workspace")}
+          />}
+
+          {view === "glossary" && <GlossaryView
+            dictionaryPath={dictionaryPath}
+            rows={glossaryRows}
+            dirty={glossaryDirty}
+            onReload={loadGlossary}
+            onNew={newGlossary}
+            onSave={saveGlossary}
+            onChooseAndLoad={chooseGlossaryAndLoad}
+            onChangeRows={(updated) => { setGlossaryRows(updated); setGlossaryDirty(true); }}
           />}
 
           {view === "single" && <OperationView title="单文件翻译" description="使用现有 translator.py 处理 TXT、KS、RPY、SCRIPT、CSV 或 JSON 资源。" primaryLabel="执行汉化" onPrimary={() => resourcePath && dictionaryPath && runPython([resourcePath, dictionaryPath], "单文件汉化")}><PathField label="资源文件" value={resourcePath} onPick={async () => { const result = await window.hanengine?.selectFile(); if (result && !result.canceled) setResourcePath(result.filePaths[0]); }} /><PathField label="翻译字典" value={dictionaryPath} onPick={chooseDictionary} /></OperationView>}
@@ -1218,6 +1283,58 @@ function ReviewView({
       </div>
     </>}
     {!comparison && <div className="notice-card"><CircleAlert size={18} /><div><strong>尚未加载对比报告</strong><span>先用 `engine compare` 生成 comparison JSON，或直接加载已有的对比报告文件。</span></div></div>}
+  </section>;
+}
+
+function GlossaryView({
+  dictionaryPath,
+  rows,
+  dirty,
+  onReload,
+  onNew,
+  onSave,
+  onChooseAndLoad,
+  onChangeRows,
+}: {
+  dictionaryPath: string;
+  rows: { source: string; target: string }[];
+  dirty: boolean;
+  onReload: () => void;
+  onNew: () => void;
+  onSave: () => void;
+  onChooseAndLoad: () => void;
+  onChangeRows: (rows: { source: string; target: string }[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (dictionaryPath) onReload();
+  }, [dictionaryPath]);
+  const filtered = rows.filter((row) => !query.trim() || `${row.source} ${row.target}`.toLowerCase().includes(query.trim().toLowerCase()));
+  return <section className="operation-view glossary-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 术语表</span><h2>术语表</h2><p>精确匹配术语表：命中的条目跳过模型直接采用，保障术语一致。保存后运行汉化即自动生效。</p></div>
+      <div className="header-actions">
+        <button className="secondary-button" onClick={onChooseAndLoad}><Upload size={15} />加载</button>
+        <button className="secondary-button" onClick={onNew}><FilePlus2 size={15} />新建</button>
+        <button className="primary-button" disabled={!dirty || !dictionaryPath} onClick={onSave}><Save size={15} />{dirty ? "保存*" : "已保存"}</button>
+      </div>
+    </div>
+    {!dictionaryPath ? <div className="notice-card"><Languages size={18} /><div><strong>尚未加载术语表</strong><span>加载已有 JSON 术语表，或新建一个空表开始整理术语。术语表是可选项；不加载时直接使用本地模型翻译。</span></div></div> : <>
+      <div className="review-filters">
+        <div className="search-box"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索术语或译文" /></div>
+        <span className="review-count">{filtered.length} / {rows.length} 条</span>
+        <button className="secondary-button" onClick={() => onChangeRows([...rows, { source: "", target: "" }])}><Plus size={14} />新增术语</button>
+      </div>
+      <div className="table-wrap glossary-table">
+        <table><thead><tr><th className="glossary-src-col">原文</th><th>译文</th><th className="glossary-act-col">操作</th></tr></thead><tbody>
+          {filtered.length ? filtered.map((row) => <tr key={row.source || `__new_${row.target}_${row.target.length}`}>
+            <td><input className="glossary-input" value={row.source} onChange={(event) => onChangeRows(rows.map((item) => item === row ? { ...item, source: event.target.value } : item))} placeholder="英文原文" /></td>
+            <td><input className="glossary-input" value={row.target} onChange={(event) => onChangeRows(rows.map((item) => item === row ? { ...item, target: event.target.value } : item))} placeholder="官方/审定译文" /></td>
+            <td><button className="cancel-button" title="删除术语" onClick={() => onChangeRows(rows.filter((item) => item !== row))}><X size={13} /></button></td>
+          </tr>) : <tr><td className="empty-table" colSpan={3}>没有术语。点击「新增术语」或加载已有术语表。</td></tr>}
+        </tbody></table>
+      </div>
+    </>}
   </section>;
 }
 

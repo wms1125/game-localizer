@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("hanengine", {
   writeCatalog: (filePath, updates) => ipcRenderer.invoke("catalog:write", filePath, updates),
   readQualityReport: (filePath) => ipcRenderer.invoke("quality:read-report", filePath),
   readComparisonReport: (filePath) => ipcRenderer.invoke("comparison:read-report", filePath),
+  readDictionary: (filePath) => ipcRenderer.invoke("dictionary:read", filePath),
+  writeDictionary: (filePath, updates) => ipcRenderer.invoke("dictionary:write", filePath, updates),
   readVisualReport: (filePath) => ipcRenderer.invoke("visual:read-report", filePath),
   readVisualImagePair: (filePath, sampleId) => ipcRenderer.invoke("visual:read-image-pair", filePath, sampleId),
   readVisualReviewProof: (filePath) => ipcRenderer.invoke("visual:read-review-proof", filePath),
