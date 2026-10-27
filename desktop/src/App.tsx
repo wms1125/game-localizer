@@ -38,9 +38,10 @@ import {
   Upload,
   UserPlus,
   X,
+  Image as ImageIcon,
 } from "lucide-react";
 
-type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "tasks" | "visual";
+type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "raster" | "tasks" | "visual";
 
 const BACKEND_MODE = "player";
 
@@ -179,6 +180,9 @@ function App() {
   const [comparison, setComparison] = useState<ComparisonReportSummary | null>(null);
   const [glossaryRows, setGlossaryRows] = useState<{ source: string; target: string }[]>([]);
   const [glossaryDirty, setGlossaryDirty] = useState(false);
+  const [rasterManifestPath, setRasterManifestPath] = useState("");
+  const [rasterManifest, setRasterManifest] = useState<RasterManifestSummary | null>(null);
+  const [rasterVerification, setRasterVerification] = useState<RasterVerificationSummary | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -607,6 +611,53 @@ function App() {
     }
   }
 
+  async function prepareRasterManifest() {
+    if (!projectPath) return appendLog("[栅格] 请先选择项目目录。");
+    const save = await window.hanengine?.saveFile({ title: "保存栅格清单", defaultPath: "raster-manifest.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!save || save.canceled || !save.filePath) return;
+    const output = save.filePath;
+    const run = await runPython(["raster", "prepare", projectPath, "--output", output, "--language", "zh-CN"], "栅格清单：盘点图片/视频文字资源");
+    if (run?.code !== 0) return;
+    try {
+      const manifest = await window.hanengine.readRasterManifest(output);
+      setRasterManifestPath(output);
+      setRasterManifest(manifest);
+      appendLog(`[栅格] 清单已加载：${manifest.summary.assetCount} 个资产（图 ${manifest.summary.imageCount} / 视频 ${manifest.summary.videoCount}），人工审阅后用 --raster-manifest 合入候选。`);
+    } catch (error) {
+      appendLog(`[栅格] 清单读取失败：${String(error)}`);
+    }
+  }
+
+  async function loadRasterManifest() {
+    const result = await window.hanengine?.selectFile({ title: "加载栅格清单", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    try {
+      const manifest = await window.hanengine.readRasterManifest(result.filePaths[0]);
+      setRasterManifestPath(manifest.manifestPath);
+      setRasterManifest(manifest);
+      appendLog(`[栅格] 已加载清单：${manifest.summary.assetCount} 个资产`);
+    } catch (error) {
+      appendLog(`[栅格] 清单读取失败：${String(error)}`);
+    }
+  }
+
+  async function verifyRaster() {
+    if (!projectPath || !rasterManifestPath) return appendLog("[栅格] 需要项目目录与已加载的清单。");
+    const result = await window.hanengine?.selectDirectory({ title: "选择候选目录（含已翻译图片产物）" });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const candidate = result.filePaths[0];
+    const reportPath = `${rasterManifestPath.replace(/\.json$/i, "")}.verification.json`;
+    const run = await runPython(["raster", "verify", projectPath, rasterManifestPath, "--candidate", candidate, "--output", reportPath], "栅格验证：源图/产物/审批/哈希");
+    if (run?.code !== 0) return;
+    try {
+      const report = await window.hanengine.readRasterVerification(reportPath);
+      setRasterVerification(report);
+      appendLog(`[栅格] 验证${report.passed ? "通过" : "未通过"}：${report.artifactCount} 个产物哈希，${report.issues.length} 个问题`);
+    } catch (error) {
+      appendLog(`[栅格] 验证报告读取失败：${String(error)}`);
+    }
+  }
+
   async function loadQualityReport(output: string) {
     const reportPath = `${output}.quality.json`;
     try {
@@ -833,6 +884,7 @@ function App() {
     { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
     { id: "review" as View, label: "审阅", icon: <CircleAlert size={16} />, badge: comparison ? comparison.entries.filter((entry) => entry.category !== "match").length : 0 },
     { id: "glossary" as View, label: "术语表", icon: <Languages size={16} />, badge: glossaryDirty ? 1 : 0 },
+    { id: "raster" as View, label: "栅格资源", icon: <ImageIcon size={16} /> },
     { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
     { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
     { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
@@ -905,6 +957,17 @@ function App() {
             onSave={saveGlossary}
             onChooseAndLoad={chooseGlossaryAndLoad}
             onChangeRows={(updated) => { setGlossaryRows(updated); setGlossaryDirty(true); }}
+          />}
+
+          {view === "raster" && <RasterView
+            projectPath={projectPath}
+            running={running}
+            manifestPath={rasterManifestPath}
+            manifest={rasterManifest}
+            verification={rasterVerification}
+            onPrepare={prepareRasterManifest}
+            onLoad={loadRasterManifest}
+            onVerify={verifyRaster}
           />}
 
           {view === "single" && <OperationView title="单文件翻译" description="使用现有 translator.py 处理 TXT、KS、RPY、SCRIPT、CSV 或 JSON 资源。" primaryLabel="执行汉化" onPrimary={() => resourcePath && dictionaryPath && runPython([resourcePath, dictionaryPath], "单文件汉化")}><PathField label="资源文件" value={resourcePath} onPick={async () => { const result = await window.hanengine?.selectFile(); if (result && !result.canceled) setResourcePath(result.filePaths[0]); }} /><PathField label="翻译字典" value={dictionaryPath} onPick={chooseDictionary} /></OperationView>}
@@ -1335,6 +1398,75 @@ function GlossaryView({
         </tbody></table>
       </div>
     </>}
+  </section>;
+}
+
+function RasterView({
+  projectPath,
+  running,
+  manifestPath,
+  manifest,
+  verification,
+  onPrepare,
+  onLoad,
+  onVerify,
+}: {
+  projectPath: string;
+  running: boolean;
+  manifestPath: string;
+  manifest: RasterManifestSummary | null;
+  verification: RasterVerificationSummary | null;
+  onPrepare: () => void;
+  onLoad: () => void;
+  onVerify: () => void;
+}) {
+  return <section className="operation-view raster-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 实验能力</span><h2>栅格资源</h2><p>图片/视频文字的清单、人工审阅与候选合并。该能力默认关闭、独立于文本汉化流程；不承诺通用 OCR 或重绘。</p></div>
+      <div className="header-actions">
+        <button className="secondary-button" disabled={running || !projectPath} onClick={onPrepare}>{manifest ? "重新盘点" : "准备清单"}</button>
+        <button className="secondary-button" disabled={running} onClick={onLoad}>加载已有清单</button>
+      </div>
+    </div>
+    {manifest && <>
+      <div className="review-summary">
+        <span>资产 <b>{manifest.summary.assetCount}</b></span>
+        <span>图片 <b>{manifest.summary.imageCount}</b></span>
+        <span>视频 <b>{manifest.summary.videoCount}</b></span>
+        <span>已批准 <b>{manifest.summary.totals.approved}</b></span>
+        <span>待审 <b>{manifest.summary.totals.detected + manifest.summary.totals.manual_review}</b></span>
+        <span className="review-path" title={manifestPath}>{manifestPath}</span>
+      </div>
+      <div className="table-wrap raster-table">
+        <table><thead><tr><th>资产路径</th><th style={{ width: 70 }}>类型</th><th style={{ width: 90 }}>段数</th><th style={{ width: 190 }}>状态</th><th>审阅备注</th></tr></thead><tbody>
+          {manifest.assets.map((asset) => <tr key={asset.relativePath}>
+            <td className="mono" title={asset.relativePath}>{asset.relativePath}</td>
+            <td className="muted-cell">{asset.kind === "video" ? "视频" : "图片"}</td>
+            <td className="num">{asset.segmentCount}</td>
+            <td>
+              <span className="status-pill translated">批准 {asset.statusCounts.approved}</span>{" "}
+              {asset.statusCounts.detected > 0 && <span className="status-pill pending">待处理 {asset.statusCounts.detected}</span>}{" "}
+              {asset.statusCounts.manual_review > 0 && <span className="status-pill draft">人工复核 {asset.statusCounts.manual_review}</span>}
+            </td>
+            <td className="muted-cell" title={asset.reviewReason}>{asset.reviewReason || "—"}</td>
+          </tr>)}
+        </tbody></table>
+      </div>
+      <div className="review-actions-row">
+        <button className="primary-button" disabled={running} onClick={onVerify}>验证候选产物</button>
+        <span className="quick-hint">选择候选目录后校验源图哈希、已批准产物与清单审批状态。</span>
+      </div>
+      {verification && <div className={`quality-report ${verification.passed ? "passed" : "failed"}`}>
+        <div className="quality-report-heading">
+          <div><strong>{verification.passed ? "栅格验证通过" : "栅格验证未通过"}</strong><span>{verification.artifactCount} 个产物哈希已核对</span></div>
+          <span className="quality-report-path" title={verification.reportPath}>{verification.reportPath}</span>
+        </div>
+        {verification.issues.length > 0 && <div className="quality-report-details">
+          {verification.issues.map((issue) => <div className="quality-issue" key={`${issue.code}-${issue.message}`}><strong>{issue.code}</strong><span>{issue.message}</span></div>)}
+        </div>}
+      </div>}
+    </>}
+    {!manifest && <div className="notice-card"><ImageIcon size={18} /><div><strong>尚未加载栅格清单</strong><span>「准备清单」会盘点项目内受支持的图片/视频文字资源（只读，不修改源文件）。清单需经人工审阅后，才可在构建候选时通过 --raster-manifest 合入。</span></div></div>}
   </section>;
 }
 

@@ -153,6 +153,35 @@ type ComparisonReportSummary = {
   };
   entries: ComparisonEntry[];
 };
+type RasterAssetSummary = {
+  relativePath: string;
+  kind: "image" | "video";
+  segmentCount: number;
+  statusCounts: { detected: number; translated: number; approved: number; manual_review: number; other: number };
+  approved: boolean;
+  localizedArtifactPath: string;
+  reviewReason: string;
+};
+type RasterManifestSummary = {
+  kind: "raster-manifest";
+  manifestPath: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  summary: {
+    assetCount: number;
+    imageCount: number;
+    videoCount: number;
+    totals: { detected: number; translated: number; approved: number; manual_review: number; other: number };
+  };
+  assets: RasterAssetSummary[];
+};
+type RasterVerificationSummary = {
+  kind: "raster-verification";
+  reportPath: string;
+  passed: boolean;
+  artifactCount: number;
+  issues: { code: string; message: string }[];
+};
 type VisualReportSummary = {
   decision: "pass" | "blocked" | "escalate";
   hardGatePassed: boolean;
@@ -198,6 +227,8 @@ interface Window {
     readComparisonReport: (filePath: string) => Promise<ComparisonReportSummary>;
     readDictionary: (filePath: string) => Promise<{ updated: number; path: string; rows: { id: string; source: string; target: string }[] }>;
     writeDictionary: (filePath: string, updates: { source: string; target: string }[]) => Promise<{ updated: number; path: string }>;
+    readRasterManifest: (filePath: string) => Promise<RasterManifestSummary>;
+    readRasterVerification: (filePath: string) => Promise<RasterVerificationSummary>;
     readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
     readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
     readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;

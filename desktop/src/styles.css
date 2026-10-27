@@ -359,6 +359,10 @@ tbody tr:hover,tbody tr.selected-row{background:rgba(125,162,255,.06)}
 .glossary-input{width:100%;background:var(--bg-raise);border:1px solid var(--line);border-radius:3px;color:var(--ink);padding:6px 9px;font-size:12px}
 .glossary-input:focus{border-color:var(--blue);outline:none}
 
+/* ---------- raster view ---------- */
+.raster-table{max-height:460px;overflow:auto}
+.raster-table td{vertical-align:middle}
+
 /* ---------- statusbar ---------- */
 .statusbar{color:var(--faint);border-top:1px solid var(--line);background:var(--bg-raise);align-items:center;gap:20px;min-height:34px;padding:0 18px;font-size:10.5px;font-family:var(--mono);display:flex;letter-spacing:.04em}
 .statusbar>span{align-items:center;gap:6px;display:inline-flex}
