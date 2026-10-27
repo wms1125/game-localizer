@@ -47,6 +47,15 @@ class MixedLanguageDetectionTests(unittest.TestCase):
         issues = translation_quality_issues(_request("yum yummy"), _result("yum yummy"))
         self.assertIn("residual_english", {issue.code for issue in issues})
 
+    def test_short_changed_english_output_without_cjk_is_an_error(self):
+        # Cod→Code previously slipped through the >=3-word threshold.
+        issues = translation_quality_issues(_request("Cod"), _result("Code"))
+        self.assertIn("residual_english", {issue.code for issue in issues})
+
+    def test_digit_only_output_is_allowed(self):
+        issues = translation_quality_issues(_request("360"), _result("360"))
+        self.assertNotIn("residual_english", {issue.code for issue in issues})
+
 
 class TerminalPunctuationTests(unittest.TestCase):
     def test_appends_punctuation_matching_reference(self):
