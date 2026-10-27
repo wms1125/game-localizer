@@ -26,6 +26,8 @@ TRANSLATION_ATTEMPTS = 3
 _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
+_REQUEST_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
+
 _SHORT_EXPRESSION_FALLBACKS = {
     "bing bong": "叮咚",
     "yum": "好吃",
@@ -169,7 +171,7 @@ def _ollama_health(ollama_url: str, timeout: float) -> dict[str, str]:
 
 def _request_payload(
     payload: Any,
-) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...], str | None]:
+) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...], str | None, str | None]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     required = ("segment_id", "text", "source_language", "target_language")
@@ -189,6 +191,11 @@ def _request_payload(
         not isinstance(reference_translation, str) or not reference_translation.strip()
     ):
         raise ValueError("reference_translation must be a non-empty string")
+    request_model = payload.get("model")
+    if request_model is not None and (
+        not isinstance(request_model, str) or not _REQUEST_MODEL_RE.fullmatch(request_model)
+    ):
+        raise ValueError("model must match [A-Za-z0-9._:-]{1,80}")
     return (
         payload["segment_id"],
         payload["text"],
@@ -197,6 +204,7 @@ def _request_payload(
         tuple(context),
         tuple(protected_tokens),
         reference_translation,
+        request_model,
     )
 
 
@@ -701,9 +709,13 @@ class TranslationHandler(BaseHTTPRequestHandler):
                 raise ValueError("request body is too large or missing")
             payload = json.loads(self.rfile.read(length))
             values = _request_payload(payload)
+            *request_values, request_model = values
+            model = self.server.model
+            if self.server.accept_request_models and request_model:
+                model = request_model
             translation = _translate_with_retries(
                 ollama_url=self.server.ollama_url,
-                model=self.server.model,
+                model=model,
                 timeout=self.server.timeout,
                 **dict(zip(
                     (
@@ -715,12 +727,12 @@ class TranslationHandler(BaseHTTPRequestHandler):
                         "protected_tokens",
                         "reference_translation",
                     ),
-                    values,
+                    request_values,
                 )),
             )
             self._write_json(
                 HTTPStatus.OK,
-                {"translation": translation, "provider": "ollama", "model": self.server.model},
+                {"translation": translation, "provider": "ollama", "model": model},
             )
         except TranslationBridgeError as exc:
             self._write_json(
@@ -758,12 +770,14 @@ class TranslationServer(ThreadingHTTPServer):
         model: str,
         timeout: float,
         max_body_bytes: int = 1_048_576,
+        accept_request_models: bool = False,
     ) -> None:
         super().__init__(address, TranslationHandler)
         self.ollama_url = _loopback_url(ollama_url)
         self.model = model
         self.timeout = timeout
         self.max_body_bytes = max_body_bytes
+        self.accept_request_models = accept_request_models
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -773,6 +787,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost", "::1"))
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument(
+        "--accept-request-models",
+        action="store_true",
+        help="honor the per-request model field (validated) so clients can switch between installed models",
+    )
     return parser
 
 
@@ -790,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
             ollama_url=args.ollama_url,
             model=args.model,
             timeout=args.timeout,
+            accept_request_models=bool(args.accept_request_models),
         )
     except ValueError as exc:
         print(f"错误: {exc}", file=sys.stderr)
