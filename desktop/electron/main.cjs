@@ -12,6 +12,7 @@ const {
 const { readQualityReport } = require("./quality-report.cjs");
 const { readComparisonReport } = require("./comparison-report.cjs");
 const { writeDictionary, readDictionary } = require("./dictionary-store.cjs");
+const { readRasterManifest, readRasterVerificationReport } = require("./raster-report.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const BACKEND_ROOT = app.isPackaged
@@ -336,6 +337,14 @@ app.whenReady().then(() => {
   ipcMain.handle("dictionary:read", async (event, filePath) => {
     await requireAuthenticated(event);
     return readDictionary(path.resolve(filePath));
+  });
+  ipcMain.handle("raster:read-manifest", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readRasterManifest(path.resolve(filePath));
+  });
+  ipcMain.handle("raster:read-verification", async (event, filePath) => {
+    await requireAuthenticated(event);
+    return readRasterVerificationReport(path.resolve(filePath));
   });
   ipcMain.handle("visual:read-report", async (event, filePath) => {
     await requireAuthenticated(event);
