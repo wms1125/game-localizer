@@ -80,6 +80,29 @@ class OllamaBridgeTests(unittest.TestCase):
         )
         self.assertEqual(values[0], "unity:1")
         self.assertEqual(values[4], ("HUD",))
+        self.assertIsNone(values[7])
+
+    def test_request_model_field_is_validated_and_optional(self):
+        values = _request_payload(
+            {
+                "segment_id": "unity:1",
+                "text": "Hello",
+                "source_language": "en",
+                "target_language": "zh-CN",
+                "model": "qwen2.5:7b",
+            }
+        )
+        self.assertEqual(values[7], "qwen2.5:7b")
+        with self.assertRaisesRegex(ValueError, "model must match"):
+            _request_payload(
+                {
+                    "segment_id": "unity:1",
+                    "text": "Hello",
+                    "source_language": "en",
+                    "target_language": "zh-CN",
+                    "model": "../etc/passwd",
+                }
+            )
         with self.assertRaisesRegex(ValueError, "context"):
             _request_payload({"segment_id": "x", "text": "x", "source_language": "en", "target_language": "zh-CN", "context": "HUD"})
 

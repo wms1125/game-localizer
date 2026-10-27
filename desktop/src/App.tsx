@@ -42,8 +42,10 @@ import {
 } from "lucide-react";
 
 type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "raster" | "tasks" | "visual";
+type ModelTier = "3b" | "7b";
 
 const BACKEND_MODE = "player";
+const MODEL_NAMES: Record<ModelTier, string> = { "3b": "qwen2.5:3b", "7b": "qwen2.5:7b" };
 
 const statusLabel: Record<TranslationRow["status"], string> = {
   translated: "已完成",
@@ -168,6 +170,13 @@ function App() {
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelTier, setModelTier] = useState<ModelTier>(() => {
+    try {
+      return window.localStorage.getItem("hanengine.modelTier") === "7b" ? "7b" : "3b";
+    } catch {
+      return "3b";
+    }
+  });
   const [gameExecutablePath, setGameExecutablePath] = useState(() => {
     try {
       return window.localStorage.getItem("hanengine.gameExecutablePath") || "";
@@ -326,6 +335,16 @@ function App() {
       // Settings still apply to the current session when storage is unavailable.
     }
     appendLog("[语言] 客户端启动语言：" + (value === "zh-CN" ? "简体中文" : "原文"));
+  }
+
+  function updateModelTier(value: ModelTier) {
+    setModelTier(value);
+    try {
+      window.localStorage.setItem("hanengine.modelTier", value);
+    } catch {
+      // Settings still apply to the current session when storage is unavailable.
+    }
+    appendLog("[模型] 翻译档位：" + (value === "7b" ? "7B · 实验（需桥接启用 --accept-request-models）" : "3B · 推荐"));
   }
 
   async function chooseGameExecutable() {
@@ -526,7 +545,7 @@ function App() {
     const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
     const output = result.filePaths[0];
     setQualityReport(null);
-    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--language", "zh-CN", "--mode", BACKEND_MODE], "翻译、构建并验证");
+    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--local-model-endpoint", "http://127.0.0.1:8080/translate", "--local-model-name", MODEL_NAMES[modelTier], "--language", "zh-CN", "--mode", BACKEND_MODE], "翻译、构建并验证");
     await loadQualityReport(output);
   }
 
@@ -697,7 +716,7 @@ function App() {
     setQualityReport(null);
     setActiveWorkflowTaskIds([]);
     const result = await runPython(
-      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--language", "zh-CN", "--mode", BACKEND_MODE],
+      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--local-model-endpoint", "http://127.0.0.1:8080/translate", "--local-model-name", MODEL_NAMES[modelTier], "--language", "zh-CN", "--mode", BACKEND_MODE],
       "一键汉化：提取、翻译、校验、构建和验证",
     );
     setQuickStatus(result?.code === 0 ? "completed" : "failed");
@@ -1010,8 +1029,10 @@ function App() {
       {settingsOpen && <ClientSettingsDialog
         language={gameLanguage}
         executablePath={gameExecutablePath}
+        modelTier={modelTier}
         onClose={() => setSettingsOpen(false)}
         onLanguageChange={updateGameLanguage}
+        onModelTierChange={updateModelTier}
         onChooseExecutable={() => void chooseGameExecutable()}
         onLaunch={() => void launchSelectedGame()}
       />}
@@ -1022,15 +1043,19 @@ function App() {
 function ClientSettingsDialog({
   language,
   executablePath,
+  modelTier,
   onClose,
   onLanguageChange,
+  onModelTierChange,
   onChooseExecutable,
   onLaunch,
 }: {
   language: GameLanguage;
   executablePath: string;
+  modelTier: ModelTier;
   onClose: () => void;
   onLanguageChange: (value: GameLanguage) => void;
+  onModelTierChange: (value: ModelTier) => void;
   onChooseExecutable: () => void;
   onLaunch: () => void;
 }) {
@@ -1038,6 +1063,7 @@ function ClientSettingsDialog({
     <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="客户端设置" onMouseDown={(event) => event.stopPropagation()}>
       <div className="settings-heading"><div><span className="eyebrow">HanEngine</span><h2>客户端设置</h2></div><button className="icon-button" title="关闭" onClick={onClose}><X size={17} /></button></div>
       <div className="settings-field"><span>启动语言</span><div className="settings-segment" role="radiogroup" aria-label="启动语言"><button className={language === "zh-CN" ? "active" : ""} role="radio" aria-checked={language === "zh-CN"} onClick={() => onLanguageChange("zh-CN")}>简体中文</button><button className={language === "source" ? "active" : ""} role="radio" aria-checked={language === "source"} onClick={() => onLanguageChange("source")}>原文</button></div></div>
+      <div className="settings-field"><span>模型档位</span><div className="settings-segment" role="radiogroup" aria-label="模型档位"><button className={modelTier === "3b" ? "active" : ""} role="radio" aria-checked={modelTier === "3b"} onClick={() => onModelTierChange("3b")}>3B · 推荐</button><button className={modelTier === "7b" ? "active" : ""} role="radio" aria-checked={modelTier === "7b"} onClick={() => onModelTierChange("7b")}>7B · 实验</button></div><small className="settings-hint">7B 需已安装模型且桥接以 --accept-request-models 启动；速度约为 3B 的 1/6。</small></div>
       <div className="settings-field"><span>游戏启动程序</span><div className="settings-path"><input value={executablePath} readOnly placeholder="尚未选择" /><button className="secondary-button" onClick={onChooseExecutable}>浏览</button></div></div>
       <div className="settings-actions"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onLaunch} disabled={!executablePath}><Play size={15} />启动游戏</button></div>
     </section>
