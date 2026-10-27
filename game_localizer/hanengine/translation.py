@@ -547,12 +547,16 @@ def translation_quality_issues(
                     "model returned the source text unchanged",
                 )
             )
-        elif len(ascii_words) >= 3 and not re.search(r"[\u3400-\u9fff]", target):
+        elif ascii_words and not re.search(r"[\u3400-\u9fff]", target) and not preserved_unit:
+            # A zh-CN result with zero Chinese characters but Latin words is a
+            # translation failure even when it differs from the source: short
+            # outputs like Cod→Code previously slipped through the >=3-word
+            # threshold and shipped untranslated English into the candidate.
             issues.append(
                 TranslationQualityIssue(
                     "residual_english",
                     "error",
-                    "model result contains only residual English words",
+                    "model result contains no Chinese characters",
                 )
             )
         else:
