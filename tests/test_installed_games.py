@@ -119,6 +119,22 @@ class DiscoverSteamGamesTests(unittest.TestCase):
             self.assertTrue(all(game["source"] == "steam" for game in games))
             self.assertTrue(games[0]["install_dir"].endswith("Grounded"))
 
+    def test_filters_known_non_game_tool_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            steamapps = root / "steamapps"
+            steamapps.mkdir(parents=True)
+            for index, (app_id, name, install) in enumerate([
+                ("365670", "Blender", "Blender"),
+                ("228980", "Steamworks Common Redistributables", "Steamworks Common Redistributables"),
+                ("413150", "Stardew Valley", "Stardew Valley"),
+            ]):
+                manifest = f'"AppState"\n{{\n\t"appid"\t\t"{app_id}"\n\t"name"\t\t"{name}"\n\t"installdir"\t\t"{install}"\n}}'
+                (steamapps / f"appmanifest_{app_id}.acf").write_text(manifest, encoding="utf-8")
+                (steamapps / "common" / install).mkdir(parents=True, exist_ok=True)
+            games = discover_steam_games(root)
+            self.assertEqual([game["name"] for game in games], ["Stardew Valley"])
+
 
 class DiscoverInstalledGamesTests(unittest.TestCase):
     def test_scans_registry_and_default_roots_without_duplicates(self):
@@ -222,9 +238,19 @@ class EpicGamesTests(unittest.TestCase):
             "DisplayName": "Astra Game",
             "AppName": "AstraGame",
             "CatalogItemId": "5f6c2b1e",
+            "CatalogNamespace": "1bbc3aaa",
             "InstallLocation": install_dir.as_posix(),
         })
+        ue_item = json.dumps({
+            "DisplayName": "Fab UE Plugin",
+            "AppName": "FabPlugin_5.5",
+            "CatalogItemId": "c5c30696",
+            "CatalogNamespace": "ue",
+            "InstallLocation": (root / "UE_5.5").as_posix(),
+        })
+        (root / "UE_5.5").mkdir(parents=True, exist_ok=True)
         (manifests / "a.item").write_text(game_item, encoding="utf-8")
+        (manifests / "a2.item").write_text(ue_item, encoding="utf-8")
         (manifests / "b.item").write_text(self.EOS_ITEM, encoding="utf-8")
         (manifests / "c.item").write_text(self.LAUNCHER_ITEM, encoding="utf-8")
         (manifests / "broken.item").write_text("{not json", encoding="utf-8")
@@ -235,12 +261,13 @@ class EpicGamesTests(unittest.TestCase):
             "DisplayName": "Astra Game",
             "AppName": "AstraGame",
             "CatalogItemId": "5f6c2b1e",
+            "CatalogNamespace": "1bbc3aaa",
             "InstallLocation": "C:/Program Files/Epic Games/Astra",
         })
         entry = parse_epic_manifest(game_item)
         assert entry is not None
         self.assertEqual(entry["name"], "Astra Game")
-        self.assertEqual(entry["app_id"], "5f6c2b1e")
+        self.assertEqual(entry["app_id"], "5f6c2b1e@1bbc3aaa")
         self.assertTrue(entry["install_dir"].endswith("Astra"))
         self.assertIsNone(parse_epic_manifest("{not json"))
         self.assertIsNone(parse_epic_manifest(json.dumps({"DisplayName": "No Location"})))
@@ -251,6 +278,7 @@ class EpicGamesTests(unittest.TestCase):
             games = discover_epic_games(program_data=Path(directory))
             self.assertEqual([game["name"] for game in games], ["Astra Game"])
             self.assertEqual(games[0]["source"], "epic")
+            self.assertEqual(games[0]["app_id"], "5f6c2b1e@1bbc3aaa")
 
     def test_skips_missing_install_locations(self):
         with tempfile.TemporaryDirectory() as directory:

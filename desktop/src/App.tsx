@@ -203,6 +203,8 @@ function App() {
   const [rasterVerification, setRasterVerification] = useState<RasterVerificationSummary | null>(null);
   const [discoveredGames, setDiscoveredGames] = useState<DiscoveredGame[] | null>(null);
   const [discoveredLoading, setDiscoveredLoading] = useState(false);
+  const [selectedGame, setSelectedGame] = useState<DiscoveredGame | null>(null);
+  const [autoRunGame, setAutoRunGame] = useState<DiscoveredGame | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -715,6 +717,62 @@ function App() {
     void scanInstalledGames();
   }, []);
 
+  async function startGameFlow(game: DiscoveredGame) {
+    setSelectedGame(game);
+    setQuickStatus("idle");
+    setQualityReport(null);
+    appendLog(`[选择] ${game.name}（${game.install_dir}）`);
+    try {
+      const { root } = await window.hanengine.candidatesRoot();
+      const safeName = game.name.replace(/[\\/:*?"<>|]/g, "_").trim() || "game";
+      const output = `${root.replace(/[\\/]$/, "")}/${safeName}`;
+      setQuickOutputPath(output);
+      setAutoRunGame(game);
+      await applyProjectPath(game.install_dir);
+    } catch (error) {
+      appendLog(`[选择] 准备汉化环境失败：${String(error)}`);
+      setSelectedGame(null);
+      setAutoRunGame(null);
+    }
+  }
+
+  // Auto-run once detection has settled: readiness triggers the pipeline;
+  // a settled detection without readiness fails honestly.
+  useEffect(() => {
+    if (!autoRunGame) return;
+    if (canLocalizeProject && quickOutputPath && !running && quickStatus === "idle") {
+      const game = autoRunGame;
+      setAutoRunGame(null);
+      appendLog(`[自动] 《${game.name}》检测就绪，自动开始：提取 → 翻译 → 校验 → 构建。`);
+      void runQuickLocalization();
+    } else if (detection && !canLocalizeProject) {
+      setAutoRunGame(null);
+      setQuickStatus("failed");
+      const reasons = detection.reasons?.map(detectionReasonLabel).join("；") || "未检测到可安全汉化的受支持引擎";
+      appendLog(`[自动] 《${autoRunGame.name}》无法汉化：${reasons}`);
+    }
+  }, [autoRunGame, detection, canLocalizeProject, quickOutputPath, running, quickStatus]);
+
+  function backToGameWall() {
+    setSelectedGame(null);
+    setAutoRunGame(null);
+    setQuickStatus("idle");
+    setQualityReport(null);
+    setDetection(null);
+    setProjectPath("");
+    setQuickOutputPath("");
+    appendLog("[返回] 已回到游戏库。");
+  }
+
+  async function openOutputFolder() {
+    if (!quickOutputPath) return;
+    try {
+      await window.hanengine.openPath(quickOutputPath);
+    } catch (error) {
+      appendLog(`打开目录失败：${String(error)}`);
+    }
+  }
+
   async function loadQualityReport(output: string) {
     const reportPath = `${output}.quality.json`;
     try {
@@ -937,7 +995,7 @@ function App() {
   }
 
   const navItems = [
-    { id: "quick" as View, label: "快速汉化", icon: <Play size={16} /> },
+    { id: "quick" as View, label: "游戏库", icon: <Play size={16} /> },
     { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
     { id: "review" as View, label: "审阅", icon: <CircleAlert size={16} />, badge: comparison ? comparison.entries.filter((entry) => entry.category !== "match").length : 0 },
     { id: "glossary" as View, label: "术语表", icon: <Languages size={16} />, badge: glossaryDirty ? 1 : 0 },
@@ -971,7 +1029,7 @@ function App() {
 
         <main className="workspace">
           {sidebarCollapsed && <button className="restore-sidebar icon-button" title="展开工作栏" onClick={() => setSidebarCollapsed(false)}><Menu size={16} /></button>}
-          <div className="workspace-header"><div><div className="breadcrumbs"><span>HanEngine</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? "翻译工作台" : view === "quick" ? "快速汉化" : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span><button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button></div></div>
+          <div className="workspace-header"><div><div className="breadcrumbs"><span>HanEngine</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? "翻译工作台" : view === "quick" ? "游戏库" : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span><button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button></div></div>
 
           {view === "workspace" && <>
             <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载术语表（可选）" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
@@ -981,22 +1039,17 @@ function App() {
             <section className="translation-area"><div className="table-wrap"><table><thead><tr><th className="id-col">ID</th><th className="context-col">上下文</th><th>原文</th><th>译文</th><th className="status-col">状态</th></tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id} className={row.id === selectedId ? "selected-row" : ""} onClick={() => setSelectedId(row.id)}><td className="mono">{row.id}</td><td className="muted-cell">{row.context}</td><td>{row.source}</td><td className={!row.target ? "placeholder-cell" : ""}>{row.target || "点击下方编辑译文"}</td><td><span className={`status-pill ${row.status}`}>{statusLabel[row.status]}</span></td></tr>) : <tr><td className="empty-table" colSpan={5}>尚未加载翻译目录。打开项目后点击“提取文本”，或直接打开 catalog JSON。</td></tr>}</tbody></table></div><div className="editor-panel"><div className="editor-heading"><div><span className="eyebrow">当前条目</span><strong>{selected?.context || "未选择"}</strong></div><span className="editor-id">{selected?.id || "-"}</span></div><div className="editor-fields"><div><label>原文</label><div className="source-preview">{selected?.source || "选择一条翻译记录"}</div></div><div><label>译文</label><textarea value={selected?.target || ""} onChange={(event) => updateSelectedTarget(event.target.value)} placeholder="输入简体中文译文..." /></div></div></div></section>
           </>}
           {view === "quick" && <QuickLocalizationView
-            projectPath={projectPath}
-            detection={detection}
-            candidate={detectedCandidate}
+            selectedGame={selectedGame}
             discoveredGames={discoveredGames}
             discoveredLoading={discoveredLoading}
             onRefreshGames={() => void scanInstalledGames()}
-            onSelectGame={(path) => void applyProjectPath(path)}
+            onStartGame={(game) => void startGameFlow(game)}
+            onBackToWall={backToGameWall}
+            onOpenOutput={() => void openOutputFolder()}
             outputPath={quickOutputPath}
             running={running}
             status={quickStatus}
             qualityReport={qualityReport}
-            canLocalize={Boolean(canLocalizeProject)}
-            onOpenProject={openProject}
-            onExtract={extractQuickCatalog}
-            onChooseOutput={chooseQuickOutput}
-            onRun={runQuickLocalization}
             onOpenTasks={() => setView("tasks")}
           />}
 
@@ -1342,88 +1395,113 @@ function VisualVerificationView({
   </section>;
 }
 
+function GameCover({ source, appId, name }: { source: string; appId: string; name: string }) {
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setIndex(0);
+    setCandidates([]);
+    window.hanengine.resolveCovers({ source, appId, name }).then((result) => {
+      if (live) setCandidates(result.candidates || []);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [source, appId]);
+  const url = index < candidates.length ? candidates[index] : null;
+  if (!url) return null;
+  return <img key={url} src={url} loading="lazy" alt="" onError={() => setIndex((value) => value + 1)} />;
+}
+
+function GameCard({ game, selected, onStart }: { game: DiscoveredGame; selected: boolean; onStart: () => void }) {
+  return <button className={`poker-card ${selected ? "selected" : ""}`} onClick={onStart} title={`汉化《${game.name}》（${game.install_dir}）`}>
+    <span className="game-cover" data-source={game.source}>
+      <span className="game-cover-fallback" data-initial={game.name.slice(0, 1).toUpperCase()} />
+      <GameCover source={game.source} appId={game.app_id} name={game.name} />
+    </span>
+    <span className="game-src">{SOURCE_LABELS[game.source] ?? game.source}</span>
+    <span className="poker-card-name">{game.name}</span>
+  </button>;
+}
+
 function QuickLocalizationView({
-  projectPath,
-  detection,
-  candidate,
+  selectedGame,
   discoveredGames,
   discoveredLoading,
   onRefreshGames,
-  onSelectGame,
+  onStartGame,
+  onBackToWall,
+  onOpenOutput,
   outputPath,
   running,
   status,
   qualityReport,
-  canLocalize,
-  onOpenProject,
-  onExtract,
-  onChooseOutput,
-  onRun,
   onOpenTasks,
 }: {
-  projectPath: string;
-  detection: DetectionReport | null;
-  candidate: DetectionCandidate | null;
+  selectedGame: DiscoveredGame | null;
   discoveredGames: DiscoveredGame[] | null;
   discoveredLoading: boolean;
   onRefreshGames: () => void;
-  onSelectGame: (installDir: string) => void;
+  onStartGame: (game: DiscoveredGame) => void;
+  onBackToWall: () => void;
+  onOpenOutput: () => void;
   outputPath: string;
   running: boolean;
   status: "idle" | "running" | "completed" | "failed";
   qualityReport: QualityReportSummary | null;
-  canLocalize: boolean;
-  onOpenProject: () => void;
-  onExtract: () => void;
-  onChooseOutput: () => void;
-  onRun: () => void;
   onOpenTasks: () => void;
 }) {
   const [gameQuery, setGameQuery] = useState("");
-  const [gameListOpen, setGameListOpen] = useState(false);
-  const capability = capabilityNames(candidate);
-  const ready = Boolean(projectPath && candidate && canLocalize);
-  const canRunTranslation = Boolean(ready && outputPath);
-  const canExtract = Boolean(ready && outputPath);
-  const capabilityTitle = !ready ? "当前项目仅允许检测" : canRunTranslation ? "可以执行一键汉化" : "选择输出目录后可执行";
-  const capabilityDescription = !ready
-    ? (candidate?.limitations?.join("；") || detection?.reasons?.map(detectionReasonLabel).join("；") || "适配器能力或 HanGuard 路由不足，已禁用提取和构建。")
-    : `HanGuard 已允许：${capability.filter((item) => item !== "detect").join("、") || "结构化构建"}；未加载术语表时使用本地模型直接翻译。`;
+  const filtered = useMemo(
+    () => (discoveredGames || []).filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())),
+    [discoveredGames, gameQuery],
+  );
+  const flowStarted = Boolean(selectedGame) && status !== "idle";
+  const qualityStatus = qualityReport?.status;
   return <section className="operation-view quick-view">
-    <div className="operation-heading">
-      <div><span className="eyebrow">HanEngine / 一键汉化</span><h2>快速汉化</h2><p>选择游戏和输出目录即可开始：检测、提取、翻译、校验、构建、验证六步自动串联，全程本地运行。</p></div>
-      <button className="secondary-button" onClick={onOpenTasks}><ListChecks size={15} />查看任务</button>
-    </div>
-    <div className="quick-steps">
-      <div className={`quick-step ${projectPath ? "done" : "active"}`}><span>1</span><div><strong>选择游戏目录</strong><small>{projectPath || "从一个已授权的原始工程开始"}</small></div><button className="secondary-button" onClick={onOpenProject}>{projectPath ? "更换" : "选择"}</button></div>
-      <div className={`quick-step ${candidate ? "done" : projectPath ? "active" : "locked"}`}><span>2</span><div><strong>自动检测引擎</strong><small>{candidate ? `${candidate.display_name} · ${candidate.score}%` : "选择目录后自动检测"}</small></div>{candidate && <Check size={16} className="step-check" />}</div>
-      <div className={`quick-step ${outputPath ? "done" : projectPath ? "active" : "locked"}`}><span>3</span><div><strong>选择输出目录</strong><small>{outputPath || "必须位于游戏项目之外"}</small></div><button className="secondary-button" onClick={onChooseOutput} disabled={!projectPath}>浏览</button></div>
-    </div>
-    <div className="game-picker">
-      <div className="game-picker-head">
-        <button className="secondary-button" disabled={discoveredLoading} onClick={onRefreshGames}>{discoveredLoading ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{discoveredLoading ? "扫描中…" : discoveredGames ? `已装游戏 · ${discoveredGames.length}` : "扫描本机游戏"}</button>
-        {discoveredGames && discoveredGames.length > 0 && <div className="search-box"><Search size={13} /><input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="搜索已安装游戏" /></div>}
+    {!flowStarted ? <div className="game-wall-wrap">
+      <div className="operation-heading wall-heading">
+        <div><span className="eyebrow">HanEngine / 游戏库</span><h2>选择要汉化的游戏</h2><p>点击游戏卡片即可自动完成：检测 → 提取 → 翻译 → 校验 → 构建，全程本地运行，不改动原游戏。</p></div>
+        <button className="secondary-button" disabled={discoveredLoading} onClick={onRefreshGames}>{discoveredLoading ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{discoveredLoading ? "扫描中…" : discoveredGames ? `重新扫描 · ${discoveredGames.length} 款` : "扫描本机游戏"}</button>
       </div>
-      {discoveredGames && discoveredGames.length > 0 && <div className="game-grid">
-        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).map((game) => <button key={`${game.app_id}-${game.install_dir}`} className={`game-card ${projectPath === game.install_dir ? "selected" : ""}`} onClick={() => onSelectGame(game.install_dir)} title={`${game.name} — ${game.install_dir}`}>
-          <span className="game-cover" data-source={game.source}>
-            <span className="game-cover-fallback" data-initial={game.name.slice(0, 1).toUpperCase()} />
-            {game.source === "steam" && game.app_id && <img src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.app_id}/header.jpg`} loading="lazy" alt="" onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />}
-            <span className="game-src">{SOURCE_LABELS[game.source] ?? game.source}</span>
-          </span>
-          <span className="game-card-name">{game.name}</span>
-        </button>)}
-        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).length === 0 && <div className="game-grid-empty">没有匹配「{gameQuery}」的游戏</div>}
+      {discoveredGames && discoveredGames.length > 0 && <div className="wall-toolbar">
+        <div className="search-box"><Search size={13} /><input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="搜索游戏名" /></div>
+        <span className="wall-count">{filtered.length} 款</span>
       </div>}
-    </div>
-    {detection && <div className={`capability-card ${ready ? "allowed" : "blocked"}`}>
-      {ready ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
-      <div><strong>{capabilityTitle}</strong><span>{capabilityDescription}</span>{candidate?.capability_matrix && <small className="capability-matrix-summary">{capabilityMatrixLabel(candidate.capability_matrix)}</small>}</div>
-      <span className="capability-state">{detection.status}</span>
+      <div className="game-wall">
+        {filtered.map((game) => <GameCard key={`${game.source}-${game.app_id}-${game.install_dir}`} game={game} selected={false} onStart={() => onStartGame(game)} />)}
+      </div>
+      {discoveredGames === null && <div className="wall-empty"><LoaderCircle size={18} className="spin" />正在扫描本机已安装的游戏…</div>}
+      {discoveredGames !== null && discoveredGames.length === 0 && <div className="wall-empty">没有发现已安装的游戏。支持 Steam / Epic / GOG / EA / Xbox 平台；也可以从左上角「打开项目」手动选择游戏目录。</div>}
+      {discoveredGames !== null && discoveredGames.length > 0 && filtered.length === 0 && <div className="wall-empty">没有匹配「{gameQuery}」的游戏。</div>}
+    </div> : <div className="deliver-panel">
+      <button className="back-link" onClick={onBackToWall}><ChevronLeft size={14} />返回游戏库</button>
+      <div className="deliver-hero">
+        <span className="eyebrow">{selectedGame ? SOURCE_LABELS[selectedGame.source] ?? selectedGame.source : "HanEngine"}</span>
+        <h2>{selectedGame?.name}</h2>
+        <p>{running
+          ? "正在自动完成：检测 → 提取 → 翻译 → 校验 → 构建。全程本地运行，原游戏不会被改动。"
+          : status === "completed"
+            ? "汉化流程已结束，结果如下。"
+            : "这个游戏暂时无法自动汉化，原因在下方说明。"}</p>
+        {running && <div className="deliver-progress"><LoaderCircle size={17} className="spin" /><span>处理中，可能需要几分钟…</span></div>}
+      </div>
+      {status === "completed" && qualityReport && <div className={`deliver-result ${qualityReport.status}`}>
+        <div className="deliver-status"><CircleCheck size={18} /><strong>{qualityStatusLabel(qualityReport.status)}</strong><span>{qualityReport.summary.translatedCount}/{qualityReport.summary.segmentCount} 段已翻译{qualityReport.summary.untranslatedCount > 0 ? `，漏译 ${qualityReport.summary.untranslatedCount} 段（已如实标记，不会假装通过）` : "，质量校验通过"}。</span></div>
+        <div className="deliver-actions">
+          <button className="primary-button" onClick={onOpenOutput}><ExternalLink size={15} />打开汉化结果目录</button>
+          <button className="secondary-button" onClick={onBackToWall}>再汉化一个</button>
+          <button className="secondary-button" onClick={onOpenTasks}><ListChecks size={15} />任务中心</button>
+        </div>
+      </div>}
+      {status === "failed" && <div className="deliver-result failed">
+        <div className="deliver-status"><CircleAlert size={18} /><strong>无法完成汉化</strong><span>常见原因：该游戏的引擎暂不受支持，或质量校验未通过。可打开输出目录查看日志，或换一个游戏。</span></div>
+        <div className="deliver-actions">
+          {outputPath && <button className="secondary-button" onClick={onOpenOutput}><ExternalLink size={15} />打开输出目录</button>}
+          <button className="primary-button" onClick={onBackToWall}>返回游戏库</button>
+        </div>
+      </div>}
+      <QualityReportPanel report={qualityReport} />
     </div>}
-    <div className="quick-actions"><button className="secondary-button" disabled={!canExtract || running} onClick={onExtract}><ArrowDownToLine size={15} />先提取文本</button><button className="primary-button" disabled={!canRunTranslation || running} onClick={onRun}>{running ? <LoaderCircle size={15} className="spin" /> : status === "completed" ? <CircleCheck size={15} /> : <Play size={15} />}{running ? "处理中" : status === "completed" ? "再次运行" : "一键汉化"}</button><span className="quick-hint">翻译全程本地生成；可选项：在高级设置加载术语表提升术语一致性。先提取不会修改原项目。</span></div>
-    <QualityReportPanel report={qualityReport} />
-    {status !== "idle" && <div className={`quick-result ${status}`}><span>{status === "completed" ? "汉化流程已完成，可在任务中心查看产物。" : status === "failed" ? "汉化流程失败，可从任务中心查看原因并重试。" : "正在执行 HanTask 流程，关闭应用后仍可从任务中心继续。"}</span><button className="icon-button" title="打开任务中心" onClick={onOpenTasks}><ExternalLink size={15} /></button></div>}
   </section>;
 }
 
