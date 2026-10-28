@@ -153,6 +153,12 @@ type ComparisonReportSummary = {
   };
   entries: ComparisonEntry[];
 };
+type DiscoveredGame = {
+  source: string;
+  app_id: string;
+  name: string;
+  install_dir: string;
+};
 type RasterAssetSummary = {
   relativePath: string;
   kind: "image" | "video";

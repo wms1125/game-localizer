@@ -192,6 +192,8 @@ function App() {
   const [rasterManifestPath, setRasterManifestPath] = useState("");
   const [rasterManifest, setRasterManifest] = useState<RasterManifestSummary | null>(null);
   const [rasterVerification, setRasterVerification] = useState<RasterVerificationSummary | null>(null);
+  const [discoveredGames, setDiscoveredGames] = useState<DiscoveredGame[] | null>(null);
+  const [discoveredLoading, setDiscoveredLoading] = useState(false);
   const [projectPath, setProjectPath] = useState("");
   const [resourcePath, setResourcePath] = useState("");
   const [catalogPath, setCatalogPath] = useState("");
@@ -437,7 +439,10 @@ function App() {
   async function openProject() {
     const result = await window.hanengine?.selectDirectory({ title: "选择游戏项目" });
     if (!result || result.canceled || !result.filePaths[0]) return;
-    const selectedPath = result.filePaths[0];
+    await applyProjectPath(result.filePaths[0]);
+  }
+
+  async function applyProjectPath(selectedPath: string) {
     setProjectPath(selectedPath);
     setQuickStatus("idle");
     setQuickOutputPath("");
@@ -676,6 +681,30 @@ function App() {
       appendLog(`[栅格] 验证报告读取失败：${String(error)}`);
     }
   }
+
+  async function scanInstalledGames() {
+    if (discoveredLoading) return;
+    setDiscoveredLoading(true);
+    try {
+      const result = await window.hanengine.runPython(`games-scan-${Date.now()}`, ["games", "scan", "--json"]);
+      const games = parseJsonOutput<DiscoveredGame[]>(result?.stdout || "");
+      if (games) {
+        setDiscoveredGames(games);
+        appendLog(`[发现] 本机共发现 ${games.length} 款已安装游戏（Steam）。`);
+      } else {
+        setDiscoveredGames([]);
+      }
+    } catch (error) {
+      appendLog(`[发现] 已安装游戏扫描失败：${String(error)}`);
+      setDiscoveredGames([]);
+    } finally {
+      setDiscoveredLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void scanInstalledGames();
+  }, []);
 
   async function loadQualityReport(output: string) {
     const reportPath = `${output}.quality.json`;
@@ -946,6 +975,10 @@ function App() {
             projectPath={projectPath}
             detection={detection}
             candidate={detectedCandidate}
+            discoveredGames={discoveredGames}
+            discoveredLoading={discoveredLoading}
+            onRefreshGames={() => void scanInstalledGames()}
+            onSelectGame={(path) => void applyProjectPath(path)}
             outputPath={quickOutputPath}
             running={running}
             status={quickStatus}
@@ -1210,6 +1243,10 @@ function QuickLocalizationView({
   projectPath,
   detection,
   candidate,
+  discoveredGames,
+  discoveredLoading,
+  onRefreshGames,
+  onSelectGame,
   outputPath,
   running,
   status,
@@ -1224,6 +1261,10 @@ function QuickLocalizationView({
   projectPath: string;
   detection: DetectionReport | null;
   candidate: DetectionCandidate | null;
+  discoveredGames: DiscoveredGame[] | null;
+  discoveredLoading: boolean;
+  onRefreshGames: () => void;
+  onSelectGame: (installDir: string) => void;
   outputPath: string;
   running: boolean;
   status: "idle" | "running" | "completed" | "failed";
@@ -1235,6 +1276,8 @@ function QuickLocalizationView({
   onRun: () => void;
   onOpenTasks: () => void;
 }) {
+  const [gameQuery, setGameQuery] = useState("");
+  const [gameListOpen, setGameListOpen] = useState(false);
   const capability = capabilityNames(candidate);
   const ready = Boolean(projectPath && candidate && canLocalize);
   const canRunTranslation = Boolean(ready && outputPath);
@@ -1252,6 +1295,18 @@ function QuickLocalizationView({
       <div className={`quick-step ${projectPath ? "done" : "active"}`}><span>1</span><div><strong>选择游戏目录</strong><small>{projectPath || "从一个已授权的原始工程开始"}</small></div><button className="secondary-button" onClick={onOpenProject}>{projectPath ? "更换" : "选择"}</button></div>
       <div className={`quick-step ${candidate ? "done" : projectPath ? "active" : "locked"}`}><span>2</span><div><strong>自动检测引擎</strong><small>{candidate ? `${candidate.display_name} · ${candidate.score}%` : "选择目录后自动检测"}</small></div>{candidate && <Check size={16} className="step-check" />}</div>
       <div className={`quick-step ${outputPath ? "done" : projectPath ? "active" : "locked"}`}><span>3</span><div><strong>选择输出目录</strong><small>{outputPath || "必须位于游戏项目之外"}</small></div><button className="secondary-button" onClick={onChooseOutput} disabled={!projectPath}>浏览</button></div>
+    </div>
+    <div className="game-picker">
+      <div className="game-picker-head">
+        <button className="secondary-button" disabled={discoveredLoading} onClick={onRefreshGames}>{discoveredLoading ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{discoveredLoading ? "扫描中…" : discoveredGames ? `已装游戏 · ${discoveredGames.length}` : "扫描本机游戏"}</button>
+        {discoveredGames && discoveredGames.length > 0 && <div className="search-box"><Search size={13} /><input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="搜索已安装游戏" /></div>}
+      </div>
+      {discoveredGames && discoveredGames.length > 0 && <div className="game-list">
+        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).map((game) => <button key={`${game.app_id}-${game.install_dir}`} className={`game-option ${projectPath === game.install_dir ? "selected" : ""}`} onClick={() => onSelectGame(game.install_dir)} title={game.install_dir}>
+          <span className="game-name">{game.name}</span>
+          <span className="game-src">{game.source === "steam" ? "Steam" : game.source}</span>
+        </button>)}
+      </div>}
     </div>
     {detection && <div className={`capability-card ${ready ? "allowed" : "blocked"}`}>
       {ready ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
