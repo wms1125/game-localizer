@@ -164,6 +164,8 @@ function normalizeEngineId(engine: string | null) {
   return engine.replace(/^hanengine\./, "").replace(/-maker-/g, "_maker_");
 }
 
+const SOURCE_LABELS: Record<string, string> = { steam: "Steam", epic: "Epic", gog: "GOG", ea: "EA", xbox: "Xbox" };
+
 function App() {
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -1404,10 +1406,10 @@ function QuickLocalizationView({
       </div>
       {discoveredGames && discoveredGames.length > 0 && <div className="game-grid">
         {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).map((game) => <button key={`${game.app_id}-${game.install_dir}`} className={`game-card ${projectPath === game.install_dir ? "selected" : ""}`} onClick={() => onSelectGame(game.install_dir)} title={`${game.name} — ${game.install_dir}`}>
-          <span className="game-cover">
+          <span className="game-cover" data-source={game.source}>
             <span className="game-cover-fallback" data-initial={game.name.slice(0, 1).toUpperCase()} />
             {game.source === "steam" && game.app_id && <img src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.app_id}/header.jpg`} loading="lazy" alt="" onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />}
-            <span className="game-src">{game.source === "steam" ? "Steam" : game.source}</span>
+            <span className="game-src">{SOURCE_LABELS[game.source] ?? game.source}</span>
           </span>
           <span className="game-card-name">{game.name}</span>
         </button>)}
