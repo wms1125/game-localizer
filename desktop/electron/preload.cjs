@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld("hanengine", {
   authStatus: () => ipcRenderer.invoke("auth:status"),
   register: (credentials) => ipcRenderer.invoke("auth:register", credentials),
   login: (credentials) => ipcRenderer.invoke("auth:login", credentials),
+  resetPassword: (payload) => ipcRenderer.invoke("auth:reset-password", payload),
+  startOAuth: (provider) => ipcRenderer.invoke("auth:oauth-start", provider),
   logout: () => ipcRenderer.invoke("auth:logout"),
   selectFile: (options = {}) => ipcRenderer.invoke("dialog:select-file", options),
   selectDirectory: (options = {}) => ipcRenderer.invoke("dialog:select-directory", options),

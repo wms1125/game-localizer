@@ -1681,7 +1681,7 @@ def run_tts(argv: list[str]) -> int:
 
 def run_auth(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="HanEngine local account database and session operations")
-    parser.add_argument("command", choices=("status", "register", "login", "current", "logout"))
+    parser.add_argument("command", choices=("status", "register", "login", "current", "logout", "reset-password"))
     parser.add_argument("--db", required=True, help="local authentication SQLite database")
     args = _parse_args(parser, argv)
     if isinstance(args, int):
@@ -1697,6 +1697,17 @@ def run_auth(argv: list[str]) -> int:
                 payload.get("username", ""),
                 payload.get("password", ""),
                 payload.get("display_name", ""),
+            )
+            recovery_code = store.set_recovery_code(session.user.user_id)
+            output = session.to_dict()
+            output["recovery_code"] = recovery_code
+            print(json.dumps(output, ensure_ascii=False, sort_keys=True))
+            return 0
+        if args.command == "reset-password":
+            session = store.reset_password(
+                payload.get("username", ""),
+                payload.get("recovery_code", ""),
+                payload.get("new_password", ""),
             )
             print(json.dumps(session.to_dict(), ensure_ascii=False, sort_keys=True))
             return 0

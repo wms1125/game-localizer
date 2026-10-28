@@ -288,7 +288,7 @@ app.whenReady().then(() => {
     const session = await runAuthRequest(event.sender, "register", credentials || {});
     if (!session.token || !session.user) throw new Error("创建账户返回了无效结果");
     authSessions.set(event.sender.id, session.token);
-    return { authenticated: true, needsSetup: false, user: session.user };
+    return { authenticated: true, needsSetup: false, user: session.user, recoveryCode: session.recovery_code || "" };
   });
   ipcMain.handle("auth:login", async (event, credentials) => {
     if (await currentAuthenticatedUser(event)) throw new Error("当前会话已经登录");
@@ -296,6 +296,20 @@ app.whenReady().then(() => {
     if (!session.token || !session.user) throw new Error("登录返回了无效结果");
     authSessions.set(event.sender.id, session.token);
     return { authenticated: true, needsSetup: false, user: session.user };
+  });
+  ipcMain.handle("auth:reset-password", async (event, payload) => {
+    if (await currentAuthenticatedUser(event)) throw new Error("当前会话已经登录");
+    const session = await runAuthRequest(event.sender, "reset-password", payload || {});
+    if (!session.token || !session.user) throw new Error("重置密码返回了无效结果");
+    authSessions.set(event.sender.id, session.token);
+    return { authenticated: true, needsSetup: false, user: session.user };
+  });
+  ipcMain.handle("auth:oauth-start", async (event, provider) => {
+    if (provider !== "qq" && provider !== "weixin") throw new Error("不支持的登录方式");
+    const labels = { qq: "QQ", weixin: "微信" };
+    // Honest boundary: QQ/微信扫码登录需要腾讯开放平台的 AppID 与回调服务；
+    // 本地离线版本不模拟第三方授权成功。
+    return { configured: false, message: `${labels[provider]}登录需要开放平台应用配置（AppID 与回调服务），当前版本尚未接入。请使用本地账户登录或注册。` };
   });
   ipcMain.handle("auth:logout", async (event) => {
     const token = authSessions.get(event.sender.id);
