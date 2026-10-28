@@ -11,6 +11,9 @@ import {
   CircleCheck,
   CircleDot,
   CircleUserRound,
+  Copy,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileCode2,
   FileJson2,
@@ -39,6 +42,10 @@ import {
   UserPlus,
   X,
   Image as ImageIcon,
+  Info,
+  KeyRound,
+  MessageCircle,
+  ScanLine,
 } from "lucide-react";
 
 type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "raster" | "tasks" | "visual";
@@ -1107,6 +1114,8 @@ function AuthLoadingScreen() {
   return <div className="auth-screen auth-loading"><div className="auth-loading-mark"><Languages size={22} /><span>HanEngine</span></div><LoaderCircle size={18} className="spin" /><span>正在准备本地账户</span></div>;
 }
 
+type AuthMode = "login" | "register" | "forgot" | "recovery";
+
 function AuthScreen({
   needsSetup,
   onAuthenticated,
@@ -1114,31 +1123,64 @@ function AuthScreen({
   needsSetup: boolean;
   onAuthenticated: (status: AuthStatus) => void;
 }) {
-  const [registerMode, setRegisterMode] = useState(needsSetup);
+  const [mode, setMode] = useState<AuthMode>(needsSetup ? "register" : "login");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<AuthStatus | null>(null);
 
   useEffect(() => {
-    setRegisterMode(needsSetup);
+    if (needsSetup) setMode((value) => (value === "login" ? "register" : value));
   }, [needsSetup]);
+
+  function switchMode(next: AuthMode) {
+    setError("");
+    setOauthNotice("");
+    setPassword("");
+    setConfirmPassword("");
+    setRecoveryCode("");
+    setNewPassword("");
+    setMode(next);
+  }
+
+  async function startOauth(provider: "qq" | "weixin") {
+    setOauthNotice("");
+    try {
+      const result = await window.hanengine.startOAuth(provider);
+      setOauthNotice(result.message);
+    } catch (reason) {
+      setOauthNotice(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    if (registerMode && password !== confirmPassword) {
+    if (mode === "register" && password !== confirmPassword) {
       setError("两次输入的密码不一致");
       return;
     }
     setSubmitting(true);
     try {
-      const status = registerMode
-        ? await window.hanengine.register({ username, password, display_name: displayName })
-        : await window.hanengine.login({ username, password });
-      onAuthenticated(status);
+      if (mode === "register") {
+        const status = await window.hanengine.register({ username, password, display_name: displayName });
+        setPendingStatus(status);
+        setMode("recovery");
+      } else if (mode === "login") {
+        const status = await window.hanengine.login({ username, password });
+        onAuthenticated(status);
+      } else if (mode === "forgot") {
+        const status = await window.hanengine.resetPassword({ username, recovery_code: recoveryCode, new_password: newPassword });
+        onAuthenticated(status);
+      }
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message.replace(/^Error:\s*/i, "") || "认证失败，请稍后重试");
@@ -1147,21 +1189,80 @@ function AuthScreen({
     }
   }
 
+  async function copyRecoveryCode() {
+    if (!pendingStatus?.recoveryCode) return;
+    try {
+      await navigator.clipboard.writeText(pendingStatus.recoveryCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("复制失败，请手动抄写恢复码");
+    }
+  }
+
+  const oauthButtons = <div className="oauth-row">
+    <button className="oauth-button" type="button" onClick={() => void startOauth("qq")}><MessageCircle size={15} />QQ 登录</button>
+    <button className="oauth-button" type="button" onClick={() => void startOauth("weixin")}><ScanLine size={15} />微信登录</button>
+  </div>;
+
+  const headline = mode === "register" ? { title: "注册账户", sub: "输入你的个人数据来创建账户。" }
+    : mode === "forgot" ? { title: "找回密码", sub: "输入用户名与恢复码，设置新密码。" }
+    : mode === "recovery" ? { title: "保存恢复码", sub: "这是找回密码的唯一凭证。" }
+    : { title: "登录账户", sub: "输入你的账户数据继续。" };
+
   return <div className="auth-screen">
-    <div className="auth-panel">
-      <div className="auth-brand"><div className="auth-brand-icon"><Languages size={22} /></div><div><strong>HanEngine</strong><span>本地游戏汉化工作台</span></div></div>
-      <div className="auth-rule" />
-      <div className="auth-copy"><span className="eyebrow">本地身份</span><h1>{registerMode ? "创建本地账户" : "登录 HanEngine"}</h1><p>{registerMode ? "账户只保存在这台设备上。" : "使用本地账户继续进入工作台。"}</p></div>
-      <form className="auth-form" onSubmit={submit}>
-        <label><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus placeholder="输入用户名" required /></label>
-        {registerMode && <label><span>显示名称 <em>可选</em></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" placeholder="工作台中显示的名称" /></label>}
-        <label><span>密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={registerMode ? "new-password" : "current-password"} placeholder="至少 8 个字符" required /></label>
-        {registerMode && <label><span>确认密码</span><input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="再次输入密码" required /> </label>}
-        {error && <div className="auth-error" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
-        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? <LoaderCircle size={16} className="spin" /> : registerMode ? <UserPlus size={16} /> : <LogIn size={16} />}{submitting ? "处理中" : registerMode ? "创建账户并进入" : "登录"}</button>
-      </form>
-      <button className="auth-switch" type="button" onClick={() => { setError(""); setRegisterMode((value) => !value); }}>{registerMode ? "已有账户，改为登录" : "创建新的本地账户"}</button>
-      <div className="auth-footnote"><ShieldCheck size={14} /><span>密码使用本地加盐哈希保存，不会写入项目、任务日志或命令行参数。</span></div>
+    <div className="auth-card">
+      <div className="auth-showcase">
+        <div className="auth-showcase-inner">
+          <div className="auth-brand"><div className="auth-brand-icon"><Languages size={19} /></div><strong>HanEngine</strong></div>
+          <h1>开始使用 HanEngine</h1>
+          <p>完成以下简单步骤，注册<br />你的账户。</p>
+          <div className="auth-steps">
+            <div className="auth-step active"><span className="auth-step-badge"><Info size={12} /></span>注册你的账户</div>
+            <div className="auth-step"><span className="auth-step-badge">2</span>设置你的工作区</div>
+            <div className="auth-step"><span className="auth-step-badge">3</span>设置你的个人资料</div>
+          </div>
+        </div>
+      </div>
+      <div className="auth-formcol">
+        {mode === "recovery" && pendingStatus ? <div className="auth-body">
+          <h2>保存恢复码</h2>
+          <p className="auth-sub">这是找回密码的唯一凭证，关闭后将无法再次查看。</p>
+          <div className="recovery-box">
+            <KeyRound size={18} />
+            <code>{pendingStatus.recoveryCode}</code>
+            <button className="recovery-copy" type="button" onClick={() => void copyRecoveryCode()}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "已复制" : "复制"}</button>
+          </div>
+          <div className="auth-warn"><CircleAlert size={14} /><span>请立即抄写或复制到安全的地方。重置密码时需要用户名 + 恢复码；恢复码一次性使用，用后失效。</span></div>
+          <button className="auth-cta" type="button" onClick={() => onAuthenticated(pendingStatus)}>我已保存，进入工作台</button>
+        </div> : <form className="auth-body" onSubmit={submit}>
+          <h2>{headline.title}</h2>
+          <p className="auth-sub">{headline.sub}</p>
+          {(mode === "login" || mode === "register") && oauthButtons}
+          {(mode === "login" || mode === "register") && <div className="or-divider"><span>或</span></div>}
+          {mode !== "recovery" && <div className="auth-fields">
+            <label className="auth-field"><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="例如 player01" required /></label>
+            {mode === "register" && <div className="field-pair">
+              <label className="auth-field"><span>显示名称 <em>可选</em></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="nickname" placeholder="例如 小汉" /></label>
+              <label className="auth-field"><span>确认密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="再输一次" required />{confirmPassword && <button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button>}</div></label>
+            </div>}
+            {(mode === "forgot") && <label className="auth-field"><span>恢复码</span><input value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} placeholder="XXXX-XXXX-XXXX-XXXX" autoCapitalize="characters" required /></label>}
+            {mode !== "forgot" && <label className="auth-field"><span>密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder={mode === "register" ? "输入密码" : "输入密码"} required />{password && <button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button>}</div></label>}
+            {mode === "forgot" && <label className="auth-field"><span>新密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" placeholder="输入新密码" required /><button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></label>}
+            {mode !== "login" && <span className="field-helper">必须至少 8 个字符。</span>}
+          </div>}
+          {mode === "login" && <button type="button" className="forgot-link" onClick={() => switchMode("forgot")}>忘记密码？</button>}
+          {oauthNotice && <div className="auth-notice" role="status"><CircleAlert size={14} /><span>{oauthNotice}</span></div>}
+          {error && <div className="auth-error" role="alert"><CircleAlert size={14} /><span>{error}</span></div>}
+          <button className="auth-cta" type="submit" disabled={submitting}>{submitting ? <LoaderCircle size={15} className="spin" /> : null}{submitting ? "处理中…" : mode === "register" ? "注 册" : mode === "forgot" ? "重置密码并登录" : "登 录"}</button>
+          <div className="auth-foot">
+            {mode === "login" && <span>还没有账户？<button type="button" onClick={() => switchMode("register")}>立即注册</button></span>}
+            {mode === "register" && <span>已经有账户了？<button type="button" onClick={() => switchMode("login")}>登录</button></span>}
+            {mode === "forgot" && <span>想起来了？<button type="button" onClick={() => switchMode("login")}>返回登录</button></span>}
+          </div>
+          <div className="auth-footnote"><ShieldCheck size={13} /><span>账户仅保存在这台设备上；密码使用加盐哈希存储，不会写入日志或命令行。</span></div>
+        </form>}
+      </div>
     </div>
   </div>;
 }

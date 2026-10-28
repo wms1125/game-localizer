@@ -58,6 +58,62 @@ class AuthStoreTests(unittest.TestCase):
                 connection.commit()
             self.assertIsNone(store.current_user(session.token))
 
+    def test_recovery_code_roundtrip_and_single_use(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "auth.db"
+            store = UserStore(database)
+            session = store.create_user("reviewer", "correct horse battery", "")
+            code = store.set_recovery_code(session.user.user_id)
+
+            # The stored hash must not contain the plaintext code.
+            with closing(store._connect()) as connection:
+                row = connection.execute(
+                    "SELECT recovery_code_hash FROM users WHERE user_id=?", (session.user.user_id,)
+                ).fetchone()
+            self.assertIsNotNone(row["recovery_code_hash"])
+            self.assertNotIn(code, row["recovery_code_hash"])
+
+            reset_session = store.reset_password("REVIEWER", code, "new horse battery")
+            self.assertEqual(reset_session.user.username, "reviewer")
+            self.assertEqual(
+                store.authenticate("reviewer", "new horse battery").user, reset_session.user
+            )
+            with self.assertRaises(AuthError):
+                store.authenticate("reviewer", "correct horse battery")
+
+            # One-time use: the code is cleared after a successful reset.
+            with self.assertRaises(AuthError):
+                store.reset_password("reviewer", code, "another battery")
+
+    def test_reset_password_rejects_wrong_code_and_unknown_user(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "auth.db"
+            store = UserStore(database)
+            store.create_user("operator", "correct horse battery", "")
+            with self.assertRaises(AuthError):
+                store.reset_password("operator", "AAAA-BBBB-CCCC-DDDD", "new horse battery")
+            with self.assertRaises(AuthError):
+                store.reset_password("nobody", "AAAA-BBBB-CCCC-DDDD", "new horse battery")
+            # Old password still works; the failed attempt changed nothing.
+            self.assertEqual(store.authenticate("operator", "correct horse battery").user.username, "operator")
+
+    def test_v1_database_is_migrated_to_v2_without_data_loss(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "auth.db"
+            store = UserStore(database)
+            session = store.create_user("legacy", "correct horse battery", "")
+            with closing(store._connect()) as connection, connection:
+                connection.execute("ALTER TABLE users DROP COLUMN recovery_code_hash")
+                connection.execute("UPDATE auth_meta SET value='1' WHERE key='schema_version'")
+            reopened = UserStore(database)
+            with closing(reopened._connect()) as connection:
+                columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(users)")
+                }
+            self.assertIn("recovery_code_hash", columns)
+            self.assertEqual(reopened.authenticate("legacy", "correct horse battery").user, session.user)
+
     def test_cli_auth_commands_return_json_without_exposing_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "auth.db"

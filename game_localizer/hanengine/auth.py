@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-AUTH_SCHEMA_VERSION = 1
+AUTH_SCHEMA_VERSION = 2
 PASSWORD_ITERATIONS = 310_000
 SESSION_TTL = timedelta(hours=12)
 _USERNAME_RE = re.compile(r"[\w.\-@+]{3,64}\Z", re.UNICODE)
@@ -136,6 +136,7 @@ class UserStore:
                     display_name TEXT NOT NULL,
                     password_salt BLOB NOT NULL,
                     password_hash BLOB NOT NULL,
+                    recovery_code_hash TEXT,
                     created_at TEXT NOT NULL,
                     last_login_at TEXT,
                     disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1))
@@ -159,7 +160,19 @@ class UserStore:
                 "SELECT value FROM auth_meta WHERE key='schema_version'"
             ).fetchone()
             if schema_row is None or schema_row["value"] != str(AUTH_SCHEMA_VERSION):
-                raise AuthError("用户数据库版本不受支持")
+                if schema_row is not None and schema_row["value"] == "1":
+                    # v1 → v2: add the recovery code hash column for existing
+                    # databases; accounts created before v2 simply have no
+                    # recovery code until they re-register.
+                    connection.execute(
+                        "ALTER TABLE users ADD COLUMN recovery_code_hash TEXT"
+                    )
+                    connection.execute(
+                        "UPDATE auth_meta SET value=? WHERE key='schema_version'",
+                        (str(AUTH_SCHEMA_VERSION),),
+                    )
+                else:
+                    raise AuthError("用户数据库版本不受支持")
 
     def user_count(self) -> int:
         with closing(self._connect()) as connection:
@@ -232,6 +245,66 @@ class UserStore:
                 "UPDATE users SET last_login_at=? WHERE user_id=?",
                 (_timestamp(_utc_now()), user.user_id),
             )
+        return self._create_session(user)
+
+    def set_recovery_code(self, user_id: str) -> str:
+        """Generate a one-time recovery code, store only its hash, return plaintext."""
+
+        alphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+        code = "-".join(
+            "".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(4)
+        )
+        code_hash = hashlib.sha256(code.strip().casefold().encode("utf-8")).hexdigest()
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                "UPDATE users SET recovery_code_hash=? WHERE user_id=?",
+                (code_hash, user_id),
+            )
+            if cursor.rowcount != 1:
+                raise AuthError("账户不存在，无法设置恢复码")
+        return code
+
+    def reset_password(
+        self,
+        username: str,
+        recovery_code: str,
+        new_password: str,
+    ) -> AuthSession:
+        """Replace a lost password with a valid username + recovery code pair."""
+
+        username = _validate_username(username)
+        new_password = _validate_password(new_password)
+        if not isinstance(recovery_code, str) or not recovery_code.strip():
+            raise AuthError("恢复码无效")
+        code_hash = hashlib.sha256(
+            re.sub(r"\s+", "", recovery_code).casefold().encode("utf-8")
+        ).hexdigest()
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                """
+                SELECT user_id, username, display_name, recovery_code_hash, disabled
+                FROM users WHERE username_key=?
+                """,
+                (username.casefold(),),
+            ).fetchone()
+            if row is None or not row["recovery_code_hash"] or bool(row["disabled"]):
+                raise AuthError("用户名或恢复码错误")
+            if not hmac.compare_digest(code_hash, row["recovery_code_hash"]):
+                raise AuthError("用户名或恢复码错误")
+            salt = secrets.token_bytes(32)
+            connection.execute(
+                """
+                UPDATE users
+                SET password_salt=?, password_hash=?, recovery_code_hash=NULL
+                WHERE user_id=?
+                """,
+                (salt, _hash_password(new_password, salt), row["user_id"]),
+            )
+            connection.execute(
+                "DELETE FROM sessions WHERE user_id=?",
+                (row["user_id"],),
+            )
+            user = AuthUser(row["user_id"], row["username"], row["display_name"])
         return self._create_session(user)
 
     def _create_session(self, user: AuthUser) -> AuthSession:

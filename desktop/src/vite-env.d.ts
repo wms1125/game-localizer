@@ -93,7 +93,7 @@ type TaskStatus = {
 
 type PythonEvent = { taskId: string; channel?: "workflow" | "control"; type: string; text?: string; code?: number; args?: string[] };
 type AuthUser = { user_id: string; username: string; display_name: string };
-type AuthStatus = { authenticated: boolean; needsSetup: boolean; user: AuthUser | null; user_count?: number };
+type AuthStatus = { authenticated: boolean; needsSetup: boolean; user: AuthUser | null; user_count?: number; recoveryCode?: string };
 type AuthCredentials = { username: string; password: string; display_name?: string };
 type QualityIssue = {
   code: string;
@@ -221,6 +221,8 @@ interface Window {
     authStatus: () => Promise<AuthStatus>;
     register: (credentials: AuthCredentials) => Promise<AuthStatus>;
     login: (credentials: AuthCredentials) => Promise<AuthStatus>;
+    resetPassword: (payload: { username: string; recovery_code: string; new_password: string }) => Promise<AuthStatus>;
+    startOAuth: (provider: "qq" | "weixin") => Promise<{ configured: boolean; message: string }>;
     logout: () => Promise<{ authenticated: false }>;
     selectFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
     selectDirectory: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
