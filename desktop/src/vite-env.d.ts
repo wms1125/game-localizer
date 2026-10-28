@@ -159,6 +159,7 @@ type DiscoveredGame = {
   name: string;
   install_dir: string;
 };
+declare const SOURCE_LABELS: Record<string, string>;
 type RasterAssetSummary = {
   relativePath: string;
   kind: "image" | "video";
