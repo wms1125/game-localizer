@@ -236,22 +236,48 @@ tbody tr:hover,tbody tr.selected-row{background:rgba(125,162,255,.06)}
 .quick-result.failed{border-left-color:var(--red);color:#d8928b}
 .quick-result.running{border-left-color:var(--blue)}
 
-/* ---------- game picker (cover card grid) ---------- */
-.game-picker{max-width:960px;margin-top:14px;border:1px solid var(--line);border-radius:3px;background:var(--panel)}
-.game-picker-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
-.game-picker-head .search-box{max-width:300px;flex:1;min-width:160px;padding:5px 10px}
-.game-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px;padding:14px;max-height:372px;overflow:auto}
-.game-card{display:grid;gap:0;text-align:left;background:var(--bg-raise);border:1px solid var(--line-2);border-radius:4px;padding:0 0 8px;overflow:hidden;transition:transform .12s ease,border-color .12s ease}
-.game-card:hover{transform:translateY(-2px);border-color:var(--blue)}
-.game-card.selected{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue),0 6px 18px rgba(125,162,255,.15)}
-.game-card.selected .game-card-name{color:var(--ink)}
-.game-cover{position:relative;display:block;aspect-ratio:460/215;width:100%;background:#141824;overflow:hidden}
-.game-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.game-cover-fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:30px;font-weight:700;color:var(--blue);background:linear-gradient(145deg,#161b2b,#1c2438)}
+/* ---------- game wall (poker cards) ---------- */
+.game-wall-wrap{display:grid;gap:0}
+.wall-heading{align-items:flex-end}
+.wall-toolbar{display:flex;align-items:center;gap:12px;margin:14px 0 18px}
+.wall-toolbar .search-box{max-width:320px;min-width:220px;padding:7px 12px}
+.wall-count{color:var(--faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em}
+.game-wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:18px;padding-bottom:22px}
+.poker-card{position:relative;display:block;aspect-ratio:2/3;border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:var(--bg-raise);padding:0;text-align:left;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease}
+.poker-card:hover{transform:translateY(-5px);border-color:rgba(125,162,255,.6);box-shadow:0 16px 38px rgba(0,0,0,.45)}
+.poker-card:hover .poker-card-name{color:#fff}
+.poker-card.selected{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue),0 16px 38px rgba(0,0,0,.45)}
+.poker-card .game-cover{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;background:#141824;overflow:hidden}
+.poker-card .game-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.game-cover-fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:52px;font-weight:700;color:rgba(125,162,255,.85);background:linear-gradient(160deg,#1a2033 0%,#141a2a 55%,#101523 100%)}
 .game-cover-fallback::after{content:attr(data-initial)}
-.game-cover .game-src{position:absolute;right:6px;bottom:6px;font-family:var(--mono);font-size:8.5px;color:rgba(255,255,255,.85);background:rgba(10,12,18,.72);border:1px solid rgba(255,255,255,.16);padding:1px 6px;border-radius:2px;z-index:2}
-.game-card-name{display:block;color:var(--muted);font-size:11.5px;font-weight:600;padding:7px 9px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.game-grid-empty{grid-column:1/-1;color:var(--faint);font-size:12px;padding:22px 0;text-align:center}
+.game-cover[data-source="epic"] .game-cover-fallback{color:rgba(200,160,255,.85);background:linear-gradient(160deg,#241d38 0%,#1a1528 55%,#120f1c 100%)}
+.game-cover[data-source="gog"] .game-cover-fallback{color:rgba(140,110,255,.85);background:linear-gradient(160deg,#1f1a33 0%,#181327 55%,#100d1a 100%)}
+.game-cover[data-source="ea"] .game-cover-fallback{color:rgba(255,120,110,.85);background:linear-gradient(160deg,#33201f 0%,#281817 55%,#1a1010 100%)}
+.game-cover[data-source="xbox"] .game-cover-fallback{color:rgba(134,231,164,.85);background:linear-gradient(160deg,#17281f 0%,#122019 55%,#0d1712 100%)}
+.poker-card .game-src{position:absolute;top:10px;left:10px;z-index:2;font-family:var(--mono);font-size:9px;color:rgba(255,255,255,.9);background:rgba(8,10,16,.7);border:1px solid rgba(255,255,255,.18);padding:2px 8px;border-radius:20px;backdrop-filter:blur(4px)}
+.poker-card-name{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:30px 12px 11px;color:var(--muted);font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:linear-gradient(transparent,rgba(5,7,12,.92))}
+.wall-empty{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:13px;padding:36px 0;justify-content:center}
+
+/* ---------- delivery panel ---------- */
+.deliver-panel{display:grid;gap:16px;max-width:860px}
+.back-link{display:inline-flex;align-items:center;gap:5px;color:var(--muted);background:0 0;border:0;padding:0;font-size:12px;justify-self:start}
+.back-link:hover{color:var(--ink)}
+.deliver-hero{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:26px 30px;display:grid;gap:8px}
+.deliver-hero h2{margin:0;font-family:var(--display);font-size:26px}
+.deliver-hero p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.6}
+.deliver-progress{display:flex;align-items:center;gap:9px;color:var(--blue);font-size:12.5px;margin-top:8px}
+.deliver-result{border-radius:6px;border:1px solid var(--line);background:var(--panel);padding:22px 26px;display:grid;gap:16px}
+.deliver-result.passed{border-color:rgba(134,231,164,.35)}
+.deliver-result.review_required{border-color:rgba(125,162,255,.4)}
+.deliver-result.failed{border-color:rgba(255,74,62,.4)}
+.deliver-status{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.55}
+.deliver-status svg{flex:none;margin-top:2px}
+.deliver-result.passed .deliver-status svg{color:var(--ok)}
+.deliver-result.review_required .deliver-status svg{color:var(--blue)}
+.deliver-result.failed .deliver-status svg{color:var(--red)}
+.deliver-status span{color:var(--muted)}
+.deliver-actions{display:flex;gap:10px;flex-wrap:wrap}
 
 /* ---------- capability card ---------- */
 .capability-card{border:1px solid var(--line);border-radius:3px;align-items:flex-start;gap:12px;max-width:800px;padding:14px 16px;display:flex;background:var(--panel)}

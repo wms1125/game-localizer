@@ -27,6 +27,29 @@ _COMMON_STEAM_ROOTS = (
     "C:/Program Files (x86)/Steam",
 )
 
+# Exact-name blocklist for well-known non-game Steam entries (tools, engines,
+# redistributables) that would never be a sensible localization target.
+_STEAM_TOOL_NAMES = {
+    "steamworks common redistributables",
+    "steamworks .net",
+    "steam client",
+    "sharex",
+    "blender",
+    "godot engine",
+    "unreal engine",
+    "gamemaker",
+    "gamemaker studio 2",
+    "rpg maker mv",
+    "rpg maker mz",
+    "rpg maker vx ace",
+    "rpg maker vx",
+    "rpg maker xp",
+    "rpg maker 2003",
+    "rpg maker 2000",
+    "wallpaper engine",
+    "unity hub",
+}
+
 
 def _unescape(value: str) -> str:
     return value.replace("\\\\", "\\").replace('\\"', '"')
@@ -82,6 +105,8 @@ def discover_steam_games(steam_root: Path) -> list[dict[str, str]]:
             except OSError:
                 continue
             if not entry:
+                continue
+            if entry["name"].casefold() in _STEAM_TOOL_NAMES:
                 continue
             install_dir = steamapps / "common" / entry["installdir"]
             if not install_dir.is_dir():
@@ -180,8 +205,9 @@ def parse_epic_manifest(item_text: str) -> dict[str, str] | None:
     if not isinstance(install_location, str) or not install_location.strip():
         return None
     app_id = data.get("CatalogItemId") or data.get("AppName") or ""
+    namespace = data.get("CatalogNamespace") or ""
     return {
-        "app_id": str(app_id),
+        "app_id": f"{app_id}@{namespace}" if app_id and namespace else str(app_id),
         "name": name.strip(),
         "install_dir": str(Path(install_location.strip())),
     }
@@ -204,6 +230,9 @@ def discover_epic_games(program_data: Path | None = None) -> list[dict[str, str]
             continue
         if not entry:
             continue
+        # namespace "ue" entries are Unreal Engine assets/plugins, not games.
+        if entry["app_id"].endswith("@ue"):
+            continue
         lowered = entry["install_dir"].casefold()
         if entry["name"] in _EPIC_NOISE_NAMES or any(token in lowered for token in _EPIC_NOISE_PATHS):
             continue
@@ -216,7 +245,13 @@ def discover_epic_games(program_data: Path | None = None) -> list[dict[str, str]
 
 def _program_data_root() -> Path | None:
     value = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE")
-    return Path(value) if value else None
+    if value:
+        return Path(value)
+    if os.name == "nt":
+        # Some shells run with a stripped environment; the Windows default is
+        # stable, and Epic/EA manifests always live under it.
+        return Path("C:/ProgramData")
+    return None
 
 
 # ---------------------------------------------------------------------------

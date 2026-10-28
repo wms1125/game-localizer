@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -102,6 +102,135 @@ function runPython(sender, taskId, args, options = {}) {
 function authDatabasePath() {
   return path.join(app.getPath("userData"), "auth.db");
 }
+
+function candidatesRoot() {
+  return path.join(app.getPath("userData"), "candidates");
+}
+
+const coverCache = new Map();
+
+async function fetchJson(url, timeoutMs = 6000, headers = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": "HanEngine/0.1 (+local)", ...headers } });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function collectImageUrls(value, found = []) {
+  if (typeof value === "string") {
+    if (/^https:\/\/[^\s]+\.(?:jpg|jpeg|png|webp)(\?|$)/i.test(value) || value.startsWith("https://images.gog")) {
+      found.push(value);
+    }
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectImageUrls(item, found);
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectImageUrls(item, found);
+  }
+  return found;
+}
+
+const EPIC_CLIENT_ID = "34a02cf8f4414e29b15921876da36f9a";
+const EPIC_CLIENT_SECRET = "daafbccc737745039dffe53d94fc76cf";
+let epicToken = null; // { value, expiresAt }
+
+async function epicAccessToken() {
+  if (epicToken && Date.now() < epicToken.expiresAt - 60_000) return epicToken.value;
+  const basic = Buffer.from(`${EPIC_CLIENT_ID}:${EPIC_CLIENT_SECRET}`).toString("base64");
+  const response = await fetch("https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token", {
+    method: "POST",
+    headers: { authorization: `Basic ${basic}`, "content-type": "application/x-www-form-urlencoded" },
+    body: "grant_type=client_credentials",
+  });
+  if (!response.ok) throw new Error(`epic token ${response.status}`);
+  const data = await response.json();
+  epicToken = { value: `${data.token_type} ${data.access_token}`, expiresAt: Date.now() + Number(data.expires_in || 7200) * 1000 };
+  return epicToken.value;
+}
+
+async function steamSearchCandidates(name) {
+  if (!name) return [];
+  const data = await fetchJson(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(name)}&cc=cn&l=zh-CN`, 8000);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const first = items.find((item) => typeof item?.id === "number" && typeof item?.tiny_image === "string");
+  if (!first) return [];
+  const portrait = first.tiny_image.replace(/capsule_(?:sm_120|231x87)\.jpg/i, "library_600x900.jpg");
+  return [portrait, first.tiny_image];
+}
+
+async function resolveCoverCandidates(source, appId, name) {
+  const key = `${source}:${appId}`;
+  if (coverCache.has(key)) return coverCache.get(key);
+  let candidates = [];
+  if (source === "steam" && appId) {
+    const own = [
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_600x900.jpg`,
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`,
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/capsule_231x87.jpg`,
+    ];
+    try {
+      candidates = [...own, ...(await steamSearchCandidates(name))];
+    } catch {
+      candidates = own;
+    }
+  } else if (source === "epic" && appId.includes("@")) {
+    const [itemId, namespace] = appId.split("@");
+    try {
+      const token = await epicAccessToken();
+      const catalog = await fetchJson(
+        `https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/${encodeURIComponent(namespace)}/bulk/items?id=${encodeURIComponent(itemId)}&country=US&locale=zh-CN`,
+        8000,
+        { authorization: token },
+      );
+      const item = catalog && itemId in catalog ? catalog[itemId] : null;
+      const images = Array.isArray(item?.keyImages) ? item.keyImages : [];
+      const pick = (type) => images.find((image) => image?.type === type && typeof image.url === "string");
+      // DieselGameBoxTall is a portrait cover that fits the poker-card layout.
+      const preferred = [pick("DieselGameBoxTall"), pick("DieselGameBox"), pick("DieselStoreFrontWide"), pick("Thumbnail")];
+      candidates = preferred.map((image) => image?.url).filter(Boolean);
+      if (candidates.length === 0) candidates = collectImageUrls(item).slice(0, 3);
+    } catch {
+      candidates = [];
+    }
+  } else if (source === "gog" && appId) {
+    const catalog = await fetchJson(`https://api.gog.com/v2/games/${encodeURIComponent(appId)}?locale=zh-Hans`);
+    const urls = collectImageUrls(catalog);
+    const portrait = urls.filter((url) => /vertical|portrait|card|tile/i.test(url));
+    candidates = [...new Set([...portrait, ...urls])].slice(0, 4);
+  }
+  coverCache.set(key, candidates);
+  return candidates;
+}
+
+ipcMain.handle("covers:resolve", async (event, payload) => {
+  const source = typeof payload?.source === "string" ? payload.source : "";
+  const appId = typeof payload?.appId === "string" ? payload.appId : "";
+  const name = typeof payload?.name === "string" ? payload.name : "";
+  try {
+    return { candidates: await resolveCoverCandidates(source, appId, name) };
+  } catch {
+    return { candidates: [] };
+  }
+});
+
+ipcMain.handle("paths:candidates-root", async () => {
+  const root = candidatesRoot();
+  await fs.mkdir(root, { recursive: true });
+  return { root };
+});
+
+ipcMain.handle("shell:open-path", async (event, target) => {
+  if (typeof target !== "string" || !target.trim()) throw new Error("路径不能为空");
+  const result = await shell.openPath(target);
+  if (result) throw new Error(result);
+  return { ok: true };
+});
 
 function authTaskId(command) {
   return `auth-${command}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

@@ -224,6 +224,9 @@ interface Window {
     login: (credentials: AuthCredentials) => Promise<AuthStatus>;
     resetPassword: (payload: { username: string; recovery_code: string; new_password: string }) => Promise<AuthStatus>;
     startOAuth: (provider: "qq" | "weixin") => Promise<{ configured: boolean; message: string }>;
+    resolveCovers: (payload: { source: string; appId: string; name: string }) => Promise<{ candidates: string[] }>;
+    candidatesRoot: () => Promise<{ root: string }>;
+    openPath: (target: string) => Promise<{ ok: boolean }>;
     logout: () => Promise<{ authenticated: false }>;
     selectFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
     selectDirectory: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
