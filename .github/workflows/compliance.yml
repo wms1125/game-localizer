@@ -1,0 +1,20 @@
+name: Compliance
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  compliance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit compliance
+        run: python tools/check_compliance.py --json
+      - name: Check SBOM drift
+        run: python tools/generate_sbom.py --check
+      - name: Test compliance
+        run: python -m unittest tests.test_compliance tests.test_sbom -v

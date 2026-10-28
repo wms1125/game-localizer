@@ -1,0 +1,1777 @@
+import { useEffect, useMemo, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  Archive,
+  ArrowDownToLine,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  CircleCheck,
+  CircleDot,
+  CircleUserRound,
+  Copy,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  FileCode2,
+  FileJson2,
+  Folder,
+  FolderOpen,
+  Languages,
+  Plus,
+  FilePlus2,
+  LayoutPanelLeft,
+  ListChecks,
+  LoaderCircle,
+  LogIn,
+  LogOut,
+  Menu,
+  Play,
+  RotateCcw,
+  RefreshCw,
+  Save,
+  Search,
+  ScanSearch,
+  Settings2,
+  ShieldCheck,
+  ShieldAlert,
+  Square,
+  Upload,
+  UserPlus,
+  X,
+  Image as ImageIcon,
+  Info,
+  KeyRound,
+  MessageCircle,
+  ScanLine,
+} from "lucide-react";
+
+type View = "quick" | "workspace" | "review" | "glossary" | "single" | "package" | "raster" | "tasks" | "visual";
+type ModelTier = "3b" | "7b";
+
+const BACKEND_MODE = "player";
+const MODEL_NAMES: Record<ModelTier, string> = { "3b": "qwen2.5:3b", "7b": "qwen2.5:7b" };
+
+const statusLabel: Record<TranslationRow["status"], string> = {
+  translated: "已完成",
+  pending: "待定",
+  draft: "草稿",
+  warning: "需检查",
+};
+
+function basename(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() || "未选择项目";
+}
+
+function isLikelyUntranslated(source: string, target: string) {
+  if (!target.trim() || source.trim() !== target.trim()) return false;
+  if (/[\u3400-\u9fff]/.test(source)) return false;
+  if (!/[A-Za-z]{2}/.test(source)) return false;
+  if (/^([A-Za-z_][A-Za-z0-9_]*|[A-Z]{1,4}|[0-9A-Za-z_./:+-]+)$/.test(source.trim())) return false;
+  return /\s/.test(source.trim()) || source.trim().length > 8;
+}
+
+function rowStatus(source: string, target: string): TranslationRow["status"] {
+  if (!target.trim()) return "pending";
+  return isLikelyUntranslated(source, target) ? "warning" : "translated";
+}
+
+function selectedDetectionCandidate(report: DetectionReport | null) {
+  return report?.candidate || report?.candidates?.find((item) => item.engine_id === report.selected_engine) || null;
+}
+
+function capabilityNames(candidate: DetectionCandidate | null) {
+  if (!candidate) return [];
+  return Array.isArray(candidate.capability) ? candidate.capability : candidate.capability ? [candidate.capability] : [];
+}
+
+function capabilityMatrixLabel(matrix: CapabilityMatrix | undefined) {
+  if (!matrix) return "";
+  const labels: Record<string, string> = {
+    native_text_replace: "原生文本",
+    dynamic_text: "动态文本",
+    raster_text: "栅格文字",
+    detect_only: "仅检测",
+  };
+  const statuses: Record<string, string> = {
+    implemented: "已实现",
+    verified: "已验证",
+    detect_only: "仅检测",
+    unsupported: "不支持",
+  };
+  return matrix.capabilities
+    .map((item) => `${labels[item.capability] || item.capability}：${statuses[item.status] || item.status}`)
+    .join(" · ");
+}
+
+function isPathInside(root: string, target: string) {
+  const normalize = (value: string) => value.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase();
+  const source = normalize(root);
+  const output = normalize(target);
+  return Boolean(source) && (source === output || output.startsWith(`${source}\\`));
+}
+
+function parseJsonOutput<T>(output: string): T | null {
+  try {
+    return JSON.parse(output) as T;
+  } catch {
+    return null;
+  }
+}
+
+function taskStateLabel(state: string) {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    running: "运行中",
+    paused: "已暂停",
+    retrying: "重试中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return labels[state] || state;
+}
+
+function qualityStatusLabel(status: QualityReportSummary["status"]) {
+  return {
+    passed: "质量检查通过",
+    review_required: "需要人工复核",
+    failed: "构建未通过",
+  }[status];
+}
+
+function qualityReasonLabel(reason: string) {
+  return {
+    translation_incomplete: "存在漏译条目",
+    extraction_warnings: "提取阶段存在警告",
+    validation_warnings: "校验阶段存在警告",
+    build_warnings: "构建阶段存在警告",
+    verification_issues: "验证阶段存在问题",
+  }[reason] || reason;
+}
+
+function detectionReasonLabel(reason: string) {
+  return {
+    no_supported_project_markers: "目录中没有受支持的游戏项目标记或明文资源",
+    packaged_resource_only: "只发现编译或封包资源，没有可提取的明文资源",
+  }[reason] || reason;
+}
+
+function normalizeEngineId(engine: string | null) {
+  if (!engine) return null;
+  return engine.replace(/^hanengine\./, "").replace(/-maker-/g, "_maker_");
+}
+
+const SOURCE_LABELS: Record<string, string> = { steam: "Steam", epic: "Epic", gog: "GOG", ea: "EA", xbox: "Xbox" };
+
+function App() {
+  const [authReady, setAuthReady] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [gameLanguage, setGameLanguage] = useState<GameLanguage>(() => {
+    try {
+      const value = window.localStorage.getItem("hanengine.gameLanguage");
+      return value === "source" ? "source" : "zh-CN";
+    } catch {
+      return "zh-CN";
+    }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelTier, setModelTier] = useState<ModelTier>(() => {
+    try {
+      return window.localStorage.getItem("hanengine.modelTier") === "7b" ? "7b" : "3b";
+    } catch {
+      return "3b";
+    }
+  });
+  const [gameExecutablePath, setGameExecutablePath] = useState(() => {
+    try {
+      return window.localStorage.getItem("hanengine.gameExecutablePath") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [view, setView] = useState<View>("quick");
+  const [comparisonPath, setComparisonPath] = useState("");
+  const [comparison, setComparison] = useState<ComparisonReportSummary | null>(null);
+  const [glossaryRows, setGlossaryRows] = useState<{ source: string; target: string }[]>([]);
+  const [glossaryDirty, setGlossaryDirty] = useState(false);
+  const [rasterManifestPath, setRasterManifestPath] = useState("");
+  const [rasterManifest, setRasterManifest] = useState<RasterManifestSummary | null>(null);
+  const [rasterVerification, setRasterVerification] = useState<RasterVerificationSummary | null>(null);
+  const [discoveredGames, setDiscoveredGames] = useState<DiscoveredGame[] | null>(null);
+  const [discoveredLoading, setDiscoveredLoading] = useState(false);
+  const [selectedGame, setSelectedGame] = useState<DiscoveredGame | null>(null);
+  const [autoRunGame, setAutoRunGame] = useState<DiscoveredGame | null>(null);
+  const [projectPath, setProjectPath] = useState("");
+  const [resourcePath, setResourcePath] = useState("");
+  const [catalogPath, setCatalogPath] = useState("");
+  const [dictionaryPath, setDictionaryPath] = useState("");
+  const [engine, setEngine] = useState("auto");
+  const [detection, setDetection] = useState<DetectionReport | null>(null);
+  const [tree, setTree] = useState<ProjectNode[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [rows, setRows] = useState<TranslationRow[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [filter, setFilter] = useState("");
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [logs, setLogs] = useState<string[]>(["HanEngine 已就绪。请选择项目目录或目录文件开始工作。"]);
+  const [running, setRunning] = useState(false);
+  const [activeTask, setActiveTask] = useState("");
+  const [activeWorkflowTaskIds, setActiveWorkflowTaskIds] = useState<string[]>([]);
+  const [quickOutputPath, setQuickOutputPath] = useState("");
+  const [quickStatus, setQuickStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const [qualityReport, setQualityReport] = useState<QualityReportSummary | null>(null);
+  const [tasks, setTasks] = useState<TaskStatus[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskDetails, setTaskDetails] = useState<TaskStatus | null>(null);
+  const [taskActionId, setTaskActionId] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [visualManifestPath, setVisualManifestPath] = useState("");
+  const [visualReportPath, setVisualReportPath] = useState("");
+  const [visualStatus, setVisualStatus] = useState<"idle" | "checking" | "passed" | "blocked" | "review" | "failed">("idle");
+  const [visualSummary, setVisualSummary] = useState<VisualReportSummary | null>(null);
+  const [visualReviewProof, setVisualReviewProof] = useState<VisualReviewProof | null>(null);
+  const [visualProofSaving, setVisualProofSaving] = useState(false);
+  const [visualSceneId, setVisualSceneId] = useState("");
+  const [visualImagePair, setVisualImagePair] = useState<VisualImagePair | null>(null);
+  const [visualConfirmedScenes, setVisualConfirmedScenes] = useState<Set<string>>(new Set());
+  const [visualImageLoading, setVisualImageLoading] = useState(false);
+
+  useEffect(() => {
+    void initializeAuth();
+  }, []);
+
+  async function initializeAuth() {
+    try {
+      const status = await window.hanengine.authStatus();
+      setCurrentUser(status.authenticated ? status.user : null);
+      setNeedsSetup(Boolean(status.needsSetup));
+    } catch (error) {
+      appendLog(`认证服务不可用：${String(error)}`);
+    } finally {
+      setAuthReady(true);
+    }
+  }
+
+  function handleAuthenticated(status: AuthStatus) {
+    setCurrentUser(status.user);
+    setNeedsSetup(false);
+  }
+
+  async function logout() {
+    try {
+      await window.hanengine.logout();
+      setCurrentUser(null);
+      setProjectPath("");
+      setTree([]);
+      setRows([]);
+      setTasks([]);
+      setDetection(null);
+      setCatalogPath("");
+      setDictionaryPath("");
+      setQuickOutputPath("");
+      setQuickStatus("idle");
+      setQualityReport(null);
+    } catch (error) {
+      appendLog(`退出登录失败：${String(error)}`);
+    }
+  }
+
+  useEffect(() => {
+    if (!window.hanengine) return;
+    return window.hanengine.onPythonEvent((event) => {
+      if (event.channel === "control") return;
+      if (event.type === "stdout" || event.type === "stderr") {
+        const text = event.text || "";
+        const chunks = text.split(/\r?\n/).filter(Boolean);
+        if (chunks.length) setLogs((current) => [...current, ...chunks].slice(-240));
+        const taskIds = [
+          ...[...text.matchAll(/\(task=([^\)]+)\)/g)].map((match) => match[1]),
+          ...[...text.matchAll(/\[HanTask persisted\] ([^ #\r\n]+)/g)].map((match) => match[1]),
+        ];
+        if (taskIds.length) setActiveWorkflowTaskIds((current) => [...new Set([...current, ...taskIds])]);
+      }
+      if (event.type === "finished" || event.type === "error") {
+        setRunning(false);
+        setActiveWorkflowTaskIds([]);
+        void refreshTasks();
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    void refreshTasks();
+    const timer = window.setInterval(() => {
+      if (running || view === "tasks") void refreshTasks();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [currentUser, running, view]);
+
+  useEffect(() => {
+    if (projectPath) void detectProject(projectPath);
+  }, [projectPath]);
+
+  const selected = rows.find((row) => row.id === selectedId) || rows[0];
+  const filteredRows = useMemo(() => {
+    const query = filter.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesQuery = !query || `${row.id} ${row.context} ${row.source} ${row.target}`.toLowerCase().includes(query);
+      const needsReview = !reviewOnly || row.status === "pending" || row.status === "draft" || row.status === "warning";
+      return matchesQuery && needsReview;
+    });
+  }, [filter, reviewOnly, rows]);
+  const translatedCount = rows.filter((row) => row.status === "translated").length;
+  const warningCount = rows.filter((row) => row.status === "warning").length;
+  const pendingCount = rows.length - translatedCount - warningCount;
+  const detectedCandidate = selectedDetectionCandidate(detection);
+  const detectedCapabilities = capabilityNames(detectedCandidate);
+  const allowedOperations = detection?.allowed_operations || [];
+  const localizationOperations = ["extract", "validate", "build", "verify"];
+  const capabilityAllowsLocalization = localizationOperations.every((item) => detectedCapabilities.includes(item));
+  const guardAllowsLocalization = localizationOperations.every((item) => allowedOperations.includes(item));
+  const canLocalizeProject = detection?.status === "ready" && capabilityAllowsLocalization && guardAllowsLocalization;
+  const selectedTask = taskDetails || tasks.find((task) => task.task_id === selectedTaskId) || tasks[0] || null;
+
+  function appendLog(message: string) {
+    setLogs((current) => [...current, message].slice(-240));
+  }
+
+  function updateGameLanguage(value: GameLanguage) {
+    setGameLanguage(value);
+    try {
+      window.localStorage.setItem("hanengine.gameLanguage", value);
+    } catch {
+      // Settings still apply to the current session when storage is unavailable.
+    }
+    appendLog("[语言] 客户端启动语言：" + (value === "zh-CN" ? "简体中文" : "原文"));
+  }
+
+  function updateModelTier(value: ModelTier) {
+    setModelTier(value);
+    try {
+      window.localStorage.setItem("hanengine.modelTier", value);
+    } catch {
+      // Settings still apply to the current session when storage is unavailable.
+    }
+    appendLog("[模型] 翻译档位：" + (value === "7b" ? "7B · 实验（需桥接启用 --accept-request-models）" : "3B · 推荐"));
+  }
+
+  async function chooseGameExecutable() {
+    const result = await window.hanengine?.selectFile({ title: "选择游戏启动程序", filters: [{ name: "程序", extensions: ["exe", "sh", "app"] }] });
+    if (result && !result.canceled && result.filePaths[0]) {
+      const selectedPath = result.filePaths[0];
+      setGameExecutablePath(selectedPath);
+      try {
+        window.localStorage.setItem("hanengine.gameExecutablePath", selectedPath);
+      } catch {
+        // The path remains available in the current session when storage is unavailable.
+      }
+    }
+  }
+
+  async function launchSelectedGame() {
+    if (!gameExecutablePath) return appendLog("请先在 HanEngine 设置中选择游戏启动程序。");
+    try {
+      const launched = await window.hanengine.launchGame(gameExecutablePath, gameLanguage === "zh-CN" ? "zh_cn" : "source");
+      appendLog("[启动] 已按" + (gameLanguage === "zh-CN" ? "简体中文" : "原文") + "模式启动游戏" + (launched.pid ? "（PID " + launched.pid + "）" : ""));
+    } catch (error) {
+      appendLog("[启动] 游戏启动失败：" + String(error));
+    }
+  }
+
+  async function refreshTasks() {
+    if (!window.hanengine) return;
+    const result = await window.hanengine.listTasks();
+    if (result.code !== 0) return;
+    const payload = parseJsonOutput<TaskStatus[]>(result.stdout);
+    if (!payload) return;
+    const ordered = [...payload].map((task) => ({ ...task, engine_id: normalizeEngineId(task.engine_id) })).sort((left, right) => (right.updated_at || right.created_at || "").localeCompare(left.updated_at || left.created_at || ""));
+    setTasks(ordered);
+    if (selectedTaskId && !ordered.some((task) => task.task_id === selectedTaskId)) {
+      setSelectedTaskId("");
+      setTaskDetails(null);
+    }
+  }
+
+  async function selectTask(taskId: string) {
+    setSelectedTaskId(taskId);
+    const summary = tasks.find((task) => task.task_id === taskId) || null;
+    setTaskDetails(summary);
+    if (!window.hanengine) return;
+    const result = await window.hanengine.showTask(taskId);
+    if (result.code === 0) {
+      const detail = parseJsonOutput<TaskStatus>(result.stdout);
+      if (detail) setTaskDetails({ ...detail, engine_id: normalizeEngineId(detail.engine_id) });
+    }
+  }
+
+  async function retrySelectedTask() {
+    if (!selectedTask || !selectedTask.retryable || selectedTask.state === "completed" || taskActionId) return;
+    setTaskActionId(selectedTask.task_id);
+    const result = await window.hanengine?.retryTask(selectedTask.task_id);
+    setTaskActionId("");
+    if (result?.code === 0) {
+      appendLog(`[任务] 已请求继续：${selectedTask.task_id}`);
+      await refreshTasks();
+    } else {
+      appendLog(`[任务] 继续失败：${result?.stderr || "未知错误"}`);
+    }
+  }
+
+  async function cancelTaskById(taskId: string) {
+    if (!taskId || taskActionId) return;
+    setTaskActionId(taskId);
+    const result = await window.hanengine?.cancelTask(taskId);
+    setTaskActionId("");
+    if (result?.code === 0) {
+      appendLog(`[任务] 已请求取消：${taskId}`);
+      await refreshTasks();
+    } else {
+      appendLog(`[任务] 取消失败：${result?.stderr || "未知错误"}`);
+    }
+  }
+
+  async function cancelActiveWorkflow() {
+    const current = tasks
+      .filter((task) => task.source_root === projectPath && ["queued", "running", "paused", "retrying"].includes(task.state))
+      .sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""))[0]?.task_id
+      || activeWorkflowTaskIds[activeWorkflowTaskIds.length - 1];
+    if (!current) {
+      appendLog("当前没有可请求取消的持久化任务。");
+      return;
+    }
+    await cancelTaskById(current);
+  }
+
+  async function openProject() {
+    const result = await window.hanengine?.selectDirectory({ title: "选择游戏项目" });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    await applyProjectPath(result.filePaths[0]);
+  }
+
+  async function applyProjectPath(selectedPath: string) {
+    setProjectPath(selectedPath);
+    setQuickStatus("idle");
+    setQuickOutputPath("");
+    setDetection(null);
+    setQualityReport(null);
+    setTasks([]);
+    setTaskDetails(null);
+    setSelectedTaskId("");
+    appendLog(`已打开项目：${selectedPath}`);
+    try {
+      const projectTree = await window.hanengine.scanProject(selectedPath);
+      setTree(projectTree);
+      setExpanded(new Set(projectTree.filter((node) => node.type === "directory").slice(0, 2).map((node) => node.relativePath)));
+      await detectProject(selectedPath);
+    } catch (error) {
+      appendLog(`读取项目结构失败：${String(error)}`);
+    }
+  }
+
+  async function detectProject(rootPath: string): Promise<string | null> {
+    const result = await runPython(["engine", "inspect", "auto", rootPath, "--json", "--mode", BACKEND_MODE], "识别游戏引擎和可用能力");
+    if (!result) return null;
+    const report = parseJsonOutput<DetectionReport>(result.stdout);
+    if (!report) {
+      appendLog(`引擎检测结果无法解析：${result.stderr || result.stdout}`);
+      return null;
+    }
+    setDetection(report);
+    if (report.selected_engine) {
+      setEngine(report.selected_engine);
+      const selectedCandidate = selectedDetectionCandidate(report);
+      appendLog(`[检测] ${selectedCandidate?.display_name || report.selected_engine}（${report.status}）`);
+      if (report.status !== "ready") appendLog("[安全门控] 当前项目仅允许检测，提取和构建已禁用。");
+    } else {
+      const reasons = (report.reasons || []).map(detectionReasonLabel).join("；");
+      appendLog(`[检测] 未能自动确定引擎（${report.status}）${reasons ? `：${reasons}` : "，请手动选择。"}`);
+    }
+    return report.selected_engine;
+  }
+
+  async function loadCatalog(selectedPath: string) {
+    setCatalogPath(selectedPath);
+    try {
+      const catalog = await window.hanengine.readCatalog(selectedPath);
+      setRows(catalog.rows.map((row) => ({ ...row, status: rowStatus(row.source, row.target) })));
+      setSelectedId(catalog.rows[0]?.id || "");
+      if (catalog.metadata.engine && catalog.metadata.engine !== "auto") setEngine(catalog.metadata.engine);
+      appendLog(`已加载 ${catalog.rows.length} 条翻译记录：${selectedPath}`);
+    } catch (error) {
+      appendLog(`目录读取失败：${String(error)}`);
+    }
+  }
+
+  async function chooseCatalog() {
+    const result = await window.hanengine?.selectFile({ title: "打开翻译目录", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    await loadCatalog(result.filePaths[0]);
+  }
+
+  async function chooseDictionary() {
+    const result = await window.hanengine?.selectFile({ title: "加载术语表（可选）", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (result && !result.canceled && result.filePaths[0]) setDictionaryPath(result.filePaths[0]);
+  }
+
+  async function runPython(args: string[], label: string): Promise<{ code: number; stdout: string; stderr: string } | null> {
+    if (running) return null;
+    const taskId = `ui-${Date.now()}`;
+    setActiveTask(taskId);
+    setRunning(true);
+    appendLog(`[开始] ${label}`);
+    const result = await window.hanengine?.runPython(taskId, args);
+    if (!result) {
+      appendLog("Electron 主进程不可用，请通过 npm run dev 启动桌面壳。");
+      setRunning(false);
+      return null;
+    }
+    if (result.code === 0) appendLog(`[完成] ${label}`);
+    else appendLog(`[失败] ${label}（退出码 ${result.code}）`);
+    setRunning(false);
+    return result;
+  }
+
+  async function extractCatalog() {
+    if (!projectPath) return appendLog("请先选择项目目录。");
+    if (!canLocalizeProject) return appendLog("HanGuard 或适配器能力未允许提取，请检查项目类型和检测结果。");
+    let output = catalogPath;
+    if (!output) {
+      const result = await window.hanengine?.saveFile({ title: "保存翻译目录", defaultPath: "catalog.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (!result || result.canceled || !result.filePath) return;
+      output = result.filePath;
+      setCatalogPath(output);
+    }
+    let selectedEngine = engine;
+    if (selectedEngine === "auto") selectedEngine = detection?.selected_engine || (await detectProject(projectPath)) || "auto";
+    if (selectedEngine === "auto") return appendLog("无法提取：请手动选择一个引擎。");
+    const args = ["engine", "extract", selectedEngine, projectPath, "--output", output, "--language", "zh-CN", "--mode", BACKEND_MODE];
+    const result = await runPython(args, "提取翻译目录");
+    if (result?.code === 0) await loadCatalog(output);
+  }
+
+  async function localizeProject() {
+    if (!projectPath) return appendLog("请先选择项目目录。");
+    const result = await window.hanengine?.selectDirectory({ title: "选择汉化输出目录" });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
+    const output = result.filePaths[0];
+    setQualityReport(null);
+    await runPython(["engine", "localize", selectedEngine, projectPath, "--output", output, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--local-model-endpoint", "http://127.0.0.1:8080/translate", "--local-model-name", MODEL_NAMES[modelTier], "--language", "zh-CN", "--mode", BACKEND_MODE], "翻译、构建并验证");
+    await loadQualityReport(output);
+  }
+
+  async function chooseComparisonReport() {
+    const result = await window.hanengine?.selectFile({ title: "选择对比报告 JSON", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    try {
+      const report = await window.hanengine.readComparisonReport(result.filePaths[0]);
+      setComparisonPath(report.reportPath);
+      setComparison(report);
+      const pending = report.summary.entryCount - report.summary.matchCount;
+      appendLog(`[审阅] 已加载对比报告：${report.summary.entryCount} 条，待处理 ${pending} 条（差异 ${report.summary.differenceCount} · 未译 ${report.summary.untranslatedCount} · 缺译文 ${report.summary.missingTargetCount}）`);
+    } catch (error) {
+      appendLog(`[审阅] 对比报告读取失败：${String(error)}`);
+    }
+  }
+
+  async function adoptReviewTarget(segmentId: string, text: string) {
+    if (!text.trim()) return appendLog("[审阅] 译文为空，未写入。");
+    if (!catalogPath) return appendLog("[审阅] 请先在工作台打开翻译目录（提取文本或打开 catalog JSON）。");
+    const updated = rows.map((row) => (row.id === segmentId ? { ...row, target: text, status: rowStatus(row.source, text) } : row));
+    const changedRow = updated.find((row) => row.id === segmentId);
+    setRows(updated);
+    try {
+      await window.hanengine.writeCatalog(catalogPath, changedRow ? [changedRow] : []);
+      setComparison((current) => current ? {
+        ...current,
+        entries: current.entries.map((entry) => entry.segmentId === segmentId ? { ...entry, candidateZh: text } : entry),
+      } : current);
+      appendLog(`[审阅] 已写入译文并保存目录：${segmentId}`);
+    } catch (error) {
+      appendLog(`[审阅] 写入目录失败：${String(error)}`);
+    }
+  }
+
+  async function loadGlossary() {
+    if (!dictionaryPath) return appendLog("[术语表] 请先在翻译工作台加载术语表，或新建一个。");
+    try {
+      const result = await window.hanengine.readDictionary(dictionaryPath);
+      setGlossaryRows(result.rows.map((row) => ({ source: row.source, target: row.target })));
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已加载 ${result.rows.length} 条：${dictionaryPath}`);
+    } catch (error) {
+      appendLog(`[术语表] 读取失败：${String(error)}`);
+    }
+  }
+
+  async function newGlossary() {
+    const result = await window.hanengine?.saveFile({ title: "新建术语表", defaultPath: "glossary.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePath) return;
+    await window.hanengine.writeDictionary(result.filePath, []);
+    setDictionaryPath(result.filePath);
+    setGlossaryRows([]);
+    setGlossaryDirty(false);
+    appendLog(`[术语表] 已新建：${result.filePath}`);
+  }
+
+  async function saveGlossary() {
+    if (!dictionaryPath) return appendLog("[术语表] 请先加载或新建术语表。");
+    try {
+      const result = await window.hanengine.writeDictionary(dictionaryPath, glossaryRows);
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已保存 ${result.updated} 条：${result.path}`);
+    } catch (error) {
+      appendLog(`[术语表] 保存失败：${String(error)}`);
+    }
+  }
+
+  async function chooseGlossaryAndLoad() {
+    const result = await window.hanengine?.selectFile({ title: "加载术语表", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selected = result.filePaths[0];
+    setDictionaryPath(selected);
+    try {
+      const loaded = await window.hanengine.readDictionary(selected);
+      setGlossaryRows(loaded.rows.map((row) => ({ source: row.source, target: row.target })));
+      setGlossaryDirty(false);
+      appendLog(`[术语表] 已加载 ${loaded.rows.length} 条：${selected}`);
+    } catch (error) {
+      setGlossaryRows([]);
+      appendLog(`[术语表] 读取失败：${String(error)}`);
+    }
+  }
+
+  async function prepareRasterManifest() {
+    if (!projectPath) return appendLog("[栅格] 请先选择项目目录。");
+    const save = await window.hanengine?.saveFile({ title: "保存栅格清单", defaultPath: "raster-manifest.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!save || save.canceled || !save.filePath) return;
+    const output = save.filePath;
+    const run = await runPython(["raster", "prepare", projectPath, "--output", output, "--language", "zh-CN"], "栅格清单：盘点图片/视频文字资源");
+    if (run?.code !== 0) return;
+    try {
+      const manifest = await window.hanengine.readRasterManifest(output);
+      setRasterManifestPath(output);
+      setRasterManifest(manifest);
+      appendLog(`[栅格] 清单已加载：${manifest.summary.assetCount} 个资产（图 ${manifest.summary.imageCount} / 视频 ${manifest.summary.videoCount}），人工审阅后用 --raster-manifest 合入候选。`);
+    } catch (error) {
+      appendLog(`[栅格] 清单读取失败：${String(error)}`);
+    }
+  }
+
+  async function loadRasterManifest() {
+    const result = await window.hanengine?.selectFile({ title: "加载栅格清单", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    try {
+      const manifest = await window.hanengine.readRasterManifest(result.filePaths[0]);
+      setRasterManifestPath(manifest.manifestPath);
+      setRasterManifest(manifest);
+      appendLog(`[栅格] 已加载清单：${manifest.summary.assetCount} 个资产`);
+    } catch (error) {
+      appendLog(`[栅格] 清单读取失败：${String(error)}`);
+    }
+  }
+
+  async function verifyRaster() {
+    if (!projectPath || !rasterManifestPath) return appendLog("[栅格] 需要项目目录与已加载的清单。");
+    const result = await window.hanengine?.selectDirectory({ title: "选择候选目录（含已翻译图片产物）" });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const candidate = result.filePaths[0];
+    const reportPath = `${rasterManifestPath.replace(/\.json$/i, "")}.verification.json`;
+    const run = await runPython(["raster", "verify", projectPath, rasterManifestPath, "--candidate", candidate, "--output", reportPath], "栅格验证：源图/产物/审批/哈希");
+    if (run?.code !== 0) return;
+    try {
+      const report = await window.hanengine.readRasterVerification(reportPath);
+      setRasterVerification(report);
+      appendLog(`[栅格] 验证${report.passed ? "通过" : "未通过"}：${report.artifactCount} 个产物哈希，${report.issues.length} 个问题`);
+    } catch (error) {
+      appendLog(`[栅格] 验证报告读取失败：${String(error)}`);
+    }
+  }
+
+  async function scanInstalledGames() {
+    if (discoveredLoading) return;
+    setDiscoveredLoading(true);
+    try {
+      const result = await window.hanengine.runPython(`games-scan-${Date.now()}`, ["games", "scan", "--json"]);
+      const games = parseJsonOutput<DiscoveredGame[]>(result?.stdout || "");
+      if (games) {
+        setDiscoveredGames(games);
+        appendLog(`[发现] 本机共发现 ${games.length} 款已安装游戏（Steam）。`);
+      } else {
+        setDiscoveredGames([]);
+      }
+    } catch (error) {
+      appendLog(`[发现] 已安装游戏扫描失败：${String(error)}`);
+      setDiscoveredGames([]);
+    } finally {
+      setDiscoveredLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void scanInstalledGames();
+  }, []);
+
+  async function startGameFlow(game: DiscoveredGame) {
+    setSelectedGame(game);
+    setQuickStatus("idle");
+    setQualityReport(null);
+    appendLog(`[选择] ${game.name}（${game.install_dir}）`);
+    try {
+      const { root } = await window.hanengine.candidatesRoot();
+      const safeName = game.name.replace(/[\\/:*?"<>|]/g, "_").trim() || "game";
+      const output = `${root.replace(/[\\/]$/, "")}/${safeName}`;
+      setQuickOutputPath(output);
+      setAutoRunGame(game);
+      await applyProjectPath(game.install_dir);
+    } catch (error) {
+      appendLog(`[选择] 准备汉化环境失败：${String(error)}`);
+      setSelectedGame(null);
+      setAutoRunGame(null);
+    }
+  }
+
+  // Auto-run once detection has settled: readiness triggers the pipeline;
+  // a settled detection without readiness fails honestly.
+  useEffect(() => {
+    if (!autoRunGame) return;
+    if (canLocalizeProject && quickOutputPath && !running && quickStatus === "idle") {
+      const game = autoRunGame;
+      setAutoRunGame(null);
+      appendLog(`[自动] 《${game.name}》检测就绪，自动开始：提取 → 翻译 → 校验 → 构建。`);
+      void runQuickLocalization();
+    } else if (detection && !canLocalizeProject) {
+      setAutoRunGame(null);
+      setQuickStatus("failed");
+      const reasons = detection.reasons?.map(detectionReasonLabel).join("；") || "未检测到可安全汉化的受支持引擎";
+      appendLog(`[自动] 《${autoRunGame.name}》无法汉化：${reasons}`);
+    }
+  }, [autoRunGame, detection, canLocalizeProject, quickOutputPath, running, quickStatus]);
+
+  function backToGameWall() {
+    setSelectedGame(null);
+    setAutoRunGame(null);
+    setQuickStatus("idle");
+    setQualityReport(null);
+    setDetection(null);
+    setProjectPath("");
+    setQuickOutputPath("");
+    appendLog("[返回] 已回到游戏库。");
+  }
+
+  async function openOutputFolder() {
+    if (!quickOutputPath) return;
+    try {
+      await window.hanengine.openPath(quickOutputPath);
+    } catch (error) {
+      appendLog(`打开目录失败：${String(error)}`);
+    }
+  }
+
+  async function loadQualityReport(output: string) {
+    const reportPath = `${output}.quality.json`;
+    try {
+      const report = await window.hanengine.readQualityReport(reportPath);
+      setQualityReport(report);
+      appendLog(`[质量] ${qualityStatusLabel(report.status)}：${report.summary.translatedCount}/${report.summary.segmentCount} 已翻译，漏译 ${report.summary.untranslatedCount}`);
+    } catch (error) {
+      appendLog(`[质量] 未能读取报告：${String(error)}`);
+    }
+  }
+
+  async function chooseQuickOutput() {
+    const result = await window.hanengine?.selectDirectory({ title: "选择独立汉化输出目录" });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selectedPath = result.filePaths[0];
+    if (isPathInside(projectPath, selectedPath)) {
+      appendLog("[安全门控] 输出目录不能是游戏项目目录或其子目录。");
+      return;
+    }
+    setQuickOutputPath(selectedPath);
+  }
+
+  async function runQuickLocalization() {
+    if (!projectPath || !quickOutputPath) return;
+    if (!canLocalizeProject) {
+      appendLog("[安全门控] 当前项目未获得提取、校验、构建和验证权限。");
+      return;
+    }
+    if (isPathInside(projectPath, quickOutputPath)) {
+      appendLog("[安全门控] 输出目录必须位于游戏项目之外。");
+      return;
+    }
+    if (!dictionaryPath) {
+      appendLog("[翻译] 未加载术语表：将直接使用本地模型翻译（qwen 系列，全程本地）。可在高级设置加载术语表提升术语一致性。");
+    }
+    setQuickStatus("running");
+    setQualityReport(null);
+    setActiveWorkflowTaskIds([]);
+    const result = await runPython(
+      ["engine", "localize", "auto", projectPath, "--output", quickOutputPath, ...(dictionaryPath ? ["--dictionary", dictionaryPath] : []), "--local-model-endpoint", "http://127.0.0.1:8080/translate", "--local-model-name", MODEL_NAMES[modelTier], "--language", "zh-CN", "--mode", BACKEND_MODE],
+      "一键汉化：提取、翻译、校验、构建和验证",
+    );
+    setQuickStatus(result?.code === 0 ? "completed" : "failed");
+    await loadQualityReport(quickOutputPath);
+    await refreshTasks();
+  }
+
+  async function extractQuickCatalog() {
+    if (!projectPath || !quickOutputPath) return;
+    if (!canLocalizeProject) {
+      appendLog("[安全门控] 当前项目未获得提取权限，请检查项目类型和检测结果。");
+      return;
+    }
+    if (isPathInside(projectPath, quickOutputPath)) {
+      appendLog("[安全门控] 输出目录必须位于游戏项目之外。");
+      return;
+    }
+    const catalogOutput = `${quickOutputPath.replace(/[\\/]$/, "")}/hanengine.catalog.json`;
+    const selectedEngine = engine === "auto" ? detection?.selected_engine || "auto" : engine;
+    if (selectedEngine === "auto") {
+      appendLog("[提取] 无法确定引擎，请先重新检测项目。");
+      return;
+    }
+    const result = await runPython(
+      ["engine", "extract", selectedEngine, projectPath, "--output", catalogOutput, "--language", "zh-CN", "--mode", "player"],
+      "提取待翻译文本",
+    );
+    if (result?.code === 0) await loadCatalog(catalogOutput);
+  }
+
+  async function chooseVisualManifest() {
+    const result = await window.hanengine?.selectFile({ title: "选择视觉证据清单", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (result && !result.canceled && result.filePaths[0]) {
+      setVisualManifestPath(result.filePaths[0]);
+      resetVisualReview();
+    }
+  }
+
+  async function chooseVisualReport() {
+    const result = await window.hanengine?.saveFile({ title: "保存视觉验收报告", defaultPath: "visual-report.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (result && !result.canceled && result.filePath) {
+      setVisualReportPath(result.filePath);
+      resetVisualReview();
+    }
+  }
+
+  async function openVisualReport() {
+    const result = await window.hanengine?.selectFile({ title: "打开视觉验收报告", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result || result.canceled || !result.filePaths[0]) return;
+    const selectedPath = result.filePaths[0];
+    resetVisualReview();
+    setVisualReportPath(selectedPath);
+    await loadVisualReport(selectedPath);
+  }
+
+  function resetVisualReview() {
+    setVisualStatus("idle");
+    setVisualSummary(null);
+    setVisualReviewProof(null);
+    setVisualProofSaving(false);
+    setVisualSceneId("");
+    setVisualImagePair(null);
+    setVisualConfirmedScenes(new Set());
+    setVisualImageLoading(false);
+  }
+
+  async function selectVisualScene(sampleId: string, reportPath = visualReportPath) {
+    if (!sampleId || !reportPath) return;
+    setVisualSceneId(sampleId);
+    setVisualImagePair(null);
+    setVisualImageLoading(true);
+    try {
+      setVisualImagePair(await window.hanengine.readVisualImagePair(reportPath, sampleId));
+    } catch (error) {
+      appendLog(`视觉证据读取失败：${String(error)}`);
+    } finally {
+      setVisualImageLoading(false);
+    }
+  }
+
+  function toggleVisualSceneConfirmation(sampleId: string, confirmed: boolean) {
+    if (visualReviewProof || visualProofSaving) return;
+    setVisualConfirmedScenes((current) => {
+      const next = new Set(current);
+      if (confirmed) next.add(sampleId); else next.delete(sampleId);
+      return next;
+    });
+  }
+
+  async function completeVisualReview() {
+    if (!visualSummary || visualStatus !== "review") return;
+    if (visualSummary.scenes.some((scene) => !visualConfirmedScenes.has(scene.sampleId))) return;
+    setVisualProofSaving(true);
+    try {
+      const proof = await window.hanengine.createVisualReviewProof(visualReportPath, [...visualConfirmedScenes]);
+      setVisualReviewProof(proof);
+      setVisualStatus("passed");
+      appendLog(`人工复核证明已保存：${proof.proofPath}`);
+    } catch (error) {
+      appendLog(`人工复核证明保存失败：${String(error)}`);
+    } finally {
+      setVisualProofSaving(false);
+    }
+  }
+
+  async function loadVisualReport(reportPath: string) {
+    try {
+      const summary = await window.hanengine.readVisualReport(reportPath);
+      setVisualSummary(summary);
+      const proof = await window.hanengine.readVisualReviewProof(reportPath);
+      setVisualReviewProof(proof);
+      setVisualConfirmedScenes(proof ? new Set(summary.scenes.map((scene) => scene.sampleId)) : new Set());
+      const nextStatus = summary.decision === "blocked" ? "blocked" : proof ? "passed" : "review";
+      setVisualStatus(nextStatus);
+      if (nextStatus !== "blocked" && summary.scenes[0]) await selectVisualScene(summary.scenes[0].sampleId, reportPath);
+    } catch (error) {
+      setVisualStatus("failed");
+      appendLog(`视觉报告读取失败：${String(error)}`);
+    }
+  }
+
+  async function runVisualVerification() {
+    if (!visualManifestPath || !visualReportPath || running) return;
+    setVisualStatus("checking");
+    setVisualSummary(null);
+    setVisualReviewProof(null);
+    setVisualProofSaving(false);
+    setVisualSceneId("");
+    setVisualImagePair(null);
+    setVisualConfirmedScenes(new Set());
+    const result = await runPython(
+      [
+        "visual", "verify", "--manifest", visualManifestPath, "--output", visualReportPath,
+        "--authorized", "--authorization-reference", "client-owner-authorized-visual-check",
+        "--zhipu-model", "glm-4.6v", "--zhipu-timeout", "180",
+        "--ocr-language", "chi_sim+eng", "--ocr-provider", "rapidocr",
+      ],
+      "视觉验收",
+    );
+    if (!result) {
+      setVisualStatus("failed");
+      return;
+    }
+    if (!result.stdout.includes("Report:")) {
+      setVisualStatus("failed");
+      return;
+    }
+    await loadVisualReport(visualReportPath);
+  }
+
+  async function saveCatalog() {
+    if (!catalogPath || !window.hanengine) return appendLog("请先加载或提取翻译目录。");
+    try {
+      const result = await window.hanengine.writeCatalog(catalogPath, rows);
+      appendLog(`已保存 ${result.updated} 条翻译：${result.path}`);
+    } catch (error) {
+      appendLog(`保存失败：${String(error)}`);
+    }
+  }
+
+  function updateSelectedTarget(value: string) {
+    setRows((current) => current.map((row) => row.id === selectedId ? { ...row, target: value, status: rowStatus(row.source, value) } : row));
+  }
+
+  function toggleNode(node: ProjectNode) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(node.relativePath)) next.delete(node.relativePath); else next.add(node.relativePath);
+      return next;
+    });
+  }
+
+  function renderTree(nodes: ProjectNode[], depth = 0): ReactElement[] {
+    return nodes.flatMap((node) => {
+      const isOpen = expanded.has(node.relativePath);
+      const icon = node.type === "directory" ? (isOpen ? <FolderOpen size={15} /> : <Folder size={15} />) : (node.extension === ".json" ? <FileJson2 size={15} /> : <FileCode2 size={15} />);
+      const item = <button className={`tree-item ${catalogPath.endsWith(node.relativePath) ? "selected" : ""}`} key={node.relativePath} style={{ paddingLeft: 12 + depth * 16 }} onClick={() => node.type === "directory" ? toggleNode(node) : loadCatalog(projectPath ? `${projectPath.replace(/[\\/]$/, "")}${projectPath.includes("\\") ? "\\" : "/"}${node.relativePath}` : node.relativePath)}>{node.type === "directory" && (isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}{icon}<span>{node.name}</span>{node.type === "file" && <span className="tree-dot" />}</button>;
+      return node.type === "directory" && isOpen ? [item, ...renderTree(node.children || [], depth + 1)] : [item];
+    });
+  }
+
+  const navItems = [
+    { id: "quick" as View, label: "游戏库", icon: <Play size={16} /> },
+    { id: "workspace" as View, label: "翻译工作台", icon: <LayoutPanelLeft size={16} /> },
+    { id: "review" as View, label: "审阅", icon: <CircleAlert size={16} />, badge: comparison ? comparison.entries.filter((entry) => entry.category !== "match").length : 0 },
+    { id: "glossary" as View, label: "术语表", icon: <Languages size={16} />, badge: glossaryDirty ? 1 : 0 },
+    { id: "raster" as View, label: "栅格资源", icon: <ImageIcon size={16} /> },
+    { id: "single" as View, label: "单文件", icon: <FileCode2 size={16} /> },
+    { id: "package" as View, label: "封包输出", icon: <Archive size={16} /> },
+    { id: "visual" as View, label: "视觉验收", icon: <ScanSearch size={16} /> },
+    { id: "tasks" as View, label: "任务中心", icon: <ListChecks size={16} /> },
+  ];
+  const visibleNavItems = navItems;
+
+  if (!authReady) return <AuthLoadingScreen />;
+  if (!currentUser) {
+    return <AuthScreen needsSetup={needsSetup} onAuthenticated={handleAuthenticated} />;
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="titlebar">
+        <div className="brand-mark"><Languages size={18} /><span>HanEngine</span><small>本地游戏汉化工作台</small></div>
+        <div className="title-actions"><button className="icon-button no-drag" title="刷新项目" onClick={() => projectPath && openProject()}><RefreshCw size={16} /></button><button className="icon-button no-drag" title="启动游戏" onClick={() => void launchSelectedGame()}><Play size={16} /></button><button className="icon-button no-drag" title="设置" onClick={() => setSettingsOpen(true)}><Settings2 size={16} /></button><span className="account-chip no-drag"><CircleUserRound size={15} /><span>{currentUser.display_name || currentUser.username}</span></span><button className="icon-button no-drag" title="退出登录" onClick={() => void logout()}><LogOut size={16} /></button></div>
+      </header>
+
+      <div className={`body-grid ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        <aside className="sidebar">
+          <div className="sidebar-top"><button className="new-project" onClick={openProject}><FolderOpen size={16} />打开项目</button><button className="icon-button" title="收起工作栏" onClick={() => setSidebarCollapsed(true)}><Menu size={16} /></button></div>
+          <nav className="nav-list">{visibleNavItems.map((item) => <button key={item.id} className={`nav-item ${view === item.id ? "active" : ""}`} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span>{item.badge ? <span className="nav-badge">{item.badge}</span> : null}</button>)}</nav>
+          <div className="sidebar-section"><div className="section-title"><span>项目结构</span><button className="small-icon" title="重新扫描" onClick={() => projectPath && openProject()}><RefreshCw size={13} /></button></div>{projectPath ? <div className="project-name"><CircleDot size={13} /><span title={projectPath}>{basename(projectPath)}</span></div> : <div className="empty-state compact"><Folder size={22} /><span>打开一个项目开始</span></div>}<div className="tree">{renderTree(tree)}</div></div>
+          <div className="sidebar-footer"><div className="ethics"><ShieldCheck size={14} /><span>仅处理合法拥有或获授权的资源</span></div><button className="collapse-button" onClick={() => setSidebarCollapsed(true)}><ChevronRight size={14} />收起</button></div>
+        </aside>
+
+        <main className="workspace">
+          {sidebarCollapsed && <button className="restore-sidebar icon-button" title="展开工作栏" onClick={() => setSidebarCollapsed(false)}><Menu size={16} /></button>}
+          <div className="workspace-header"><div><div className="breadcrumbs"><span>HanEngine</span><ChevronRight size={13} /><strong>{projectPath ? basename(projectPath) : "未选择项目"}</strong>{catalogPath && <><ChevronRight size={13} /><span>{basename(catalogPath)}</span></>}</div><h1>{view === "workspace" ? "翻译工作台" : view === "quick" ? "游戏库" : navItems.find((item) => item.id === view)?.label}</h1></div><div className="header-actions"><span className={`connection ${running ? "busy" : ""}`}><span className="connection-dot" />{running ? "处理中" : "本地模式"}</span><button className="secondary-button" onClick={chooseCatalog}><Upload size={15} />打开目录</button></div></div>
+
+          {view === "workspace" && <>
+            <div className="command-bar"><div className="command-group"><button className="primary-button" onClick={extractCatalog} disabled={running}><ArrowDownToLine size={15} />提取文本</button><button className="secondary-button" onClick={localizeProject} disabled={running}><Play size={15} />运行汉化</button><button className="secondary-button" onClick={saveCatalog}><Save size={15} />保存</button></div><div className="command-group"><label className="inline-control">引擎<select value={engine} onChange={(event) => setEngine(event.target.value)}><option value="auto">自动识别</option><option value="renpy">Ren'Py</option><option value="rpg_maker_mv">RPG Maker MV</option><option value="rpg_maker_mz">RPG Maker MZ</option><option value="godot">Godot</option><option value="unity">Unity</option><option value="unreal">Unreal</option></select></label><button className="icon-button" title="加载术语表（可选）" onClick={chooseDictionary}><Languages size={16} /></button></div></div>
+            <div className="stats-strip"><div><span>总条目</span><strong>{rows.length.toLocaleString()}</strong></div><div><span>已完成</span><strong className="success-text">{translatedCount.toLocaleString()}</strong></div><div><span>待翻译</span><strong className="warning-text">{pendingCount.toLocaleString()}</strong></div><div><span>需检查</span><strong className="warning-text">{warningCount.toLocaleString()}</strong></div><div className="stats-spacer" /><div className="file-context"><FileJson2 size={14} /><span>{catalogPath ? basename(catalogPath) : "提取或打开 catalog JSON 后显示翻译条目"}</span></div></div>
+            <QualityReportPanel report={qualityReport} />
+            <div className="filter-bar"><div className="search-box"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索 ID、上下文或文本" /></div><button className={`filter-button ${reviewOnly ? "active" : ""}`} onClick={() => setReviewOnly((value) => !value)}><CircleAlert size={14} />仅看待检查</button></div>
+            <section className="translation-area"><div className="table-wrap"><table><thead><tr><th className="id-col">ID</th><th className="context-col">上下文</th><th>原文</th><th>译文</th><th className="status-col">状态</th></tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id} className={row.id === selectedId ? "selected-row" : ""} onClick={() => setSelectedId(row.id)}><td className="mono">{row.id}</td><td className="muted-cell">{row.context}</td><td>{row.source}</td><td className={!row.target ? "placeholder-cell" : ""}>{row.target || "点击下方编辑译文"}</td><td><span className={`status-pill ${row.status}`}>{statusLabel[row.status]}</span></td></tr>) : <tr><td className="empty-table" colSpan={5}>尚未加载翻译目录。打开项目后点击“提取文本”，或直接打开 catalog JSON。</td></tr>}</tbody></table></div><div className="editor-panel"><div className="editor-heading"><div><span className="eyebrow">当前条目</span><strong>{selected?.context || "未选择"}</strong></div><span className="editor-id">{selected?.id || "-"}</span></div><div className="editor-fields"><div><label>原文</label><div className="source-preview">{selected?.source || "选择一条翻译记录"}</div></div><div><label>译文</label><textarea value={selected?.target || ""} onChange={(event) => updateSelectedTarget(event.target.value)} placeholder="输入简体中文译文..." /></div></div></div></section>
+          </>}
+          {view === "quick" && <QuickLocalizationView
+            selectedGame={selectedGame}
+            discoveredGames={discoveredGames}
+            discoveredLoading={discoveredLoading}
+            onRefreshGames={() => void scanInstalledGames()}
+            onStartGame={(game) => void startGameFlow(game)}
+            onBackToWall={backToGameWall}
+            onOpenOutput={() => void openOutputFolder()}
+            outputPath={quickOutputPath}
+            running={running}
+            status={quickStatus}
+            qualityReport={qualityReport}
+            onOpenTasks={() => setView("tasks")}
+          />}
+
+          {view === "review" && <ReviewView
+            comparisonPath={comparisonPath}
+            comparison={comparison}
+            catalogLoaded={Boolean(catalogPath)}
+            onChooseReport={chooseComparisonReport}
+            onAdopt={adoptReviewTarget}
+            onOpenWorkspace={() => setView("workspace")}
+          />}
+
+          {view === "glossary" && <GlossaryView
+            dictionaryPath={dictionaryPath}
+            rows={glossaryRows}
+            dirty={glossaryDirty}
+            onReload={loadGlossary}
+            onNew={newGlossary}
+            onSave={saveGlossary}
+            onChooseAndLoad={chooseGlossaryAndLoad}
+            onChangeRows={(updated) => { setGlossaryRows(updated); setGlossaryDirty(true); }}
+          />}
+
+          {view === "raster" && <RasterView
+            projectPath={projectPath}
+            running={running}
+            manifestPath={rasterManifestPath}
+            manifest={rasterManifest}
+            verification={rasterVerification}
+            onPrepare={prepareRasterManifest}
+            onLoad={loadRasterManifest}
+            onVerify={verifyRaster}
+          />}
+
+          {view === "single" && <OperationView title="单文件翻译" description="使用现有 translator.py 处理 TXT、KS、RPY、SCRIPT、CSV 或 JSON 资源。" primaryLabel="执行汉化" onPrimary={() => resourcePath && dictionaryPath && runPython([resourcePath, dictionaryPath], "单文件汉化")}><PathField label="资源文件" value={resourcePath} onPick={async () => { const result = await window.hanengine?.selectFile(); if (result && !result.canceled) setResourcePath(result.filePaths[0]); }} /><PathField label="翻译字典" value={dictionaryPath} onPick={chooseDictionary} /></OperationView>}
+          {view === "package" && <OperationView title="封包输出" description="生成独立 ZIP 副本，保留原始项目不被覆盖。" primaryLabel="生成 ZIP 副本" onPrimary={() => appendLog("封包参数已保留，请在工作室模式选择源包和补丁文件。")}><div className="notice-card"><Archive size={20} /><div><strong>安全输出边界</strong><span>Electron 仅负责选择路径和展示结果，实际 ZIP 校验与写入仍由 Python `cli.py package` 执行。</span></div></div></OperationView>}
+          {view === "visual" && <VisualVerificationView
+            manifestPath={visualManifestPath}
+            reportPath={visualReportPath}
+            status={visualStatus}
+            summary={visualSummary}
+            reviewProof={visualReviewProof}
+            proofSaving={visualProofSaving}
+            selectedSceneId={visualSceneId}
+            imagePair={visualImagePair}
+            imageLoading={visualImageLoading}
+            confirmedScenes={visualConfirmedScenes}
+            running={running}
+            onChooseManifest={chooseVisualManifest}
+            onChooseReport={chooseVisualReport}
+            onOpenReport={() => void openVisualReport()}
+            onRun={runVisualVerification}
+            onSelectScene={(sampleId) => void selectVisualScene(sampleId)}
+            onConfirmScene={toggleVisualSceneConfirmation}
+            onCompleteReview={() => void completeVisualReview()}
+          />}
+          {view === "tasks" && <TaskView
+            tasks={tasks}
+            selectedTask={selectedTask}
+            selectedTaskId={selectedTaskId}
+            logs={logs}
+            actionId={taskActionId}
+            onRefresh={refreshTasks}
+            onSelect={selectTask}
+            onRetry={retrySelectedTask}
+            onCancel={cancelTaskById}
+          />}
+
+          <footer className="statusbar"><span><span className="connection-dot" />HanEngine Core</span><span>HanGuard：player · H1_OFFLINE</span><span>Python CLI 已连接</span><span className="status-spacer" />{running ? <button className="cancel-button" onClick={cancelActiveWorkflow}><Square size={12} />请求停止</button> : <span>就绪</span>}</footer>
+        </main>
+      </div>
+      {settingsOpen && <ClientSettingsDialog
+        language={gameLanguage}
+        executablePath={gameExecutablePath}
+        modelTier={modelTier}
+        onClose={() => setSettingsOpen(false)}
+        onLanguageChange={updateGameLanguage}
+        onModelTierChange={updateModelTier}
+        onChooseExecutable={() => void chooseGameExecutable()}
+        onLaunch={() => void launchSelectedGame()}
+      />}
+    </div>
+  );
+}
+
+function ClientSettingsDialog({
+  language,
+  executablePath,
+  modelTier,
+  onClose,
+  onLanguageChange,
+  onModelTierChange,
+  onChooseExecutable,
+  onLaunch,
+}: {
+  language: GameLanguage;
+  executablePath: string;
+  modelTier: ModelTier;
+  onClose: () => void;
+  onLanguageChange: (value: GameLanguage) => void;
+  onModelTierChange: (value: ModelTier) => void;
+  onChooseExecutable: () => void;
+  onLaunch: () => void;
+}) {
+  return <div className="settings-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="客户端设置" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="settings-heading"><div><span className="eyebrow">HanEngine</span><h2>客户端设置</h2></div><button className="icon-button" title="关闭" onClick={onClose}><X size={17} /></button></div>
+      <div className="settings-field"><span>启动语言</span><div className="settings-segment" role="radiogroup" aria-label="启动语言"><button className={language === "zh-CN" ? "active" : ""} role="radio" aria-checked={language === "zh-CN"} onClick={() => onLanguageChange("zh-CN")}>简体中文</button><button className={language === "source" ? "active" : ""} role="radio" aria-checked={language === "source"} onClick={() => onLanguageChange("source")}>原文</button></div></div>
+      <div className="settings-field"><span>模型档位</span><div className="settings-segment" role="radiogroup" aria-label="模型档位"><button className={modelTier === "3b" ? "active" : ""} role="radio" aria-checked={modelTier === "3b"} onClick={() => onModelTierChange("3b")}>3B · 推荐</button><button className={modelTier === "7b" ? "active" : ""} role="radio" aria-checked={modelTier === "7b"} onClick={() => onModelTierChange("7b")}>7B · 实验</button></div><small className="settings-hint">7B 需已安装模型且桥接以 --accept-request-models 启动；速度约为 3B 的 1/6。</small></div>
+      <div className="settings-field"><span>游戏启动程序</span><div className="settings-path"><input value={executablePath} readOnly placeholder="尚未选择" /><button className="secondary-button" onClick={onChooseExecutable}>浏览</button></div></div>
+      <div className="settings-actions"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onLaunch} disabled={!executablePath}><Play size={15} />启动游戏</button></div>
+    </section>
+  </div>;
+}
+
+function AuthLoadingScreen() {
+  return <div className="auth-screen auth-loading"><div className="auth-loading-mark"><Languages size={22} /><span>HanEngine</span></div><LoaderCircle size={18} className="spin" /><span>正在准备本地账户</span></div>;
+}
+
+type AuthMode = "login" | "register" | "forgot" | "recovery";
+
+function AuthScreen({
+  needsSetup,
+  onAuthenticated,
+}: {
+  needsSetup: boolean;
+  onAuthenticated: (status: AuthStatus) => void;
+}) {
+  const [mode, setMode] = useState<AuthMode>(needsSetup ? "register" : "login");
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<AuthStatus | null>(null);
+
+  useEffect(() => {
+    if (needsSetup) setMode((value) => (value === "login" ? "register" : value));
+  }, [needsSetup]);
+
+  function switchMode(next: AuthMode) {
+    setError("");
+    setOauthNotice("");
+    setPassword("");
+    setConfirmPassword("");
+    setRecoveryCode("");
+    setNewPassword("");
+    setMode(next);
+  }
+
+  async function startOauth(provider: "qq" | "weixin") {
+    setOauthNotice("");
+    try {
+      const result = await window.hanengine.startOAuth(provider);
+      setOauthNotice(result.message);
+    } catch (reason) {
+      setOauthNotice(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    if (mode === "register" && password !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (mode === "register") {
+        const status = await window.hanengine.register({ username, password, display_name: displayName });
+        setPendingStatus(status);
+        setMode("recovery");
+      } else if (mode === "login") {
+        const status = await window.hanengine.login({ username, password });
+        onAuthenticated(status);
+      } else if (mode === "forgot") {
+        const status = await window.hanengine.resetPassword({ username, recovery_code: recoveryCode, new_password: newPassword });
+        onAuthenticated(status);
+      }
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message.replace(/^Error:\s*/i, "") || "认证失败，请稍后重试");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function copyRecoveryCode() {
+    if (!pendingStatus?.recoveryCode) return;
+    try {
+      await navigator.clipboard.writeText(pendingStatus.recoveryCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("复制失败，请手动抄写恢复码");
+    }
+  }
+
+  const oauthButtons = <div className="oauth-row">
+    <button className="oauth-button" type="button" onClick={() => void startOauth("qq")}><MessageCircle size={15} />QQ 登录</button>
+    <button className="oauth-button" type="button" onClick={() => void startOauth("weixin")}><ScanLine size={15} />微信登录</button>
+  </div>;
+
+  const headline = mode === "register" ? { title: "注册账户", sub: "输入你的个人数据来创建账户。" }
+    : mode === "forgot" ? { title: "找回密码", sub: "输入用户名与恢复码，设置新密码。" }
+    : mode === "recovery" ? { title: "保存恢复码", sub: "这是找回密码的唯一凭证。" }
+    : { title: "登录账户", sub: "输入你的账户数据继续。" };
+
+  return <div className="auth-screen">
+    <div className="auth-card">
+      <div className="auth-showcase">
+        <div className="auth-showcase-inner">
+          <div className="auth-brand"><div className="auth-brand-icon"><Languages size={19} /></div><strong>HanEngine</strong></div>
+          <h1>开始使用 HanEngine</h1>
+          <p>完成以下简单步骤，注册<br />你的账户。</p>
+          <div className="auth-steps">
+            <div className="auth-step active"><span className="auth-step-badge"><Info size={12} /></span>注册你的账户</div>
+            <div className="auth-step"><span className="auth-step-badge">2</span>设置你的工作区</div>
+            <div className="auth-step"><span className="auth-step-badge">3</span>设置你的个人资料</div>
+          </div>
+        </div>
+      </div>
+      <div className="auth-formcol">
+        {mode === "recovery" && pendingStatus ? <div className="auth-body">
+          <h2>保存恢复码</h2>
+          <p className="auth-sub">这是找回密码的唯一凭证，关闭后将无法再次查看。</p>
+          <div className="recovery-box">
+            <KeyRound size={18} />
+            <code>{pendingStatus.recoveryCode}</code>
+            <button className="recovery-copy" type="button" onClick={() => void copyRecoveryCode()}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "已复制" : "复制"}</button>
+          </div>
+          <div className="auth-warn"><CircleAlert size={14} /><span>请立即抄写或复制到安全的地方。重置密码时需要用户名 + 恢复码；恢复码一次性使用，用后失效。</span></div>
+          <button className="auth-cta" type="button" onClick={() => onAuthenticated(pendingStatus)}>我已保存，进入工作台</button>
+        </div> : <form className="auth-body" onSubmit={submit}>
+          <h2>{headline.title}</h2>
+          <p className="auth-sub">{headline.sub}</p>
+          {(mode === "login" || mode === "register") && oauthButtons}
+          {(mode === "login" || mode === "register") && <div className="or-divider"><span>或</span></div>}
+          {mode !== "recovery" && <div className="auth-fields">
+            <label className="auth-field"><span>用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="例如 player01" required /></label>
+            {mode === "register" && <div className="field-pair">
+              <label className="auth-field"><span>显示名称 <em>可选</em></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="nickname" placeholder="例如 小汉" /></label>
+              <label className="auth-field"><span>确认密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="再输一次" required />{confirmPassword && <button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button>}</div></label>
+            </div>}
+            {(mode === "forgot") && <label className="auth-field"><span>恢复码</span><input value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} placeholder="XXXX-XXXX-XXXX-XXXX" autoCapitalize="characters" required /></label>}
+            {mode !== "forgot" && <label className="auth-field"><span>密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder={mode === "register" ? "输入密码" : "输入密码"} required />{password && <button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button>}</div></label>}
+            {mode === "forgot" && <label className="auth-field"><span>新密码</span><div className="pw-wrap"><input type={showPassword ? "text" : "password"} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" placeholder="输入新密码" required /><button type="button" className="pw-eye" onClick={() => setShowPassword((value) => !value)} tabIndex={-1}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></label>}
+            {mode !== "login" && <span className="field-helper">必须至少 8 个字符。</span>}
+          </div>}
+          {mode === "login" && <button type="button" className="forgot-link" onClick={() => switchMode("forgot")}>忘记密码？</button>}
+          {oauthNotice && <div className="auth-notice" role="status"><CircleAlert size={14} /><span>{oauthNotice}</span></div>}
+          {error && <div className="auth-error" role="alert"><CircleAlert size={14} /><span>{error}</span></div>}
+          <button className="auth-cta" type="submit" disabled={submitting}>{submitting ? <LoaderCircle size={15} className="spin" /> : null}{submitting ? "处理中…" : mode === "register" ? "注 册" : mode === "forgot" ? "重置密码并登录" : "登 录"}</button>
+          <div className="auth-foot">
+            {mode === "login" && <span>还没有账户？<button type="button" onClick={() => switchMode("register")}>立即注册</button></span>}
+            {mode === "register" && <span>已经有账户了？<button type="button" onClick={() => switchMode("login")}>登录</button></span>}
+            {mode === "forgot" && <span>想起来了？<button type="button" onClick={() => switchMode("login")}>返回登录</button></span>}
+          </div>
+          <div className="auth-footnote"><ShieldCheck size={13} /><span>账户仅保存在这台设备上；密码使用加盐哈希存储，不会写入日志或命令行。</span></div>
+        </form>}
+      </div>
+    </div>
+  </div>;
+}
+
+function PathField({ label, value, onPick }: { label: string; value: string; onPick: () => void }) {
+  return <label className="path-field"><span>{label}</span><input value={value} readOnly placeholder="尚未选择" /><button className="secondary-button" onClick={onPick}>浏览</button></label>;
+}
+
+function OperationView({ title, description, primaryLabel, onPrimary, children }: { title: string; description: string; primaryLabel: string; onPrimary: () => void; children: ReactNode }) {
+  return <section className="operation-view"><div className="operation-heading"><div><span className="eyebrow">HanEngine / 工具</span><h2>{title}</h2><p>{description}</p></div><button className="primary-button" onClick={onPrimary}><Play size={15} />{primaryLabel}</button></div><div className="operation-content">{children}</div></section>;
+}
+
+function VisualVerificationView({
+  manifestPath, reportPath, status, summary, reviewProof, proofSaving, selectedSceneId, imagePair, imageLoading,
+  confirmedScenes, running, onChooseManifest, onChooseReport, onRun, onSelectScene,
+  onOpenReport, onConfirmScene, onCompleteReview,
+}: {
+  manifestPath: string;
+  reportPath: string;
+  status: "idle" | "checking" | "passed" | "blocked" | "review" | "failed";
+  summary: VisualReportSummary | null;
+  reviewProof: VisualReviewProof | null;
+  proofSaving: boolean;
+  selectedSceneId: string;
+  imagePair: VisualImagePair | null;
+  imageLoading: boolean;
+  confirmedScenes: Set<string>;
+  running: boolean;
+  onChooseManifest: () => void;
+  onChooseReport: () => void;
+  onOpenReport: () => void;
+  onRun: () => void;
+  onSelectScene: (sampleId: string) => void;
+  onConfirmScene: (sampleId: string, confirmed: boolean) => void;
+  onCompleteReview: () => void;
+}) {
+  const stateCopy = {
+    idle: ["等待检查", "选择视觉证据清单和报告输出位置。"],
+    checking: ["检查中", "正在运行本地 OCR、硬门禁和 GLM 视觉判官。"],
+    passed: ["已通过", "确定性硬门禁与人工复核均已确认无阻断问题。"],
+    blocked: ["已阻断", "硬门禁发现不可自动放行的问题，请先修复并重新验收。"],
+    review: ["人工复核", "硬门禁未发现问题；GLM 结果仅作辅助，请由人工查看截图与报告。"],
+    failed: ["执行失败", "未能生成或读取有效报告，请查看任务日志。"],
+  }[status];
+  const selectedIndex = summary?.scenes.findIndex((scene) => scene.sampleId === selectedSceneId) ?? -1;
+  const reviewComplete = Boolean(summary?.scenes.length) && summary!.scenes.every((scene) => confirmedScenes.has(scene.sampleId));
+  return <section className="operation-view visual-view">
+    <div className="operation-heading"><div><span className="eyebrow">HanEngine / 发布前检查</span><h2>视觉验收</h2><p>客户端统一管理验收入口；游戏内不增加语言菜单。Key 仅由本机 Python 进程从环境变量读取。</p></div><button className="primary-button" onClick={onRun} disabled={!manifestPath || !reportPath || running}>{status === "checking" ? <LoaderCircle size={15} className="spin" /> : <ScanSearch size={15} />}{status === "checking" ? "检查中" : "开始验收"}</button></div>
+    <div className="visual-controls">
+      <PathField label="证据清单" value={manifestPath} onPick={onChooseManifest} />
+      <PathField label="报告输出" value={reportPath} onPick={onChooseReport} />
+      <button className="secondary-button" onClick={onOpenReport}><FolderOpen size={15} />打开已有报告</button>
+      <div className="visual-settings"><span>视觉模型</span><strong>GLM-4.6V</strong><span>本地 OCR</span><strong>RapidOCR · chi_sim+eng</strong></div>
+    </div>
+    <div className={`visual-state ${status}`}><div className="visual-state-heading"><span className="visual-state-icon">{status === "checking" ? <LoaderCircle size={18} className="spin" /> : status === "passed" ? <CircleCheck size={18} /> : status === "blocked" || status === "failed" ? <ShieldAlert size={18} /> : <CircleAlert size={18} />}</span><div><strong>{stateCopy[0]}</strong><span>{stateCopy[1]}</span></div></div>{summary && <div className="visual-summary"><span>硬门禁 <b>{summary.hardGatePassedCount}/{summary.hardGateCount}</b></span><span>判官 <b>{summary.judgeModels.join("、") || "未运行"}</b></span><span>问题 <b>{summary.issues.length}</b></span>{reviewProof && <span title={reviewProof.proofPath}>人工证明 <b>{reviewProof.reviewer.display_name}</b></span>}</div>}</div>
+    {summary && (summary.issues.length > 0 || summary.reasons.length > 0) && <div className="visual-findings"><strong>报告摘要</strong><ul>{[...summary.issues, ...summary.reasons].slice(0, 8).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div>}
+    {summary && status !== "blocked" && status !== "failed" && summary.scenes.length > 0 && <div className="visual-review">
+      <div className="visual-review-toolbar">
+        <div><strong>逐场景人工复核</strong><span>{confirmedScenes.size}/{summary.scenes.length} 已确认</span></div>
+        <div className="visual-review-nav">
+          <button className="icon-button" title="上一个场景" disabled={selectedIndex <= 0} onClick={() => onSelectScene(summary.scenes[selectedIndex - 1].sampleId)}><ChevronLeft size={16} /></button>
+          <select aria-label="复核场景" value={selectedSceneId} onChange={(event) => onSelectScene(event.target.value)}>{summary.scenes.map((scene) => <option key={scene.sampleId} value={scene.sampleId}>{scene.sampleId}</option>)}</select>
+          <button className="icon-button" title="下一个场景" disabled={selectedIndex < 0 || selectedIndex >= summary.scenes.length - 1} onClick={() => onSelectScene(summary.scenes[selectedIndex + 1].sampleId)}><ChevronRight size={16} /></button>
+        </div>
+      </div>
+      <div className="visual-pair">
+        <figure><figcaption>原文参考</figcaption>{imagePair?.sampleId === selectedSceneId ? <img src={imagePair.referenceDataUrl} alt={`${selectedSceneId} 原文参考`} /> : <div className="visual-image-loading">{imageLoading ? <LoaderCircle size={18} className="spin" /> : <CircleAlert size={18} />}</div>}</figure>
+        <figure><figcaption>中文候选</figcaption>{imagePair?.sampleId === selectedSceneId ? <img src={imagePair.candidateDataUrl} alt={`${selectedSceneId} 中文候选`} /> : <div className="visual-image-loading">{imageLoading ? <LoaderCircle size={18} className="spin" /> : <CircleAlert size={18} />}</div>}</figure>
+      </div>
+      <div className="visual-review-actions">
+        <label><input type="checkbox" checked={confirmedScenes.has(selectedSceneId)} disabled={Boolean(reviewProof) || proofSaving || !selectedSceneId || imagePair?.sampleId !== selectedSceneId} onChange={(event) => onConfirmScene(selectedSceneId, event.target.checked)} /><span>{reviewProof ? "该场景已写入人工复核证明" : "已检查该场景，未发现阻断发布的问题"}</span></label>
+        {status === "review" && <button className="primary-button" disabled={!reviewComplete || proofSaving} onClick={onCompleteReview}>{proofSaving ? <LoaderCircle size={15} className="spin" /> : <ShieldCheck size={15} />}{proofSaving ? "保存证明中" : "确认人工验收"}</button>}
+      </div>
+    </div>}
+  </section>;
+}
+
+function GameCover({ source, appId, name }: { source: string; appId: string; name: string }) {
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setIndex(0);
+    setCandidates([]);
+    window.hanengine.resolveCovers({ source, appId, name }).then((result) => {
+      if (live) setCandidates(result.candidates || []);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [source, appId]);
+  const url = index < candidates.length ? candidates[index] : null;
+  if (!url) return null;
+  return <img key={url} src={url} loading="lazy" alt="" onError={() => setIndex((value) => value + 1)} />;
+}
+
+function GameCard({ game, selected, onStart }: { game: DiscoveredGame; selected: boolean; onStart: () => void }) {
+  return <button className={`poker-card ${selected ? "selected" : ""}`} onClick={onStart} title={`汉化《${game.name}》（${game.install_dir}）`}>
+    <span className="game-cover" data-source={game.source}>
+      <span className="game-cover-fallback" data-initial={game.name.slice(0, 1).toUpperCase()} />
+      <GameCover source={game.source} appId={game.app_id} name={game.name} />
+    </span>
+    <span className="game-src">{SOURCE_LABELS[game.source] ?? game.source}</span>
+    <span className="poker-card-name">{game.name}</span>
+  </button>;
+}
+
+function QuickLocalizationView({
+  selectedGame,
+  discoveredGames,
+  discoveredLoading,
+  onRefreshGames,
+  onStartGame,
+  onBackToWall,
+  onOpenOutput,
+  outputPath,
+  running,
+  status,
+  qualityReport,
+  onOpenTasks,
+}: {
+  selectedGame: DiscoveredGame | null;
+  discoveredGames: DiscoveredGame[] | null;
+  discoveredLoading: boolean;
+  onRefreshGames: () => void;
+  onStartGame: (game: DiscoveredGame) => void;
+  onBackToWall: () => void;
+  onOpenOutput: () => void;
+  outputPath: string;
+  running: boolean;
+  status: "idle" | "running" | "completed" | "failed";
+  qualityReport: QualityReportSummary | null;
+  onOpenTasks: () => void;
+}) {
+  const [gameQuery, setGameQuery] = useState("");
+  const filtered = useMemo(
+    () => (discoveredGames || []).filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())),
+    [discoveredGames, gameQuery],
+  );
+  const flowStarted = Boolean(selectedGame) && status !== "idle";
+  const qualityStatus = qualityReport?.status;
+  return <section className="operation-view quick-view">
+    {!flowStarted ? <div className="game-wall-wrap">
+      <div className="operation-heading wall-heading">
+        <div><span className="eyebrow">HanEngine / 游戏库</span><h2>选择要汉化的游戏</h2><p>点击游戏卡片即可自动完成：检测 → 提取 → 翻译 → 校验 → 构建，全程本地运行，不改动原游戏。</p></div>
+        <button className="secondary-button" disabled={discoveredLoading} onClick={onRefreshGames}>{discoveredLoading ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{discoveredLoading ? "扫描中…" : discoveredGames ? `重新扫描 · ${discoveredGames.length} 款` : "扫描本机游戏"}</button>
+      </div>
+      {discoveredGames && discoveredGames.length > 0 && <div className="wall-toolbar">
+        <div className="search-box"><Search size={13} /><input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="搜索游戏名" /></div>
+        <span className="wall-count">{filtered.length} 款</span>
+      </div>}
+      <div className="game-wall">
+        {filtered.map((game) => <GameCard key={`${game.source}-${game.app_id}-${game.install_dir}`} game={game} selected={false} onStart={() => onStartGame(game)} />)}
+      </div>
+      {discoveredGames === null && <div className="wall-empty"><LoaderCircle size={18} className="spin" />正在扫描本机已安装的游戏…</div>}
+      {discoveredGames !== null && discoveredGames.length === 0 && <div className="wall-empty">没有发现已安装的游戏。支持 Steam / Epic / GOG / EA / Xbox 平台；也可以从左上角「打开项目」手动选择游戏目录。</div>}
+      {discoveredGames !== null && discoveredGames.length > 0 && filtered.length === 0 && <div className="wall-empty">没有匹配「{gameQuery}」的游戏。</div>}
+    </div> : <div className="deliver-panel">
+      <button className="back-link" onClick={onBackToWall}><ChevronLeft size={14} />返回游戏库</button>
+      <div className="deliver-hero">
+        <span className="eyebrow">{selectedGame ? SOURCE_LABELS[selectedGame.source] ?? selectedGame.source : "HanEngine"}</span>
+        <h2>{selectedGame?.name}</h2>
+        <p>{running
+          ? "正在自动完成：检测 → 提取 → 翻译 → 校验 → 构建。全程本地运行，原游戏不会被改动。"
+          : status === "completed"
+            ? "汉化流程已结束，结果如下。"
+            : "这个游戏暂时无法自动汉化，原因在下方说明。"}</p>
+        {running && <div className="deliver-progress"><LoaderCircle size={17} className="spin" /><span>处理中，可能需要几分钟…</span></div>}
+      </div>
+      {status === "completed" && qualityReport && <div className={`deliver-result ${qualityReport.status}`}>
+        <div className="deliver-status"><CircleCheck size={18} /><strong>{qualityStatusLabel(qualityReport.status)}</strong><span>{qualityReport.summary.translatedCount}/{qualityReport.summary.segmentCount} 段已翻译{qualityReport.summary.untranslatedCount > 0 ? `，漏译 ${qualityReport.summary.untranslatedCount} 段（已如实标记，不会假装通过）` : "，质量校验通过"}。</span></div>
+        <div className="deliver-actions">
+          <button className="primary-button" onClick={onOpenOutput}><ExternalLink size={15} />打开汉化结果目录</button>
+          <button className="secondary-button" onClick={onBackToWall}>再汉化一个</button>
+          <button className="secondary-button" onClick={onOpenTasks}><ListChecks size={15} />任务中心</button>
+        </div>
+      </div>}
+      {status === "failed" && <div className="deliver-result failed">
+        <div className="deliver-status"><CircleAlert size={18} /><strong>无法完成汉化</strong><span>常见原因：该游戏的引擎暂不受支持，或质量校验未通过。可打开输出目录查看日志，或换一个游戏。</span></div>
+        <div className="deliver-actions">
+          {outputPath && <button className="secondary-button" onClick={onOpenOutput}><ExternalLink size={15} />打开输出目录</button>}
+          <button className="primary-button" onClick={onBackToWall}>返回游戏库</button>
+        </div>
+      </div>}
+      <QualityReportPanel report={qualityReport} />
+    </div>}
+  </section>;
+}
+
+function QualityReportPanel({ report }: { report: QualityReportSummary | null }) {
+  if (!report) return null;
+  const icon = report.status === "passed" ? <CircleCheck size={19} /> : report.status === "failed" ? <ShieldAlert size={19} /> : <CircleAlert size={19} />;
+  const visibleIssues = report.issues.slice(0, 3);
+  return <section className={`quality-report ${report.status}`}>
+    <div className="quality-report-heading">
+      <span className="quality-report-icon">{icon}</span>
+      <div><strong>{qualityStatusLabel(report.status)}</strong><span>{report.engineId} · {report.sourceLanguage} → {report.targetLanguage}</span></div>
+      <span className="quality-report-path" title={report.reportPath}>{report.reportPath}</span>
+    </div>
+    <div className="quality-report-counts">
+      <div><span>总条目</span><strong>{report.summary.segmentCount.toLocaleString()}</strong></div>
+      <div><span>已翻译</span><strong>{report.summary.translatedCount.toLocaleString()}</strong></div>
+      <div><span>漏译</span><strong>{report.summary.untranslatedCount.toLocaleString()}</strong></div>
+      <div><span>未处理</span><strong>{report.summary.unhandledCount.toLocaleString()}</strong></div>
+      <div><span>阻断项</span><strong>{report.summary.validationBlockingCount.toLocaleString()}</strong></div>
+    </div>
+    {(report.review.reasons.length > 0 || visibleIssues.length > 0) && <div className="quality-report-details">
+      {report.review.reasons.length > 0 && <p>审查原因：{report.review.reasons.map(qualityReasonLabel).join("；")}</p>}
+      {visibleIssues.map((issue) => <div className="quality-issue" key={`${issue.code}-${issue.segmentId || issue.relativePath || issue.message}`}><strong>{issue.code}</strong><span>{issue.message}</span>{issue.suggestedAction && <small>建议：{issue.suggestedAction}</small>}</div>)}
+      {report.issues.length > visibleIssues.length && <p>另有 {report.issues.length - visibleIssues.length} 项问题，详见报告文件。</p>}
+    </div>}
+  </section>;
+}
+
+function ReviewView({
+  comparisonPath,
+  comparison,
+  catalogLoaded,
+  onChooseReport,
+  onAdopt,
+  onOpenWorkspace,
+}: {
+  comparisonPath: string;
+  comparison: ComparisonReportSummary | null;
+  catalogLoaded: boolean;
+  onChooseReport: () => void;
+  onAdopt: (segmentId: string, text: string) => void;
+  onOpenWorkspace: () => void;
+}) {
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [tableFilter, setTableFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [draft, setDraft] = useState("");
+
+  const pendingEntries = comparison?.entries.filter((entry) => entry.category !== "match") || [];
+  const tables = Array.from(new Set(pendingEntries.map((entry) => entry.tableName).filter(Boolean))); 
+  const filtered = pendingEntries.filter((entry) => {
+    if (severityFilter !== "all" && entry.severity !== severityFilter) return false;
+    if (tableFilter !== "all" && entry.tableName !== tableFilter) return false;
+    if (query.trim()) {
+      const haystack = `${entry.sourceText} ${entry.officialZh} ${entry.candidateZh}`.toLowerCase();
+      if (!haystack.includes(query.trim().toLowerCase())) return false;
+    }
+    return true;
+  });
+  const selected = filtered.find((entry) => entry.segmentId === selectedId) || filtered[0] || null;
+  const severityLabel: Record<string, string> = { error: "错误", warning: "警告", review: "待对照", none: "一致" };
+
+  return <section className="operation-view review-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 审阅</span><h2>审阅</h2><p>加载对比报告后逐条核对机器译文与官方参考；采纳或改写后的译文直接写回翻译目录。</p></div>
+      <button className="primary-button" onClick={onChooseReport}>{comparison ? "更换报告" : "加载对比报告"}</button>
+    </div>
+    {comparison && <div className="review-summary">
+      <span>总条目 <b>{comparison.summary.entryCount}</b></span>
+      <span>一致 <b>{comparison.summary.matchCount}</b></span>
+      <span>差异 <b>{comparison.summary.differenceCount}</b></span>
+      <span>未译 <b>{comparison.summary.untranslatedCount}</b></span>
+      <span>缺译文 <b>{comparison.summary.missingTargetCount}</b></span>
+      <span className="review-path" title={comparison.reportPath}>{comparisonPath}</span>
+    </div>}
+    {!catalogLoaded && <div className="notice-card"><ShieldAlert size={18} /><div><strong>翻译目录未加载</strong><span>采纳或补译需要先把翻译目录加载到工作台（在工作台提取文本或打开 catalog JSON）。</span><button className="secondary-button" onClick={onOpenWorkspace}>去工作台</button></div></div>}
+    {comparison && <>
+      <div className="review-filters">
+        <label className="inline-control">严重度<select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}><option value="all">全部</option><option value="error">错误</option><option value="warning">警告</option><option value="review">待对照</option></select></label>
+        <label className="inline-control">来源表<select value={tableFilter} onChange={(event) => setTableFilter(event.target.value)}><option value="all">全部</option>{tables.map((table) => <option key={table} value={table}>{table}</option>)}</select></label>
+        <div className="search-box"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索原文 / 官方 / 当前译文" /></div>
+        <span className="review-count">{filtered.length} 条</span>
+      </div>
+      <div className="review-grid">
+        <div className="review-list">
+          {filtered.length ? filtered.map((entry) => <button key={entry.segmentId} className={`review-row ${selected?.segmentId === entry.segmentId ? "selected" : ""}`} onClick={() => { setSelectedId(entry.segmentId); setDraft(entry.recommendedText || entry.candidateZh || ""); }}>
+            <span className={`sev-chip sev-${entry.severity}`}>{severityLabel[entry.severity] || entry.severity}</span>
+            <span className="rev-src">{entry.sourceText || "（空）"}</span>
+            <span className="rev-cur">{entry.candidateZh || "（无译文）"}</span>
+          </button>) : <div className="empty-state compact" style={{ padding: "26px 12px" }}><span>没有符合筛选条件的条目。</span></div>}
+        </div>
+        <div className="review-detail">
+          {selected ? <>
+            <div className="review-cols">
+              <div><label>英文原文</label><div className="review-text en">{selected.sourceText || "—"}</div></div>
+              <div><label>官方参考</label><div className="review-text official">{selected.officialZh || "—"}</div></div>
+              <div><label>当前译文</label><div className="review-text current">{selected.candidateZh || "—"}</div></div>
+            </div>
+            <label className="review-draft-label">修订译文</label>
+            <textarea className="review-draft" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="输入修订译文…" />
+            <div className="review-actions-row">
+              <button className="secondary-button" disabled={!selected.officialZh} onClick={() => { setDraft(selected.officialZh); onAdopt(selected.segmentId, selected.officialZh); }}>采纳官方译文</button>
+              <button className="primary-button" disabled={!draft.trim() || !catalogLoaded} onClick={() => onAdopt(selected.segmentId, draft)}>保存修订</button>
+              {selected.reasons.length > 0 && <span className="review-reasons">{selected.reasons.join(" · ")}</span>}
+            </div>
+          </> : <div className="empty-state compact" style={{ padding: "26px 12px" }}><span>选择左侧条目查看三方对照。</span></div>}
+        </div>
+      </div>
+    </>}
+    {!comparison && <div className="notice-card"><CircleAlert size={18} /><div><strong>尚未加载对比报告</strong><span>先用 `engine compare` 生成 comparison JSON，或直接加载已有的对比报告文件。</span></div></div>}
+  </section>;
+}
+
+function GlossaryView({
+  dictionaryPath,
+  rows,
+  dirty,
+  onReload,
+  onNew,
+  onSave,
+  onChooseAndLoad,
+  onChangeRows,
+}: {
+  dictionaryPath: string;
+  rows: { source: string; target: string }[];
+  dirty: boolean;
+  onReload: () => void;
+  onNew: () => void;
+  onSave: () => void;
+  onChooseAndLoad: () => void;
+  onChangeRows: (rows: { source: string; target: string }[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (dictionaryPath) onReload();
+  }, [dictionaryPath]);
+  const filtered = rows.filter((row) => !query.trim() || `${row.source} ${row.target}`.toLowerCase().includes(query.trim().toLowerCase()));
+  return <section className="operation-view glossary-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 术语表</span><h2>术语表</h2><p>精确匹配术语表：命中的条目跳过模型直接采用，保障术语一致。保存后运行汉化即自动生效。</p></div>
+      <div className="header-actions">
+        <button className="secondary-button" onClick={onChooseAndLoad}><Upload size={15} />加载</button>
+        <button className="secondary-button" onClick={onNew}><FilePlus2 size={15} />新建</button>
+        <button className="primary-button" disabled={!dirty || !dictionaryPath} onClick={onSave}><Save size={15} />{dirty ? "保存*" : "已保存"}</button>
+      </div>
+    </div>
+    {!dictionaryPath ? <div className="notice-card"><Languages size={18} /><div><strong>尚未加载术语表</strong><span>加载已有 JSON 术语表，或新建一个空表开始整理术语。术语表是可选项；不加载时直接使用本地模型翻译。</span></div></div> : <>
+      <div className="review-filters">
+        <div className="search-box"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索术语或译文" /></div>
+        <span className="review-count">{filtered.length} / {rows.length} 条</span>
+        <button className="secondary-button" onClick={() => onChangeRows([...rows, { source: "", target: "" }])}><Plus size={14} />新增术语</button>
+      </div>
+      <div className="table-wrap glossary-table">
+        <table><thead><tr><th className="glossary-src-col">原文</th><th>译文</th><th className="glossary-act-col">操作</th></tr></thead><tbody>
+          {filtered.length ? filtered.map((row) => <tr key={row.source || `__new_${row.target}_${row.target.length}`}>
+            <td><input className="glossary-input" value={row.source} onChange={(event) => onChangeRows(rows.map((item) => item === row ? { ...item, source: event.target.value } : item))} placeholder="英文原文" /></td>
+            <td><input className="glossary-input" value={row.target} onChange={(event) => onChangeRows(rows.map((item) => item === row ? { ...item, target: event.target.value } : item))} placeholder="官方/审定译文" /></td>
+            <td><button className="cancel-button" title="删除术语" onClick={() => onChangeRows(rows.filter((item) => item !== row))}><X size={13} /></button></td>
+          </tr>) : <tr><td className="empty-table" colSpan={3}>没有术语。点击「新增术语」或加载已有术语表。</td></tr>}
+        </tbody></table>
+      </div>
+    </>}
+  </section>;
+}
+
+function RasterView({
+  projectPath,
+  running,
+  manifestPath,
+  manifest,
+  verification,
+  onPrepare,
+  onLoad,
+  onVerify,
+}: {
+  projectPath: string;
+  running: boolean;
+  manifestPath: string;
+  manifest: RasterManifestSummary | null;
+  verification: RasterVerificationSummary | null;
+  onPrepare: () => void;
+  onLoad: () => void;
+  onVerify: () => void;
+}) {
+  return <section className="operation-view raster-view">
+    <div className="operation-heading">
+      <div><span className="eyebrow">HanEngine / 实验能力</span><h2>栅格资源</h2><p>图片/视频文字的清单、人工审阅与候选合并。该能力默认关闭、独立于文本汉化流程；不承诺通用 OCR 或重绘。</p></div>
+      <div className="header-actions">
+        <button className="secondary-button" disabled={running || !projectPath} onClick={onPrepare}>{manifest ? "重新盘点" : "准备清单"}</button>
+        <button className="secondary-button" disabled={running} onClick={onLoad}>加载已有清单</button>
+      </div>
+    </div>
+    {manifest && <>
+      <div className="review-summary">
+        <span>资产 <b>{manifest.summary.assetCount}</b></span>
+        <span>图片 <b>{manifest.summary.imageCount}</b></span>
+        <span>视频 <b>{manifest.summary.videoCount}</b></span>
+        <span>已批准 <b>{manifest.summary.totals.approved}</b></span>
+        <span>待审 <b>{manifest.summary.totals.detected + manifest.summary.totals.manual_review}</b></span>
+        <span className="review-path" title={manifestPath}>{manifestPath}</span>
+      </div>
+      <div className="table-wrap raster-table">
+        <table><thead><tr><th>资产路径</th><th style={{ width: 70 }}>类型</th><th style={{ width: 90 }}>段数</th><th style={{ width: 190 }}>状态</th><th>审阅备注</th></tr></thead><tbody>
+          {manifest.assets.map((asset) => <tr key={asset.relativePath}>
+            <td className="mono" title={asset.relativePath}>{asset.relativePath}</td>
+            <td className="muted-cell">{asset.kind === "video" ? "视频" : "图片"}</td>
+            <td className="num">{asset.segmentCount}</td>
+            <td>
+              <span className="status-pill translated">批准 {asset.statusCounts.approved}</span>{" "}
+              {asset.statusCounts.detected > 0 && <span className="status-pill pending">待处理 {asset.statusCounts.detected}</span>}{" "}
+              {asset.statusCounts.manual_review > 0 && <span className="status-pill draft">人工复核 {asset.statusCounts.manual_review}</span>}
+            </td>
+            <td className="muted-cell" title={asset.reviewReason}>{asset.reviewReason || "—"}</td>
+          </tr>)}
+        </tbody></table>
+      </div>
+      <div className="review-actions-row">
+        <button className="primary-button" disabled={running} onClick={onVerify}>验证候选产物</button>
+        <span className="quick-hint">选择候选目录后校验源图哈希、已批准产物与清单审批状态。</span>
+      </div>
+      {verification && <div className={`quality-report ${verification.passed ? "passed" : "failed"}`}>
+        <div className="quality-report-heading">
+          <div><strong>{verification.passed ? "栅格验证通过" : "栅格验证未通过"}</strong><span>{verification.artifactCount} 个产物哈希已核对</span></div>
+          <span className="quality-report-path" title={verification.reportPath}>{verification.reportPath}</span>
+        </div>
+        {verification.issues.length > 0 && <div className="quality-report-details">
+          {verification.issues.map((issue) => <div className="quality-issue" key={`${issue.code}-${issue.message}`}><strong>{issue.code}</strong><span>{issue.message}</span></div>)}
+        </div>}
+      </div>}
+    </>}
+    {!manifest && <div className="notice-card"><ImageIcon size={18} /><div><strong>尚未加载栅格清单</strong><span>「准备清单」会盘点项目内受支持的图片/视频文字资源（只读，不修改源文件）。清单需经人工审阅后，才可在构建候选时通过 --raster-manifest 合入。</span></div></div>}
+  </section>;
+}
+
+function TaskView({
+  tasks,
+  selectedTask,
+  selectedTaskId,
+  logs,
+  actionId,
+  onRefresh,
+  onSelect,
+  onRetry,
+  onCancel,
+}: {
+  tasks: TaskStatus[];
+  selectedTask: TaskStatus | null;
+  selectedTaskId: string;
+  logs: string[];
+  actionId: string;
+  onRefresh: () => Promise<void>;
+  onSelect: (taskId: string) => Promise<void>;
+  onRetry: () => Promise<void>;
+  onCancel: (taskId: string) => Promise<void>;
+}) {
+  const selectedState = selectedTask?.state || "";
+  const active = ["queued", "running", "paused", "retrying"].includes(selectedState);
+  const progress = selectedTask?.progress;
+  const percent = progress?.total ? Math.min(100, Math.round((progress.completed / progress.total) * 100)) : 0;
+  const guard = selectedTask?.hanguard;
+  const artifacts = selectedTask?.artifacts || [];
+  return <section className="operation-view task-center-view">
+    <div className="operation-heading"><div><span className="eyebrow">HanTask Center</span><h2>任务中心</h2><p>任务状态、检查点和安全决策均来自持久化 HanStore。</p></div><button className="secondary-button" onClick={() => void onRefresh()}><RefreshCw size={15} />刷新</button></div>
+    <div className="task-center-grid">
+      <div className="task-list task-table"><div className="task-row task-head"><span>任务</span><span>状态</span><span>阶段</span><span>进度</span></div>{tasks.length ? tasks.map((task) => { const taskProgress = task.progress?.total ? `${task.progress.completed}/${task.progress.total}` : "-"; return <button key={task.task_id} className={`task-row task-select ${task.task_id === selectedTaskId ? "selected" : ""}`} onClick={() => void onSelect(task.task_id)}><span><strong>{task.engine_id || task.kind}</strong><small>{task.project_name} · {task.task_id}</small></span><span className={`status-pill task-${task.state}`}>{taskStateLabel(task.state)}</span><span>{task.stage}</span><span>{taskProgress}</span></button>; }) : <div className="task-empty"><ListChecks size={24} /><span>还没有持久化任务</span></div>}</div>
+      <div className="task-detail-panel">{selectedTask ? <><div className="task-detail-heading"><div><span className="eyebrow">任务详情</span><strong>{selectedTask.task_id}</strong></div><div className="task-actions">{selectedTask.retryable && selectedState !== "completed" && <button className="secondary-button" disabled={Boolean(actionId)} onClick={() => void onRetry()}><RotateCcw size={14} />{actionId === selectedTask.task_id ? "处理中" : "继续/重试"}</button>}{active && <button className="secondary-button danger" disabled={Boolean(actionId)} onClick={() => void onCancel(selectedTask.task_id)}><Square size={13} />{actionId === selectedTask.task_id ? "处理中" : "请求取消"}</button>}</div></div><div className="task-metadata"><span>引擎 <strong>{selectedTask.engine_id || "-"}</strong></span><span>阶段 <strong>{selectedTask.stage}</strong></span><span>状态 <strong>{taskStateLabel(selectedTask.state)}</strong></span></div><div className="task-progress"><div className="progress-label"><span>{progress?.current_item || "当前检查点"}</span><strong>{progress?.total ? `${percent}%` : "-"}</strong></div><div className="progress-track"><span style={{ width: `${percent}%` }} /></div></div><div className="task-detail-sections"><div><label>HanGuard 决策</label><pre>{guard ? `允许：${JSON.stringify(guard.allowed_operations || [], null, 2)}\n阻止：${JSON.stringify(guard.blocked_operations || [], null, 2)}\n原因：${JSON.stringify(guard.decision_reasons || [], null, 2)}` : "尚无最终决策"}</pre></div><div><label>失败原因</label><p className={selectedTask.failure_reason ? "failure-text" : "muted-cell"}>{selectedTask.failure_reason || "无"}</p></div><div><label>最近检查点</label><p>{selectedTask.latest_checkpoint ? `${String(selectedTask.latest_checkpoint.step_id || selectedTask.stage)} · 序号 ${String(selectedTask.latest_checkpoint.sequence || "-")}` : "无"}</p></div><div><label>产物</label>{artifacts.length ? <ul>{artifacts.map((artifact) => <li key={artifact.artifact_id}>{artifact.relative_path || artifact.artifact_id}</li>)}</ul> : <p className="muted-cell">暂无产物</p>}</div></div></> : <div className="task-empty detail-empty"><ListChecks size={28} /><strong>选择一个任务查看详情</strong><span>应用重启后，未完成任务会保留在这里。</span></div>}</div>
+    </div>
+    <pre className="log-panel">{logs.join("\n")}</pre>
+  </section>;
+}
+
+export default App;

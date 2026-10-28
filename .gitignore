@@ -1,1 +1,10 @@
 .worktrees/
+__pycache__/
+*.py[cod]
+examples/*.zh.json
+examples/*.untranslated.json
+desktop/node_modules/
+desktop/dist/
+desktop/release/
+desktop/hanengine*.png
+.tmp/

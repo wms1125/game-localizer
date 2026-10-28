@@ -1,0 +1,2 @@
+# Reproducible rendering dependency for tools/generate_visual_judge_dataset.py.
+Pillow==12.1.1

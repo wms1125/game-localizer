@@ -1,0 +1,15 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: HanEngine fixture\n"
+"Language: en\n"
+
+msgctxt "hud"
+msgid "Start, {player}!"
+msgstr ""
+
+msgctxt "hud"
+msgid "Health: %s"
+msgstr ""
+
+msgid "Inventory"
+msgstr ""

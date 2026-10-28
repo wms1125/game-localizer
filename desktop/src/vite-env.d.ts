@@ -1,0 +1,256 @@
+/// <reference types="vite/client" />
+
+type ProjectNode = {
+  name: string;
+  relativePath: string;
+  type: "directory" | "file";
+  extension?: string;
+  children?: ProjectNode[];
+};
+
+type TranslationRow = {
+  id: string;
+  context: string;
+  source: string;
+  target: string;
+  status: "translated" | "pending" | "draft" | "warning";
+  locator?: Record<string, unknown>;
+};
+
+type GameLanguage = "zh-CN" | "source";
+
+type CatalogPayload = {
+  kind: "catalog" | "dictionary";
+  metadata: { engine: string; sourceLanguage: string; targetLanguage: string; fileCount: number };
+  rows: TranslationRow[];
+};
+
+type DetectionCandidate = {
+  engine_id: string;
+  display_name: string;
+  score: number;
+  capability?: string | string[];
+  maturity?: string;
+  limitations?: string[];
+  reasons?: string[];
+  evidence?: Array<Record<string, unknown>>;
+  capability_matrix?: CapabilityMatrix;
+};
+
+type CapabilityMatrix = {
+  schema_version: "hanengine.adapter-capabilities/v1";
+  capabilities: Array<{
+    capability: "native_text_replace" | "dynamic_text" | "raster_text" | "detect_only";
+    status: "implemented" | "verified" | "detect_only" | "unsupported";
+    reason: string;
+    evidence: string[];
+  }>;
+};
+
+type DetectionReport = {
+  status: string;
+  selected_engine: string | null;
+  candidates?: DetectionCandidate[];
+  candidate?: DetectionCandidate;
+  capabilities?: string[];
+  capability_matrix?: CapabilityMatrix;
+  allowed_operations?: string[];
+  hanguard?: Record<string, unknown> | null;
+  reasons?: string[];
+  task_id?: string;
+  state_root?: string;
+};
+
+type TaskProgress = { completed: number; total: number | null; current_item: string | null };
+type TaskArtifact = {
+  artifact_id: string;
+  kind: string;
+  relative_path: string | null;
+  sha256: string | null;
+  metadata: Record<string, unknown>;
+};
+type TaskStatus = {
+  project_id: string;
+  project_name: string;
+  source_root: string;
+  task_id: string;
+  kind: string;
+  state: string;
+  stage: string;
+  engine_id: string | null;
+  progress: TaskProgress | null;
+  failure_reason: string | null;
+  latest_checkpoint: Record<string, unknown> | null;
+  artifacts: TaskArtifact[];
+  retryable: boolean;
+  retry: Record<string, unknown> | null;
+  parent_task_id: string | null;
+  cancel_requested_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  hanguard: Record<string, unknown> | null;
+};
+
+type PythonEvent = { taskId: string; channel?: "workflow" | "control"; type: string; text?: string; code?: number; args?: string[] };
+type AuthUser = { user_id: string; username: string; display_name: string };
+type AuthStatus = { authenticated: boolean; needsSetup: boolean; user: AuthUser | null; user_count?: number; recoveryCode?: string };
+type AuthCredentials = { username: string; password: string; display_name?: string };
+type QualityIssue = {
+  code: string;
+  severity: string;
+  segmentId: string | null;
+  relativePath: string | null;
+  message: string;
+  automaticallyRecoverable: boolean;
+  suggestedAction: string | null;
+};
+type QualityReportSummary = {
+  reportPath: string;
+  status: "passed" | "review_required" | "failed";
+  engineId: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  summary: {
+    segmentCount: number;
+    translatedCount: number;
+    resumedCount: number;
+    untranslatedCount: number;
+    unhandledCount: number;
+    validationIssueCount: number;
+    validationBlockingCount: number;
+    validationWarningCount: number;
+    verificationIssueCount: number;
+  };
+  validationPassed: boolean | null;
+  verificationPassed: boolean | null;
+  review: { required: boolean; reasons: string[] };
+  issues: QualityIssue[];
+};
+type ComparisonEntry = {
+  segmentId: string;
+  tableName: string;
+  entryId: number | null;
+  sourceText: string;
+  officialZh: string;
+  candidateZh: string;
+  recommendedText: string;
+  category: string;
+  severity: string;
+  reasons: string[];
+};
+type ComparisonReportSummary = {
+  kind: "comparison";
+  reportPath: string;
+  engineId: string;
+  projectFingerprint: string;
+  summary: {
+    entryCount: number;
+    matchCount: number;
+    differenceCount: number;
+    untranslatedCount: number;
+    missingTargetCount: number;
+    categories: Record<string, number>;
+  };
+  entries: ComparisonEntry[];
+};
+type DiscoveredGame = {
+  source: string;
+  app_id: string;
+  name: string;
+  install_dir: string;
+};
+declare const SOURCE_LABELS: Record<string, string>;
+type RasterAssetSummary = {
+  relativePath: string;
+  kind: "image" | "video";
+  segmentCount: number;
+  statusCounts: { detected: number; translated: number; approved: number; manual_review: number; other: number };
+  approved: boolean;
+  localizedArtifactPath: string;
+  reviewReason: string;
+};
+type RasterManifestSummary = {
+  kind: "raster-manifest";
+  manifestPath: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  summary: {
+    assetCount: number;
+    imageCount: number;
+    videoCount: number;
+    totals: { detected: number; translated: number; approved: number; manual_review: number; other: number };
+  };
+  assets: RasterAssetSummary[];
+};
+type RasterVerificationSummary = {
+  kind: "raster-verification";
+  reportPath: string;
+  passed: boolean;
+  artifactCount: number;
+  issues: { code: string; message: string }[];
+};
+type VisualReportSummary = {
+  decision: "pass" | "blocked" | "escalate";
+  hardGatePassed: boolean;
+  hardGatePassedCount: number;
+  hardGateCount: number;
+  judgeProvider: string | null;
+  judgeModels: string[];
+  reasons: string[];
+  issues: string[];
+  scenes: Array<{ sampleId: string; width: number; height: number }>;
+};
+type VisualImagePair = {
+  sampleId: string;
+  width: number;
+  height: number;
+  referenceDataUrl: string;
+  candidateDataUrl: string;
+};
+type VisualReviewProof = {
+  schemaVersion: "hanengine.visual-review-proof/v1";
+  proofPath: string;
+  reviewedAt: string;
+  reviewer: AuthUser;
+  reportSha256: string;
+  sceneCount: number;
+  decision: "pass";
+};
+
+interface Window {
+  hanengine: {
+    authStatus: () => Promise<AuthStatus>;
+    register: (credentials: AuthCredentials) => Promise<AuthStatus>;
+    login: (credentials: AuthCredentials) => Promise<AuthStatus>;
+    resetPassword: (payload: { username: string; recovery_code: string; new_password: string }) => Promise<AuthStatus>;
+    startOAuth: (provider: "qq" | "weixin") => Promise<{ configured: boolean; message: string }>;
+    resolveCovers: (payload: { source: string; appId: string; name: string }) => Promise<{ candidates: string[] }>;
+    candidatesRoot: () => Promise<{ root: string }>;
+    openPath: (target: string) => Promise<{ ok: boolean }>;
+    logout: () => Promise<{ authenticated: false }>;
+    selectFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
+    selectDirectory: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePaths: string[] }>;
+    saveFile: (options?: Record<string, unknown>) => Promise<{ canceled: boolean; filePath?: string }>;
+    launchGame: (executablePath: string, language: string) => Promise<{ pid: number | null }>;
+    scanProject: (rootPath: string) => Promise<ProjectNode[]>;
+    readCatalog: (filePath: string) => Promise<CatalogPayload>;
+    writeCatalog: (filePath: string, updates: TranslationRow[]) => Promise<{ updated: number; path: string }>;
+    readQualityReport: (filePath: string) => Promise<QualityReportSummary>;
+    readComparisonReport: (filePath: string) => Promise<ComparisonReportSummary>;
+    readDictionary: (filePath: string) => Promise<{ updated: number; path: string; rows: { id: string; source: string; target: string }[] }>;
+    writeDictionary: (filePath: string, updates: { source: string; target: string }[]) => Promise<{ updated: number; path: string }>;
+    readRasterManifest: (filePath: string) => Promise<RasterManifestSummary>;
+    readRasterVerification: (filePath: string) => Promise<RasterVerificationSummary>;
+    readVisualReport: (filePath: string) => Promise<VisualReportSummary>;
+    readVisualImagePair: (filePath: string, sampleId: string) => Promise<VisualImagePair>;
+    readVisualReviewProof: (filePath: string) => Promise<VisualReviewProof | null>;
+    createVisualReviewProof: (filePath: string, confirmedSampleIds: string[]) => Promise<VisualReviewProof>;
+    runPython: (taskId: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
+    listTasks: (stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    showTask: (taskId: string, stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    retryTask: (taskId: string, stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    cancelTask: (taskId: string, stateRoot?: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    cancelPython: (taskId: string) => Promise<boolean>;
+    onPythonEvent: (callback: (event: PythonEvent) => void) => () => void;
+  };
+}
