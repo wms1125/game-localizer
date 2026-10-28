@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, net } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -113,7 +113,11 @@ async function fetchJson(url, timeoutMs = 6000, headers = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": "HanEngine/0.1 (+local)", ...headers } });
+    // net.fetch goes through Chromium's network stack and therefore honors
+    // the system proxy — required for Steam/Epic endpoints on networks where
+    // direct connections are unreliable. Falls back to global fetch.
+    const doFetch = typeof net?.fetch === "function" ? net.fetch : fetch;
+    const response = await doFetch(url, { signal: controller.signal, headers: { "user-agent": "HanEngine/0.1 (+local)", ...headers } });
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -143,7 +147,8 @@ let epicToken = null; // { value, expiresAt }
 async function epicAccessToken() {
   if (epicToken && Date.now() < epicToken.expiresAt - 60_000) return epicToken.value;
   const basic = Buffer.from(`${EPIC_CLIENT_ID}:${EPIC_CLIENT_SECRET}`).toString("base64");
-  const response = await fetch("https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token", {
+  const doFetch = typeof net?.fetch === "function" ? net.fetch : fetch;
+  const response = await doFetch("https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token", {
     method: "POST",
     headers: { authorization: `Basic ${basic}`, "content-type": "application/x-www-form-urlencoded" },
     body: "grant_type=client_credentials",
