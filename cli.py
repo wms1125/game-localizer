@@ -1638,6 +1638,28 @@ def run_cloud_translate(argv: list[str]) -> int:
         return 1
 
 
+def run_games(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Discover installed games on this computer (read-only metadata scan)."
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    scan = commands.add_parser("scan", help="list installed Steam games as JSON")
+    scan.add_argument("--json", action="store_true", help="print the game list as JSON")
+    args = _parse_args(parser, argv)
+    if isinstance(args, int):
+        return args
+    from game_localizer.hanengine.installed_games import discover_installed_games
+
+    games = discover_installed_games()
+    if getattr(args, "json", False):
+        print(json.dumps(games, ensure_ascii=False, indent=2))
+    else:
+        for game in games:
+            print(f"{game['name']}\t{game['source']}\t{game['install_dir']}")
+        print(f"共 {len(games)} 款已安装游戏（只读元数据扫描）。")
+    return 0
+
+
 def run_tts(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="使用 Windows SAPI 生成本地 WAV")
     parser.add_argument("text")
@@ -1752,6 +1774,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_cloud_translate(arguments[1:])
     if arguments and arguments[0] == "tts":
         return run_tts(arguments[1:])
+    if arguments and arguments[0] == "games":
+        return run_games(arguments[1:])
     if arguments and arguments[0] == "auth":
         return run_auth(arguments[1:])
     return run_legacy(arguments)
