@@ -1402,11 +1402,16 @@ function QuickLocalizationView({
         <button className="secondary-button" disabled={discoveredLoading} onClick={onRefreshGames}>{discoveredLoading ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{discoveredLoading ? "扫描中…" : discoveredGames ? `已装游戏 · ${discoveredGames.length}` : "扫描本机游戏"}</button>
         {discoveredGames && discoveredGames.length > 0 && <div className="search-box"><Search size={13} /><input value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="搜索已安装游戏" /></div>}
       </div>
-      {discoveredGames && discoveredGames.length > 0 && <div className="game-list">
-        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).map((game) => <button key={`${game.app_id}-${game.install_dir}`} className={`game-option ${projectPath === game.install_dir ? "selected" : ""}`} onClick={() => onSelectGame(game.install_dir)} title={game.install_dir}>
-          <span className="game-name">{game.name}</span>
-          <span className="game-src">{game.source === "steam" ? "Steam" : game.source}</span>
+      {discoveredGames && discoveredGames.length > 0 && <div className="game-grid">
+        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).map((game) => <button key={`${game.app_id}-${game.install_dir}`} className={`game-card ${projectPath === game.install_dir ? "selected" : ""}`} onClick={() => onSelectGame(game.install_dir)} title={`${game.name} — ${game.install_dir}`}>
+          <span className="game-cover">
+            <span className="game-cover-fallback" data-initial={game.name.slice(0, 1).toUpperCase()} />
+            {game.source === "steam" && game.app_id && <img src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.app_id}/header.jpg`} loading="lazy" alt="" onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />}
+            <span className="game-src">{game.source === "steam" ? "Steam" : game.source}</span>
+          </span>
+          <span className="game-card-name">{game.name}</span>
         </button>)}
+        {discoveredGames.filter((game) => !gameQuery.trim() || game.name.toLowerCase().includes(gameQuery.trim().toLowerCase())).length === 0 && <div className="game-grid-empty">没有匹配「{gameQuery}」的游戏</div>}
       </div>}
     </div>
     {detection && <div className={`capability-card ${ready ? "allowed" : "blocked"}`}>
