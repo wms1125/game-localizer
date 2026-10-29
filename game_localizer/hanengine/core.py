@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import cast
 
@@ -40,6 +41,25 @@ def _require_task(task: object) -> TaskPlan:
     if not isinstance(task, TaskPlan):
         raise TypeError("task must be a TaskPlan")
     return task
+
+
+def _only_context_changed(existing: Segment, incoming: Segment) -> bool:
+    """True when two segments differ only in their surrounding context.
+
+    Everything that determines *what the translation must say* has to match:
+    target language, source text, speaker, constraints and location.  Anything
+    else changing means the stored translation is no longer valid.
+    """
+
+    return (
+        existing.target_language == incoming.target_language
+        and existing.source_text == incoming.source_text
+        and existing.source_language == incoming.source_language
+        and existing.speaker == incoming.speaker
+        and existing.constraints == incoming.constraints
+        and existing.source_location == incoming.source_location
+        and existing.target_text is not None
+    )
 
 
 class HanCore:
@@ -81,7 +101,26 @@ class HanCore:
                 if existing.context_fingerprint == segment.context_fingerprint:
                     pending[segment_id] = existing
                 else:
-                    replacements[segment_id] = segment
+                    # Context changed but nothing else did.  Context is a
+                    # translation aid, not part of the segment's identity: an
+                    # engine upgrade that improves context selection must not
+                    # discard translations the user already paid for.
+                    #
+                    # The guard below is deliberately narrow.  Carrying a
+                    # translation across a *language* change or a source change
+                    # would hand the user text in the wrong language, which is
+                    # worse than retranslating.
+                    if _only_context_changed(existing, segment):
+                        carried = replace(
+                            segment,
+                            target_text=existing.target_text,
+                            translation_source=existing.translation_source,
+                            metadata=existing.metadata,
+                        )
+                        replacements[segment_id] = carried
+                        pending[segment_id] = carried
+                    else:
+                        replacements[segment_id] = segment
         new_segments = tuple(
             pending[item.segment_id]
             for item in draft_items

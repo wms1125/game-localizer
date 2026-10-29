@@ -428,6 +428,7 @@ class StructuredWorkflowSession:
         task_id: str | None = None,
         retry_spec: TaskRetrySpec | None = None,
         reference_translations: Mapping[str, str] | None = None,
+        workers: int = 1,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -448,6 +449,7 @@ class StructuredWorkflowSession:
             task_id=task_id,
             retry_spec=self.retry_spec if retry_spec is None else retry_spec,
             reference_translations=reference_translations,
+            workers=workers,
         )
 
     def persisted_events(self, task_id: str) -> tuple[TaskEvent, ...]:

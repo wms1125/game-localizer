@@ -328,6 +328,15 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
         help="ignore persisted segment translations and translate them again",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help=(
+            "concurrent provider calls; 1 keeps the strict serial order. "
+            "Checkpoints stay ordered regardless of this value"
+        ),
+    )
+    parser.add_argument(
         "--translated-catalog",
         help="optional path for the completed translated catalog JSON",
     )
@@ -505,6 +514,9 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
         )
     if getattr(args, "no_resume", False):
         arguments.append("--no-resume")
+    workers = getattr(args, "workers", 1)
+    if workers != 1:
+        arguments.extend(["--workers", str(workers)])
     token_env = getattr(args, "token_env", "HANENGINE_TRANSLATION_TOKEN")
     if token_env != "HANENGINE_TRANSLATION_TOKEN":
         arguments.extend(["--token-env", token_env])
@@ -865,6 +877,7 @@ def run_engine(
                     resume=not args.no_resume,
                     retry_spec=retry_spec,
                     reference_translations=reference_translations,
+                    workers=getattr(args, "workers", 1),
                 )
                 catalog = translation.catalog
                 print(

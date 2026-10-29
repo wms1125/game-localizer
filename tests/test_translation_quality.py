@@ -97,5 +97,104 @@ class TerminalPunctuationTests(unittest.TestCase):
         self.assertEqual(fixed.text, "捕获<color=#FFEF4D><b>动物</color></b>！")
 
 
+class RichTextBodyDuplicationTests(unittest.TestCase):
+    """A shipped candidate carried 14 self-repeating rich-text segments past a
+    'passed' quality gate because only tag order was compared."""
+
+    # Real defect text taken from
+    # experiments/reference-l3-v3/candidate-final (How to Fish, zh-CN table).
+    SHIPPED_DEFECTS = (
+        (
+            "take this <color=#FFEF4D><b>empty beer can</color></b> and attach it to your rod",
+            "拿上这个空酒罐，把它挂在钓竿上。 <color=#FFEF4D><b>拿上这个空酒罐，把它挂在钓竿上。</color></b> 并将它挂在钓竿上。",
+        ),
+        (
+            "it really likes <color=#FFEF4D><b>leeches</color></b>. if you get me some, I can make them into bait for you",
+            "它特别喜欢蚂蝗，要是你能弄来一些，我就能替你做出合适的饵料。 <color=#FFEF4D><b>它特别喜欢蚂蝗，要是你能弄来一些，我就能替你做出合适的饵料。</color></b>. 如果你弄来一些，我可以做成饵料给你。",
+        ),
+        (
+            "there's a <color=#FFEF4D><b>scary fish</color></b> in the ocean. I'm too afraid to step in",
+            "海里有一条可怕的鱼，我可不敢下水。 <color=#FFEF4D><b>可怕的鱼吓我了，我可不敢下水。</color></b> 海里有一条可怕的鱼，我可不敢下水。",
+        ),
+    )
+
+    def test_shipped_defects_are_now_rejected(self):
+        for source, target in self.SHIPPED_DEFECTS:
+            with self.subTest(target=target[:24]):
+                issues = translation_quality_issues(_request(source), _result(target))
+                self.assertIn(
+                    "rich_text_body_duplication",
+                    {issue.code for issue in issues},
+                )
+
+    def test_defect_is_an_error_not_a_warning(self):
+        source, target = self.SHIPPED_DEFECTS[0]
+        codes = {
+            issue.code: issue.severity
+            for issue in translation_quality_issues(_request(source), _result(target))
+        }
+        self.assertEqual(codes.get("rich_text_body_duplication"), "error")
+
+    def test_defect_is_in_the_pipeline_fallback_set(self):
+        from game_localizer.hanengine.pipeline import FALLBACK_ERROR_CODES
+
+        self.assertIn("rich_text_body_duplication", FALLBACK_ERROR_CODES)
+
+    def test_correct_rich_text_translation_still_passes(self):
+        issues = translation_quality_issues(
+            _request("take this <color=#FFEF4D><b>empty beer can</color></b> and attach it to your rod"),
+            _result("拿上这个<color=#FFEF4D><b>空酒罐</color></b>，把它挂在钓竿上。"),
+        )
+        self.assertNotIn(
+            "rich_text_body_duplication",
+            {issue.code for issue in issues},
+        )
+
+    def test_legitimate_repetition_is_not_flagged(self):
+        # Deliberate onomatopoeia is shorter than the run threshold.
+        issues = translation_quality_issues(
+            _request("yum yum yum <color=#FFEF4D><b>tasty</color></b>"),
+            _result("好吃好吃好吃，<color=#FFEF4D><b>真香</color></b>"),
+        )
+        self.assertNotIn(
+            "rich_text_body_duplication",
+            {issue.code for issue in issues},
+        )
+
+    def test_untagged_segments_are_not_scanned(self):
+        # Without inline tags the duplication pattern does not occur, and the
+        # check must not fire on ordinary repeated dialogue.
+        issues = translation_quality_issues(
+            _request("go go go go"),
+            _result("走啊走啊走啊走啊"),
+        )
+        self.assertNotIn(
+            "rich_text_body_duplication",
+            {issue.code for issue in issues},
+        )
+
+
+class GarbledCharacterTests(unittest.TestCase):
+    """U+FFFD is unrecoverable and must never reach a candidate."""
+
+    def test_replacement_character_is_an_error(self):
+        issues = translation_quality_issues(_request("Hello"), _result("你好\ufffd\ufffd"))
+        codes = {issue.code: issue.severity for issue in issues}
+        self.assertEqual(codes.get("garbled_replacement_character"), "error")
+
+    def test_single_replacement_character_is_enough(self):
+        issues = translation_quality_issues(_request("Hello"), _result("你\ufffd好"))
+        self.assertIn("garbled_replacement_character", {i.code for i in issues})
+
+    def test_clean_translation_is_not_flagged(self):
+        issues = translation_quality_issues(_request("Hello"), _result("你好"))
+        self.assertNotIn("garbled_replacement_character", {i.code for i in issues})
+
+    def test_it_is_in_the_pipeline_fallback_set(self):
+        from game_localizer.hanengine.pipeline import FALLBACK_ERROR_CODES
+
+        self.assertIn("garbled_replacement_character", FALLBACK_ERROR_CODES)
+
+
 if __name__ == "__main__":
     unittest.main()

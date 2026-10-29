@@ -357,5 +357,139 @@ class HanPipelineV1Tests(unittest.TestCase):
             self.assertEqual(workflow.project_store.list_segments(), ())
 
 
+class _RecordingProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._lock = None
+
+    def translate(self, request):
+        if self._lock is None:
+            import threading
+
+            self._lock = threading.Lock()
+        with self._lock:
+            self.calls.append(request.segment_id)
+        return TranslationResult(f"ZH:{request.text}", "cloud", "test-model", 0.9)
+
+
+class _AlwaysFailProvider:
+    def translate(self, request):
+        raise TranslationProviderError("temporary outage")
+
+
+class PipelineConcurrencyTests(unittest.TestCase):
+    """Concurrency must not change outcomes, ordering, or checkpoint semantics."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.project = self.root / "project"
+        (self.project / "data").mkdir(parents=True)
+        (self.project / "game.rpgproject").write_text("RPG Maker MV", encoding="utf-8")
+        (self.project / "data" / "Actors.json").write_text(
+            json.dumps(
+                [
+                    None,
+                    {"name": "Hero", "nickname": "Brave", "profile": "A quiet one"},
+                    {"name": "Mage", "nickname": "Sage", "profile": "Reads a lot"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "Beach",
+                    "events": [
+                        {"list": [{"code": 401, "parameters": ["Hello, {name}!"]}]},
+                        {"list": [{"code": 401, "parameters": ["Good morning"]}]},
+                        {"list": [{"code": 401, "parameters": ["See you soon"]}]},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.state_root = self.root / "state"
+
+    def _run(self, workers: int):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            extracted = workflow.extract()
+            provider = _RecordingProvider()
+            outcome = workflow.translate(
+                extracted.catalog,
+                TranslationRouter((provider,)),
+                workers=workers,
+            )
+            checkpoints = workflow.project_store.list_checkpoints(
+                outcome.task.task_id, "pipeline-translate"
+            )
+            return outcome, provider, checkpoints
+
+    def test_parallel_matches_serial_outcome(self):
+        import shutil
+
+        serial, serial_provider, _ = self._run(1)
+        shutil.rmtree(self.state_root, ignore_errors=True)
+        parallel, parallel_provider, _ = self._run(4)
+
+        self.assertEqual(serial.translated_count, parallel.translated_count)
+        self.assertEqual(serial.untranslated_count, parallel.untranslated_count)
+        self.assertEqual(serial.catalog_count, parallel.catalog_count)
+        self.assertEqual(
+            [e.target_text for e in serial.catalog.entries],
+            [e.target_text for e in parallel.catalog.entries],
+        )
+        self.assertEqual(sorted(serial_provider.calls), sorted(parallel_provider.calls))
+
+    def test_checkpoint_order_is_sequential(self):
+        _, _, checkpoints = self._run(4)
+        self.assertEqual(
+            [item.sequence for item in checkpoints],
+            list(range(1, len(checkpoints) + 1)),
+        )
+        self.assertEqual(
+            [item.payload["completed"] for item in checkpoints],
+            list(range(1, len(checkpoints) + 1)),
+        )
+
+    def test_each_segment_translated_exactly_once(self):
+        _, provider, _ = self._run(4)
+        self.assertEqual(len(provider.calls), len(set(provider.calls)))
+
+    def test_provider_failure_still_aborts_under_concurrency(self):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            extracted = workflow.extract()
+            with self.assertRaises(PipelineTranslationFailed):
+                workflow.translate(
+                    extracted.catalog,
+                    TranslationRouter((_AlwaysFailProvider(),)),
+                    workers=4,
+                )
+
+    def test_content_rejection_falls_back_without_aborting(self):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            extracted = workflow.extract()
+            outcome = workflow.translate(
+                extracted.catalog,
+                TranslationRouter((_ResidualEnglishProvider(),)),
+                workers=4,
+            )
+            self.assertGreater(outcome.untranslated_count, 0)
+            self.assertGreater(outcome.translated_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

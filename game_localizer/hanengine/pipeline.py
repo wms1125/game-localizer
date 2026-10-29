@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from .core import HanCore, RouteBlockedError
@@ -23,6 +24,20 @@ from .translation import (
 
 PIPELINE_TRANSLATE_STEP = "pipeline-translate"
 
+
+@dataclass(frozen=True)
+class _SegmentTranslation:
+    """Outcome of translating one segment, before it is persisted.
+
+    Computed off the main thread so that persistence stays strictly ordered and
+    checkpoints keep their original meaning.
+    """
+
+    request: TranslationRequest
+    translation: object | None = None
+    quality_issues: tuple = ()
+    error: BaseException | None = None
+
 # Quality-gate rejections that describe a problem with one segment's model
 # output.  They fall back to the source text and a review entry instead of
 # aborting the whole translation task.  Anything else (provider outages,
@@ -36,6 +51,8 @@ FALLBACK_ERROR_CODES = frozenset(
         "empty_translation",
         "placeholder_mismatch",
         "rich_text_tag_order_mismatch",
+        "rich_text_body_duplication",
+        "garbled_replacement_character",
     }
 )
 
@@ -200,6 +217,91 @@ def _translation_context(segment: Segment) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _pending_requests(
+    catalog: LocalizationCatalog,
+    ordered: tuple[Segment, ...],
+    *,
+    resume: bool,
+    reference_translations: Mapping[str, str] | None,
+) -> dict[str, TranslationRequest]:
+    """Build the requests that actually need a provider call.
+
+    Segments already carrying a catalog or resumed translation are skipped so
+    that concurrency is spent only on real work.
+    """
+
+    pending: dict[str, TranslationRequest] = {}
+    for entry, persisted in zip(catalog.entries, ordered):
+        if entry.target_text is not None:
+            continue
+        if resume and persisted.target_text is not None:
+            continue
+        pending[persisted.segment_id] = TranslationRequest(
+            segment_id=persisted.segment_id,
+            text=persisted.source_text,
+            source_language=persisted.source_language,
+            target_language=persisted.target_language,
+            context=_translation_context(persisted),
+            reference_translation=(
+                None
+                if reference_translations is None
+                else reference_translations.get(persisted.segment_id)
+            ),
+        )
+    return pending
+
+
+def _translate_one(
+    provider: TranslationProvider,
+    request: TranslationRequest,
+) -> _SegmentTranslation:
+    try:
+        translation = provider.translate(request)
+        translation = with_terminal_punctuation(request, translation)
+        issues = enforce_translation_quality(request, translation)
+    except BaseException as exc:  # re-raised in order on the main thread
+        return _SegmentTranslation(request=request, error=exc)
+    return _SegmentTranslation(
+        request=request,
+        translation=translation,
+        quality_issues=issues,
+    )
+
+
+def _translate_pending(
+    pending: dict[str, TranslationRequest],
+    provider: TranslationProvider,
+    *,
+    workers: int,
+    context,
+) -> dict[str, _SegmentTranslation]:
+    """Translate every pending segment, preserving per-segment error identity.
+
+    Provider calls are independent, so they run concurrently; nothing is
+    persisted here, which keeps checkpoint ordering and the store single-threaded.
+    """
+
+    if not pending:
+        return {}
+    if workers == 1 or len(pending) == 1:
+        results = {}
+        for segment_id, request in pending.items():
+            context.checkpoint()
+            results[segment_id] = _translate_one(provider, request)
+        return results
+
+    results: dict[str, _SegmentTranslation] = {}
+    with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
+        futures = {
+            segment_id: pool.submit(_translate_one, provider, request)
+            for segment_id, request in pending.items()
+        }
+        for segment_id, future in futures.items():
+            context.checkpoint()
+            results[segment_id] = future.result()
+    return results
+
+
 class HanPipelineV1:
     def __init__(self, core: HanCore, *, event_listener: EventSink | None = None) -> None:
         if not isinstance(core, HanCore):
@@ -219,6 +321,7 @@ class HanPipelineV1:
         task_id: str | None = None,
         retry_spec: TaskRetrySpec | None = None,
         reference_translations: Mapping[str, str] | None = None,
+        workers: int = 1,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -228,6 +331,8 @@ class HanPipelineV1:
             raise TypeError("provider must implement translate")
         if not isinstance(resume, bool):
             raise TypeError("resume must be a bool")
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise ValueError("workers must be a positive integer")
         if retry_spec is not None and not isinstance(retry_spec, TaskRetrySpec):
             raise TypeError("retry_spec must be a TaskRetrySpec or None")
         if reference_translations is not None:
@@ -295,6 +400,20 @@ class HanPipelineV1:
             ordered = tuple(by_id[entry.segment_id] for entry in catalog.entries)
             total = len(catalog.entries)
             context.progress(0, total)
+
+            pending = _pending_requests(
+                catalog,
+                ordered,
+                resume=resume,
+                reference_translations=reference_translations,
+            )
+            precomputed = _translate_pending(
+                pending,
+                provider,
+                workers=workers,
+                context=context,
+            )
+
             for index, (entry, persisted) in enumerate(
                 zip(catalog.entries, ordered),
                 start=1,
@@ -332,9 +451,11 @@ class HanPipelineV1:
                         ),
                     )
                     try:
-                        translation = provider.translate(request)
-                        translation = with_terminal_punctuation(request, translation)
-                        quality_issues = enforce_translation_quality(request, translation)
+                        prepared = precomputed[persisted.segment_id]
+                        if prepared.error is not None:
+                            raise prepared.error
+                        translation = prepared.translation
+                        quality_issues = prepared.quality_issues
                     except TranslationNotFoundError:
                         metadata = dict(persisted.metadata)
                         metadata.pop("translation", None)

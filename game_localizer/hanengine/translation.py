@@ -361,6 +361,39 @@ def _rich_text_tags(value: str) -> tuple[str, ...]:
     )
 
 
+def _visible_text(value: str) -> str:
+    """Return the prose only: markup tags and placeholders replaced by spaces.
+
+    ``rich_text_tag_order_mismatch`` compares tag tokens, so it cannot see a
+    model that re-states the whole sentence inside an inline tag.  This helper
+    exposes the prose for a repetition check.
+    """
+
+    visible = value
+    for token in extract_structured_placeholders(value):
+        visible = visible.replace(token, " ")
+    for match in _PERCENT_PLACEHOLDER_RE.finditer(value):
+        visible = visible.replace(match.group(0), " ")
+    return visible
+
+
+# A repeated run must be long enough that natural language does not produce it
+# by accident.  Eight CJK characters is above the longest legitimate repeat in
+# the shipped corpus ("好吃好吃好吃" is six) while still catching the shortest
+# observed defect ("把它扔进火山口。" is eight).
+_REPEATED_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff][\u3400-\u9fff，。！？、；：…]{7,}")
+
+
+def _repeated_cjk_run(value: str) -> str | None:
+    """Return a long CJK run that the text states more than once."""
+
+    visible = _visible_text(value)
+    for run in _REPEATED_CJK_RUN_RE.findall(visible):
+        if visible.count(run) >= 2:
+            return run
+    return None
+
+
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _METADATA_ECHO_RE = re.compile(
     r"(?i)(?:^|[\[{(\s])(?:segment_id|source_language|target_language|protected_tokens|context)\s*[:=]"
@@ -375,6 +408,10 @@ _MIXED_LANGUAGE_ALLOWLIST = frozenset({"kg", "npc", "steam"})
 _TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
 _TRAILING_PLACEHOLDER_RE = re.compile(r"(?:\{[^{}]*\}|\[[^\[\]]*\]|%\d+(?:\$[A-Za-z])?)+\s*$")
 _TRAILING_RICH_TEXT_RE = re.compile(r"</?[A-Za-z][^<>]*>\s*$")
+# U+FFFD means the bytes were already lost before or during the model call.
+# It is unrecoverable and must never reach a candidate: a replacement glyph in
+# the string table shows up in-game as a box and cannot be fixed after build.
+_REPLACEMENT_CHARACTER = "\ufffd"
 
 
 def has_terminal_punctuation(value: str) -> bool:
@@ -502,6 +539,14 @@ def translation_quality_issues(
                 "translation contains an unsupported control character",
             )
         )
+    if _REPLACEMENT_CHARACTER in target:
+        issues.append(
+            TranslationQualityIssue(
+                "garbled_replacement_character",
+                "error",
+                "translation contains U+FFFD, so characters were already lost",
+            )
+        )
     source_breaks = tuple(re.findall(r"\r\n|\r|\n", request.text))
     target_breaks = tuple(re.findall(r"\r\n|\r|\n", target))
     if source_breaks != target_breaks:
@@ -528,6 +573,21 @@ def translation_quality_issues(
                 "translation changed rich-text tag order",
             )
         )
+    if _rich_text_tags(request.text):
+        # Inline tags such as <color=#FFEF4D><b>phrase</color></b> invite the
+        # model to restate the surrounding sentence inside the tag.  Tag order
+        # is preserved by that defect, so it needs a prose-level check: a
+        # shipped candidate carried 14 such segments past a "passed" gate.
+        repeated = _repeated_cjk_run(target)
+        if repeated is not None:
+            issues.append(
+                TranslationQualityIssue(
+                    "rich_text_body_duplication",
+                    "error",
+                    "translation repeats its own text around a rich-text tag: "
+                    + repeated,
+                )
+            )
     if _METADATA_ECHO_RE.search(target) or _TRANSLATION_LABEL_RE.search(target):
         issues.append(
             TranslationQualityIssue(

@@ -103,6 +103,50 @@ _COMMON_LIMITATIONS = (
     "Rollback is managed by HanEngine BackupManager",
 )
 
+# How many neighbouring segments to hand the translator as context.  Two each
+# way matches AiNiee's default pre_line_counts and keeps the prompt small enough
+# for a 3B model with an 8192-token window.
+CONTEXT_NEIGHBOURS = 2
+
+
+def _neighbour_sources(
+    entries: Sequence[object],
+    *,
+    window: int = CONTEXT_NEIGHBOURS,
+) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
+    """Neighbouring source text for each entry, within a single source file.
+
+    Context follows catalog order inside one ``relative_path`` so dialogue keeps
+    its reading order; segments from different files never mix.
+    """
+
+    by_file: dict[str, list[object]] = {}
+    for entry in entries:
+        by_file.setdefault(getattr(entry, "relative_path", ""), []).append(entry)
+
+    result: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for entry in entries:
+        siblings = by_file[getattr(entry, "relative_path", "")]
+        index = siblings.index(entry)
+        before = tuple(
+            text
+            for text in (
+                getattr(item, "source_text", "")
+                for item in siblings[max(0, index - window) : index]
+            )
+            if text.strip()
+        )
+        after = tuple(
+            text
+            for text in (
+                getattr(item, "source_text", "")
+                for item in siblings[index + 1 : index + 1 + window]
+            )
+            if text.strip()
+        )
+        result.append((before, after))
+    return tuple(result)
+
 
 def _capability_matrix(
     *,
@@ -385,7 +429,11 @@ class StructuredAdapterV1:
                 language=self.target_language,
                 source_language=self.source_language,
             )
-            drafts = tuple(self._entry_to_draft(entry, catalog) for entry in catalog.entries)
+            neighbours = _neighbour_sources(catalog.entries)
+            drafts = tuple(
+                self._entry_to_draft(entry, catalog, neighbours=neighbour)
+                for entry, neighbour in zip(catalog.entries, neighbours)
+            )
             request.context.progress(len(drafts), len(drafts), current_item=self.engine_id)
             request.context.log(
                 "structured resources extracted",
@@ -447,8 +495,11 @@ class StructuredAdapterV1:
         self,
         entry: LocalizationEntry,
         catalog: LocalizationCatalog,
+        *,
+        neighbours: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
     ) -> SegmentDraft:
         placeholders = extract_placeholders(entry.source_text)
+        context_before, context_after = neighbours
         metadata = {
             "engine_id": catalog.engine_id,
             "kind": entry.kind,
@@ -459,6 +510,8 @@ class StructuredAdapterV1:
                 entry.source_text,
                 placeholders,
                 kind=entry.kind,
+                context_before=context_before,
+                context_after=context_after,
             ),
         }
         return SegmentDraft(
@@ -466,8 +519,8 @@ class StructuredAdapterV1:
             source_text=entry.source_text,
             source_language=catalog.source_language,
             speaker=None,
-            context_before=(),
-            context_after=(),
+            context_before=context_before,
+            context_after=context_after,
             placeholders=placeholders,
             tags=(catalog.engine_id, entry.kind),
             constraints=("preserve_placeholders",),
@@ -1158,9 +1211,10 @@ class RenPyAdapterV1(StructuredAdapterV1):
             if not files or not catalog.entries:
                 raise ValueError("project contains no translatable plaintext Ren'Py statements")
             relative_files = tuple(path.relative_to(request.source_root).as_posix() for path in files)
+            neighbours = _neighbour_sources(catalog.entries)
             drafts = tuple(
-                self._renpy_segment_to_draft(entry, relative_files)
-                for entry in catalog.entries
+                self._renpy_segment_to_draft(entry, relative_files, neighbours=neighbour)
+                for entry, neighbour in zip(catalog.entries, neighbours)
             )
             warning_items: list[str] = []
             if catalog.unhandled_items:
@@ -1242,6 +1296,8 @@ class RenPyAdapterV1(StructuredAdapterV1):
         self,
         entry: RenPySegment,
         catalog_files: tuple[str, ...],
+        *,
+        neighbours: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
     ) -> SegmentDraft:
         locator = {
             "type": "renpy",
@@ -1250,6 +1306,7 @@ class RenPyAdapterV1(StructuredAdapterV1):
             "speaker": entry.speaker,
         }
         placeholders = extract_placeholders(entry.source_text)
+        context_before, context_after = neighbours
         metadata = {
             "engine_id": self.engine_id,
             "kind": entry.kind,
@@ -1270,6 +1327,8 @@ class RenPyAdapterV1(StructuredAdapterV1):
                     ),
                     None,
                 ),
+                context_before=context_before,
+                context_after=context_after,
             ),
         }
         return SegmentDraft(
@@ -1277,8 +1336,8 @@ class RenPyAdapterV1(StructuredAdapterV1):
             source_text=entry.source_text,
             source_language=self.source_language,
             speaker=entry.speaker,
-            context_before=(),
-            context_after=(),
+            context_before=context_before,
+            context_after=context_after,
             placeholders=placeholders,
             tags=(self.engine_id, entry.kind),
             constraints=("preserve_placeholders", "preserve_renpy_text_tags"),
