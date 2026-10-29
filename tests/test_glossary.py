@@ -144,5 +144,46 @@ class GlossaryTermTests(unittest.TestCase):
         )
 
 
+class GlossaryLoadingTests(unittest.TestCase):
+    """The CLI loader must tolerate what Windows editors actually produce."""
+
+    def _write(self, text: str, encoding: str) -> str:
+        import tempfile
+        from pathlib import Path
+
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding=encoding
+        )
+        with handle as stream:
+            stream.write(text)
+        self.addCleanup(Path(handle.name).unlink)
+        return handle.name
+
+    def test_plain_utf8_glossary_loads(self):
+        from cli import _load_glossary
+
+        path = self._write('{"Coconut": "椰子"}', "utf-8")
+        self.assertEqual(len(_load_glossary(path)), 1)
+
+    def test_utf8_bom_glossary_loads(self):
+        # PowerShell's `Set-Content -Encoding UTF8` and Notepad both write a BOM.
+        from cli import _load_glossary
+
+        path = self._write('{"Coconut": "椰子"}', "utf-8-sig")
+        self.assertEqual([t.source for t in _load_glossary(path).terms], ["Coconut"])
+
+    def test_missing_path_returns_none(self):
+        from cli import _load_glossary
+
+        self.assertIsNone(_load_glossary(None))
+
+    def test_empty_object_is_rejected(self):
+        from cli import _load_glossary
+
+        path = self._write("{}", "utf-8")
+        with self.assertRaises(ValueError):
+            _load_glossary(path)
+
+
 if __name__ == "__main__":
     unittest.main()

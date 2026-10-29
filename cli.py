@@ -388,12 +388,16 @@ def _load_glossary(raw_path: str | None) -> "Glossary | None":
 
     The format matches what ``tools/mine_glossary.py`` emits, so a mined
     glossary can be fed straight back in without conversion.
+
+    ``utf-8-sig`` is used because PowerShell's ``Set-Content -Encoding UTF8``
+    and Notepad both prepend a BOM, and a glossary is exactly the kind of file a
+    user edits by hand on Windows.
     """
 
     if not raw_path:
         return None
     path = Path(raw_path).expanduser().resolve(strict=True)
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict):
         raise ValueError("glossary must be a JSON object mapping source to target")
     pairs = {
