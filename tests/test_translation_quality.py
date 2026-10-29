@@ -196,5 +196,67 @@ class GarbledCharacterTests(unittest.TestCase):
         self.assertIn("garbled_replacement_character", FALLBACK_ERROR_CODES)
 
 
+class GlossaryViolationTests(unittest.TestCase):
+    """A pinned term is a deterministic contract, not a suggestion.
+
+    Only a segment that *is* the term is enforced.  A term inside a longer
+    sentence is a hint, because the game's own Chinese renders those differently
+    in context.
+    """
+
+    def _request_with_glossary(self, text, terms):
+        from game_localizer.hanengine.glossary import Glossary
+
+        glossary = Glossary(terms)
+        return TranslationRequest(
+            "unity:1",
+            text,
+            "en",
+            "zh-CN",
+            glossary=glossary.match(text),
+            enforced_terms=glossary.enforceable_terms(text),
+        )
+
+    def test_ignored_term_is_an_error(self):
+        request = self._request_with_glossary("Coconut", {"Coconut": "椰子"})
+        issues = translation_quality_issues(request, _result("坚果"))
+        codes = {i.code: i.severity for i in issues}
+        self.assertEqual(codes.get("glossary_violation"), "error")
+
+    def test_used_term_passes(self):
+        request = self._request_with_glossary("Coconut", {"Coconut": "椰子"})
+        issues = translation_quality_issues(request, _result("椰子"))
+        self.assertNotIn("glossary_violation", {i.code for i in issues})
+
+    def test_request_without_glossary_is_not_checked(self):
+        issues = translation_quality_issues(_request("Coconut"), _result("坚果"))
+        self.assertNotIn("glossary_violation", {i.code for i in issues})
+
+    def test_term_inside_a_sentence_is_not_enforced(self):
+        # "Delete Save?" is officially 删除存档吗？, not 保存.
+        request = self._request_with_glossary("Delete Save?", {"Save": "保存"})
+        issues = translation_quality_issues(request, _result("删除存档吗？"))
+        self.assertNotIn("glossary_violation", {i.code for i in issues})
+
+    def test_only_terms_present_in_source_are_enforced(self):
+        request = self._request_with_glossary(
+            "Coconut", {"Coconut": "椰子", "Boss": "首领"}
+        )
+        issues = translation_quality_issues(request, _result("椰子"))
+        self.assertNotIn("glossary_violation", {i.code for i in issues})
+
+    def test_it_is_in_the_pipeline_fallback_set(self):
+        from game_localizer.hanengine.pipeline import FALLBACK_ERROR_CODES
+
+        self.assertIn("glossary_violation", FALLBACK_ERROR_CODES)
+
+    def test_payload_carries_only_matched_terms(self):
+        from game_localizer.hanengine.glossary import Glossary
+
+        glossary = Glossary({"Coconut": "椰子", "Boss Left": "怪物已离开"})
+        matched = glossary.match("grab the coconut")
+        self.assertEqual([t.source for t in matched], ["Coconut"])
+
+
 if __name__ == "__main__":
     unittest.main()

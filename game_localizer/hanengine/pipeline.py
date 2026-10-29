@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from .core import HanCore, RouteBlockedError
+from .glossary import Glossary
 from .multiengine import LocalizationCatalog, LocalizationEntry, extract_placeholders
 from .routing import RouteOperation, RoutePlan
 from .segments import Segment, SegmentDraft, SourceLocation
@@ -53,6 +54,7 @@ FALLBACK_ERROR_CODES = frozenset(
         "rich_text_tag_order_mismatch",
         "rich_text_body_duplication",
         "garbled_replacement_character",
+        "glossary_violation",
     }
 )
 
@@ -223,11 +225,17 @@ def _pending_requests(
     *,
     resume: bool,
     reference_translations: Mapping[str, str] | None,
+    glossary: Glossary | None = None,
 ) -> dict[str, TranslationRequest]:
     """Build the requests that actually need a provider call.
 
     Segments already carrying a catalog or resumed translation are skipped so
     that concurrency is spent only on real work.
+
+    The glossary is split by role.  ``glossary`` on the request carries the terms
+    found anywhere in the segment, which is a translation *hint* the model should
+    follow when it fits.  ``enforced_terms`` carries only the terms the segment
+    *is*, which the quality gate treats as binding.
     """
 
     pending: dict[str, TranslationRequest] = {}
@@ -247,6 +255,16 @@ def _pending_requests(
                 if reference_translations is None
                 else reference_translations.get(persisted.segment_id)
             ),
+            glossary=(
+                ()
+                if glossary is None
+                else glossary.match(persisted.source_text)
+            ),
+            enforced_terms=(
+                ()
+                if glossary is None
+                else glossary.enforceable_terms(persisted.source_text)
+            ),
         )
     return pending
 
@@ -255,6 +273,13 @@ def _translate_one(
     provider: TranslationProvider,
     request: TranslationRequest,
 ) -> _SegmentTranslation:
+    """Translate one segment.
+
+    Placeholder masking is applied by the provider adapter, not here, so the
+    request keeps its real text.  This function only restores sentinels if the
+    provider chose to mask, which it signals via ``MaskedTranslation``.
+    """
+
     try:
         translation = provider.translate(request)
         translation = with_terminal_punctuation(request, translation)
@@ -322,6 +347,7 @@ class HanPipelineV1:
         retry_spec: TaskRetrySpec | None = None,
         reference_translations: Mapping[str, str] | None = None,
         workers: int = 1,
+        glossary: Glossary | None = None,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -333,6 +359,8 @@ class HanPipelineV1:
             raise TypeError("resume must be a bool")
         if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
             raise ValueError("workers must be a positive integer")
+        if glossary is not None and not isinstance(glossary, Glossary):
+            raise TypeError("glossary must be a Glossary or None")
         if retry_spec is not None and not isinstance(retry_spec, TaskRetrySpec):
             raise TypeError("retry_spec must be a TaskRetrySpec or None")
         if reference_translations is not None:
@@ -406,6 +434,7 @@ class HanPipelineV1:
                 ordered,
                 resume=resume,
                 reference_translations=reference_translations,
+                glossary=glossary,
             )
             precomputed = _translate_pending(
                 pending,

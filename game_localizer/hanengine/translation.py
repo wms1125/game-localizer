@@ -11,6 +11,8 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 from .multiengine import extract_placeholders as extract_structured_placeholders
+from .glossary import Glossary, GlossaryTerm
+from .placeholders import mask_placeholders, restore_placeholders
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ class TranslationRequest:
     target_language: str
     context: tuple[str, ...] = ()
     reference_translation: str | None = None
+    glossary: tuple[GlossaryTerm, ...] = ()
+    enforced_terms: tuple[GlossaryTerm, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in ("segment_id", "text", "source_language", "target_language"):
@@ -62,6 +66,18 @@ class TranslationRequest:
             not isinstance(reference_translation, str) or not reference_translation
         ):
             raise ValueError("reference_translation must be a non-empty string or None")
+        if isinstance(self.glossary, (str, bytes)):
+            raise TypeError("glossary must be an ordered collection of terms")
+        glossary = tuple(self.glossary)
+        if any(not isinstance(term, GlossaryTerm) for term in glossary):
+            raise TypeError("glossary must contain GlossaryTerm values")
+        object.__setattr__(self, "glossary", glossary)
+        if isinstance(self.enforced_terms, (str, bytes)):
+            raise TypeError("enforced_terms must be an ordered collection of terms")
+        enforced = tuple(self.enforced_terms)
+        if any(not isinstance(term, GlossaryTerm) for term in enforced):
+            raise TypeError("enforced_terms must contain GlossaryTerm values")
+        object.__setattr__(self, "enforced_terms", enforced)
 
 
 @dataclass(frozen=True)
@@ -179,12 +195,20 @@ class CloudTranslationProvider:
             token = self._token_provider()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
+        # Same sentinel round-trip as the local provider: the backend never sees
+        # a raw "{0}", so it cannot corrupt one.
+        masked = mask_placeholders(request.text, _placeholder_tokens(request.text))
         payload = {
-            "text": request.text,
+            "text": masked.text,
             "source_language": request.source_language,
             "target_language": request.target_language,
             "context": list(request.context),
         }
+        if request.glossary:
+            payload["glossary"] = [
+                {"source": term.source, "target": term.target, "note": term.note}
+                for term in request.glossary
+            ]
         body = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         response = self._transport(self._endpoint, headers, body, self._timeout)
         if response.status < 200 or response.status >= 300:
@@ -200,6 +224,7 @@ class CloudTranslationProvider:
             provider = decoded.get("provider", "cloud")
             model = decoded.get("model", "unknown")
             confidence = decoded.get("confidence", 0.0)
+            text = restore_placeholders(masked, text)
             result = TranslationResult(text, provider, model, confidence)
         except (KeyError, TypeError, ValueError) as exc:
             raise TranslationProviderError(
@@ -256,9 +281,13 @@ class LocalModelTranslationProvider:
     def translate(self, request: TranslationRequest) -> TranslationResult:
         if not isinstance(request, TranslationRequest):
             raise TypeError("request must be a TranslationRequest")
+        # Send sentinels instead of raw placeholders.  A model that moves
+        # "{0}" around, or turns it into "（0）", cannot corrupt a token it
+        # never saw; the real text is restored from the response below.
+        masked = mask_placeholders(request.text, _placeholder_tokens(request.text))
         payload = {
             "segment_id": request.segment_id,
-            "text": request.text,
+            "text": masked.text,
             "source_language": request.source_language,
             "target_language": request.target_language,
             "context": list(request.context),
@@ -266,6 +295,11 @@ class LocalModelTranslationProvider:
         }
         if request.reference_translation is not None:
             payload["reference_translation"] = request.reference_translation
+        if request.glossary:
+            payload["glossary"] = [
+                {"source": term.source, "target": term.target, "note": term.note}
+                for term in request.glossary
+            ]
         body = json.dumps(
             payload,
             ensure_ascii=False,
@@ -326,6 +360,8 @@ class LocalModelTranslationProvider:
             provider = decoded.get("provider", self._provider_name)
             model = decoded.get("model", self._model_name)
             confidence = decoded.get("confidence", 0.0)
+            # Restore the original tokens before any downstream check touches them.
+            text = restore_placeholders(masked, text)
             result = TranslationResult(text, provider, model, confidence)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise TranslationProviderError(
@@ -586,6 +622,23 @@ def translation_quality_issues(
                     "error",
                     "translation repeats its own text around a rich-text tag: "
                     + repeated,
+                )
+            )
+    if request.enforced_terms:
+        # Only terms the source string *is* are binding.  A term appearing inside
+        # a longer sentence is a hint: the mined glossary has 56 entries that are
+        # substrings of other entries, and the game's own Chinese renders them
+        # differently in context ("保存" alone vs "存档" in a sentence).
+        missing = [
+            term for term in request.enforced_terms if term.target not in target
+        ]
+        if missing:
+            issues.append(
+                TranslationQualityIssue(
+                    "glossary_violation",
+                    "error",
+                    "translation ignored pinned terms: "
+                    + ", ".join(f"{t.source}->{t.target}" for t in missing[:3]),
                 )
             )
     if _METADATA_ECHO_RE.search(target) or _TRANSLATION_LABEL_RE.search(target):

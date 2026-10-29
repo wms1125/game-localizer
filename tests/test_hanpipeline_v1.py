@@ -491,5 +491,148 @@ class PipelineConcurrencyTests(unittest.TestCase):
             self.assertGreater(outcome.translated_count, 0)
 
 
+class _GlossaryAwareProvider:
+    """Translates by concatenating the pinned target for every matched term.
+
+    Lets a test prove that the glossary reached the provider rather than
+    trusting the pipeline to have wired it.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, ...]] = []
+
+    def translate(self, request):
+        self.seen.append(tuple(t.source for t in request.glossary))
+        if request.glossary:
+            joined = "".join(t.target for t in request.glossary)
+            return TranslationResult(joined, "glossary-aware", "test", 0.9)
+        return TranslationResult(f"ZH:{request.text}", "glossary-aware", "test", 0.9)
+
+
+class _IgnoresGlossaryProvider:
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, ...]] = []
+
+    def translate(self, request):
+        self.seen.append(tuple(t.source for t in request.glossary))
+        return TranslationResult(f"ZH:{request.text}", "ignores-glossary", "test", 0.9)
+
+
+class PipelineGlossaryTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.project = self.root / "project"
+        (self.project / "data").mkdir(parents=True)
+        (self.project / "game.rpgproject").write_text("RPG Maker MV", encoding="utf-8")
+        (self.project / "data" / "Actors.json").write_text(
+            json.dumps([None, {"name": "Hero", "nickname": "", "profile": ""}]),
+            encoding="utf-8",
+        )
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "Beach",
+                    "events": [
+                        {"list": [{"code": 401, "parameters": ["grab the coconut"]}]},
+                        {"list": [{"code": 401, "parameters": ["the boss left"]}]},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.state_root = self.root / "state"
+
+    def test_glossary_reaches_the_provider_per_segment(self):
+        from game_localizer.hanengine.glossary import Glossary
+
+        with StructuredWorkflowSession(
+            self.project, engine_id="rpg_maker_mv", state_root=self.state_root
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            provider = _GlossaryAwareProvider()
+            workflow.translate(
+                catalog,
+                TranslationRouter((provider,)),
+                glossary=Glossary({"Coconut": "椰子", "Unrelated Term": "无关"}),
+            )
+        seen = {source for batch in provider.seen for source in batch}
+        self.assertIn("Coconut", seen)
+        # A term absent from every segment must never be injected.
+        self.assertNotIn("Unrelated Term", seen)
+
+    def test_matching_is_case_insensitive_across_segments(self):
+        from game_localizer.hanengine.glossary import Glossary
+
+        with StructuredWorkflowSession(
+            self.project, engine_id="rpg_maker_mv", state_root=self.state_root
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            provider = _GlossaryAwareProvider()
+            workflow.translate(
+                catalog,
+                TranslationRouter((provider,)),
+                glossary=Glossary({"Boss": "首领"}),
+            )
+        # The source says "the boss left"; the glossary entry is capitalised.
+        seen = {source for batch in provider.seen for source in batch}
+        self.assertIn("Boss", seen)
+
+    def test_pinned_term_that_is_ignored_falls_back(self):
+        from game_localizer.hanengine.glossary import Glossary
+
+        # The segment must *be* the term for the gate to bind.
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "Beach",
+                    "events": [
+                        {"list": [{"code": 401, "parameters": ["Coconut"]}]},
+                        {"list": [{"code": 401, "parameters": ["the boss left"]}]},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with StructuredWorkflowSession(
+            self.project, engine_id="rpg_maker_mv", state_root=self.state_root
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            outcome = workflow.translate(
+                catalog,
+                TranslationRouter((_IgnoresGlossaryProvider(),)),
+                glossary=Glossary({"Coconut": "椰子"}),
+            )
+        # The Coconut segment must not ship: the provider ignored the term.
+        self.assertGreater(outcome.untranslated_count, 0)
+        self.assertGreater(outcome.translated_count, 0)
+
+    def test_in_sentence_term_does_not_block_shipping(self):
+        from game_localizer.hanengine.glossary import Glossary
+
+        with StructuredWorkflowSession(
+            self.project, engine_id="rpg_maker_mv", state_root=self.state_root
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            outcome = workflow.translate(
+                catalog,
+                TranslationRouter((_IgnoresGlossaryProvider(),)),
+                glossary=Glossary({"Coconut": "椰子"}),
+            )
+        # "grab the coconut" only *contains* the term; that is a hint, so the
+        # segment ships even though the provider ignored it.
+        self.assertEqual(outcome.untranslated_count, 0)
+
+    def test_without_glossary_nothing_is_injected(self):
+        with StructuredWorkflowSession(
+            self.project, engine_id="rpg_maker_mv", state_root=self.state_root
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            provider = _GlossaryAwareProvider()
+            workflow.translate(catalog, TranslationRouter((provider,)))
+        self.assertTrue(all(batch == () for batch in provider.seen))
+
+
 if __name__ == "__main__":
     unittest.main()

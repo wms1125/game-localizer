@@ -62,6 +62,7 @@ from game_localizer.hanengine import (
     write_translation_review_queue,
 )
 from game_localizer.hanengine.multiengine import LocalizationCatalog
+from game_localizer.hanengine.glossary import Glossary
 from game_localizer.hanengine.adapter_runtime import AdapterNotDetectedError
 from game_localizer.hanengine.auth import AuthError, UserStore, auth_payload
 from game_localizer.structured_workflow import (
@@ -295,6 +296,14 @@ def _add_engine_runtime_options(parser: argparse.ArgumentParser) -> None:
 def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dictionary", help="UTF-8 JSON exact-match translation dictionary")
     parser.add_argument(
+        "--glossary",
+        help=(
+            "UTF-8 JSON glossary of pinned source->target terms; only the terms "
+            "present in each segment are injected into its prompt, and the same "
+            "matcher verifies the result"
+        ),
+    )
+    parser.add_argument(
         "--local-model-endpoint",
         help="HTTP loopback endpoint for a local model runtime",
     )
@@ -372,6 +381,29 @@ def _translation_router(args) -> TranslationRouter | None:
     if args.reference_report and not args.local_model_endpoint:
         raise ValueError("--reference-report requires --local-model-endpoint")
     return None if not providers else TranslationRouter(providers)
+
+
+def _load_glossary(raw_path: str | None) -> "Glossary | None":
+    """Load a plain ``{source: target}`` JSON glossary.
+
+    The format matches what ``tools/mine_glossary.py`` emits, so a mined
+    glossary can be fed straight back in without conversion.
+    """
+
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser().resolve(strict=True)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("glossary must be a JSON object mapping source to target")
+    pairs = {
+        key: value
+        for key, value in payload.items()
+        if isinstance(key, str) and isinstance(value, str) and key and value
+    }
+    if not pairs:
+        raise ValueError("glossary contains no usable string pairs")
+    return Glossary(pairs)
 
 
 def _load_reference_translations(path: Path, catalog: LocalizationCatalog) -> dict[str, str]:
@@ -871,6 +903,7 @@ def run_engine(
                     if args.reference_report
                     else None
                 )
+                glossary = _load_glossary(getattr(args, "glossary", None))
                 translation = workflow.translate(
                     catalog,
                     router,
@@ -878,6 +911,7 @@ def run_engine(
                     retry_spec=retry_spec,
                     reference_translations=reference_translations,
                     workers=getattr(args, "workers", 1),
+                    glossary=glossary,
                 )
                 catalog = translation.catalog
                 print(

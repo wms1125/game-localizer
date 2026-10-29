@@ -33,6 +33,7 @@ from game_localizer.hanengine.adapter_runtime import (
     AdapterTaskExecution,
 )
 from game_localizer.hanengine.core import HanCore
+from game_localizer.hanengine.glossary import Glossary
 from game_localizer.hanengine.multiengine import (
     LocalizationCatalog,
     LocalizationEntry,
@@ -429,6 +430,7 @@ class StructuredWorkflowSession:
         retry_spec: TaskRetrySpec | None = None,
         reference_translations: Mapping[str, str] | None = None,
         workers: int = 1,
+        glossary: Glossary | None = None,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -450,6 +452,7 @@ class StructuredWorkflowSession:
             retry_spec=self.retry_spec if retry_spec is None else retry_spec,
             reference_translations=reference_translations,
             workers=workers,
+            glossary=glossary,
         )
 
     def persisted_events(self, task_id: str) -> tuple[TaskEvent, ...]:
