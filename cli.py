@@ -346,6 +346,15 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--repair-rounds",
+        type=int,
+        default=1,
+        help=(
+            "targeted re-asks for segments that failed a quality gate or tripped the "
+            "length budget; 0 disables the repair round"
+        ),
+    )
+    parser.add_argument(
         "--translated-catalog",
         help="optional path for the completed translated catalog JSON",
     )
@@ -553,6 +562,9 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
     workers = getattr(args, "workers", 1)
     if workers != 1:
         arguments.extend(["--workers", str(workers)])
+    repair_rounds = getattr(args, "repair_rounds", 1)
+    if repair_rounds != 1:
+        arguments.extend(["--repair-rounds", str(repair_rounds)])
     token_env = getattr(args, "token_env", "HANENGINE_TRANSLATION_TOKEN")
     if token_env != "HANENGINE_TRANSLATION_TOKEN":
         arguments.extend(["--token-env", token_env])
@@ -916,6 +928,7 @@ def run_engine(
                     reference_translations=reference_translations,
                     workers=getattr(args, "workers", 1),
                     glossary=glossary,
+                    repair_rounds=getattr(args, "repair_rounds", 1),
                 )
                 catalog = translation.catalog
                 print(

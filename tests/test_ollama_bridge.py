@@ -80,7 +80,8 @@ class OllamaBridgeTests(unittest.TestCase):
         )
         self.assertEqual(values[0], "unity:1")
         self.assertEqual(values[4], ("HUD",))
-        self.assertIsNone(values[7])
+        self.assertEqual(values[7], "")
+        self.assertIsNone(values[8])
 
     def test_request_model_field_is_validated_and_optional(self):
         values = _request_payload(
@@ -92,7 +93,7 @@ class OllamaBridgeTests(unittest.TestCase):
                 "model": "qwen2.5:7b",
             }
         )
-        self.assertEqual(values[7], "qwen2.5:7b")
+        self.assertEqual(values[8], "qwen2.5:7b")
         with self.assertRaisesRegex(ValueError, "model must match"):
             _request_payload(
                 {

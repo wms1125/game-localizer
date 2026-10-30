@@ -58,10 +58,58 @@ FALLBACK_ERROR_CODES = frozenset(
     }
 )
 
+# Failures a targeted re-ask can plausibly fix.  A repair round re-sends only
+# these segments with a code-specific instruction, and adopts the new rendering
+# only when it clears the gate that rejected the first attempt.  Provider
+# outages are deliberately absent: re-asking does not fix a dead endpoint.
+REPAIRABLE_ERROR_CODES = frozenset(
+    {
+        "residual_english",
+        "rich_text_body_duplication",
+        "rich_text_tag_order_mismatch",
+        "placeholder_mismatch",
+        "glossary_violation",
+        "metadata_contamination",
+    }
+)
+
+# Warnings that are worth one repair attempt even though they may ship as-is.
+REPAIRABLE_WARNING_CODES = frozenset({"length_budget_exceeded"})
+
+_REPAIR_INSTRUCTIONS = {
+    "residual_english": (
+        "The previous attempt left English words untranslated. Translate every word "
+        "into natural Simplified Chinese, including slang, onomatopoeia and UI labels."
+    ),
+    "rich_text_body_duplication": (
+        "The previous attempt repeated the sentence inside or around a markup tag. "
+        "Translate the sentence exactly once and keep each tag around its own phrase."
+    ),
+    "rich_text_tag_order_mismatch": (
+        "The previous attempt changed the order of markup tags. Keep every tag in the "
+        "same order and position as the source."
+    ),
+    "placeholder_mismatch": (
+        "The previous attempt changed or dropped a placeholder or markup tag. Reproduce "
+        "every protected token exactly, in the same order."
+    ),
+    "glossary_violation": (
+        "The previous attempt ignored a pinned glossary term. Use the glossary rendering "
+        "exactly for the terms it covers."
+    ),
+    "metadata_contamination": (
+        "The previous attempt echoed request metadata. Return only the translated game "
+        "text, with no labels, field names or explanations."
+    ),
+    "length_budget_exceeded": (
+        "The previous attempt is too wide for its UI label. Render it shorter while "
+        "keeping the meaning: this string sits in a small button or caption."
+    ),
+}
+
 
 class PipelineTranslationError(RuntimeError):
     pass
-
 
 class PipelineTranslationFailed(PipelineTranslationError):
     def __init__(
@@ -327,6 +375,64 @@ def _translate_pending(
     return results
 
 
+def _repair_instruction(item: _SegmentTranslation) -> str | None:
+    """Return a targeted re-ask instruction for a repairable outcome."""
+
+    error_code = getattr(item.error, "code", None)
+    if isinstance(error_code, str) and error_code in REPAIRABLE_ERROR_CODES:
+        return _REPAIR_INSTRUCTIONS[error_code]
+    for issue in item.quality_issues:
+        if issue.severity == "warning" and issue.code in REPAIRABLE_WARNING_CODES:
+            return _REPAIR_INSTRUCTIONS[issue.code]
+    return None
+
+
+def _adopts_repair(candidate: _SegmentTranslation, original: _SegmentTranslation) -> bool:
+    """Adopt a repair only when it is strictly better than what it replaces."""
+
+    if candidate.error is not None:
+        return False
+    if original.error is not None:
+        return True
+    return len(candidate.quality_issues) < len(original.quality_issues)
+
+
+def _repair_pending(
+    results: dict[str, _SegmentTranslation],
+    provider: TranslationProvider,
+    *,
+    workers: int,
+    context,
+    repair_rounds: int,
+) -> dict[str, _SegmentTranslation]:
+    """Re-ask segments that failed, or tripped a repairable warning.
+
+    This replaces AiNiee's "halve the batch and retry the failures" strategy:
+    HanEngine sends one segment per request, so there is no batch to shrink, and
+    the useful knob is a failure-specific instruction instead.  Nothing here is
+    persisted; the caller keeps its ordered write loop.
+    """
+
+    for _round in range(repair_rounds):
+        repairs = {
+            segment_id: replace(item.request, retry_instruction=instruction)
+            for segment_id, item in results.items()
+            if (instruction := _repair_instruction(item)) is not None
+        }
+        if not repairs:
+            break
+        retried = _translate_pending(
+            repairs,
+            provider,
+            workers=workers,
+            context=context,
+        )
+        for segment_id, candidate in retried.items():
+            if _adopts_repair(candidate, results[segment_id]):
+                results[segment_id] = candidate
+    return results
+
+
 class HanPipelineV1:
     def __init__(self, core: HanCore, *, event_listener: EventSink | None = None) -> None:
         if not isinstance(core, HanCore):
@@ -348,6 +454,7 @@ class HanPipelineV1:
         reference_translations: Mapping[str, str] | None = None,
         workers: int = 1,
         glossary: Glossary | None = None,
+        repair_rounds: int = 1,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -361,6 +468,12 @@ class HanPipelineV1:
             raise ValueError("workers must be a positive integer")
         if glossary is not None and not isinstance(glossary, Glossary):
             raise TypeError("glossary must be a Glossary or None")
+        if (
+            isinstance(repair_rounds, bool)
+            or not isinstance(repair_rounds, int)
+            or repair_rounds < 0
+        ):
+            raise ValueError("repair_rounds must be a non-negative integer")
         if retry_spec is not None and not isinstance(retry_spec, TaskRetrySpec):
             raise TypeError("retry_spec must be a TaskRetrySpec or None")
         if reference_translations is not None:
@@ -441,6 +554,13 @@ class HanPipelineV1:
                 provider,
                 workers=workers,
                 context=context,
+            )
+            precomputed = _repair_pending(
+                precomputed,
+                provider,
+                workers=workers,
+                context=context,
+                repair_rounds=repair_rounds,
             )
 
             for index, (entry, persisted) in enumerate(

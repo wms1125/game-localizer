@@ -49,6 +49,7 @@ class TranslationRequest:
     reference_translation: str | None = None
     glossary: tuple[GlossaryTerm, ...] = ()
     enforced_terms: tuple[GlossaryTerm, ...] = ()
+    retry_instruction: str = ""
 
     def __post_init__(self) -> None:
         for field_name in ("segment_id", "text", "source_language", "target_language"):
@@ -78,6 +79,10 @@ class TranslationRequest:
         if any(not isinstance(term, GlossaryTerm) for term in enforced):
             raise TypeError("enforced_terms must contain GlossaryTerm values")
         object.__setattr__(self, "enforced_terms", enforced)
+        retry_instruction = self.retry_instruction
+        if not isinstance(retry_instruction, str):
+            raise TypeError("retry_instruction must be a string")
+        object.__setattr__(self, "retry_instruction", retry_instruction.strip())
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,8 @@ class CloudTranslationProvider:
                 {"source": term.source, "target": term.target, "note": term.note}
                 for term in request.glossary
             ]
+        if request.retry_instruction:
+            payload["retry_instruction"] = request.retry_instruction
         body = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         response = self._transport(self._endpoint, headers, body, self._timeout)
         if response.status < 200 or response.status >= 300:
@@ -300,6 +307,8 @@ class LocalModelTranslationProvider:
                 {"source": term.source, "target": term.target, "note": term.note}
                 for term in request.glossary
             ]
+        if request.retry_instruction:
+            payload["retry_instruction"] = request.retry_instruction
         body = json.dumps(
             payload,
             ensure_ascii=False,
@@ -429,6 +438,51 @@ def _repeated_cjk_run(value: str) -> str | None:
             return run
     return None
 
+
+_EM_CJK_RANGES = (
+    (0x4E00, 0x9FFF),
+    (0x3400, 0x4DBF),
+    (0x3000, 0x303F),
+    (0xFF00, 0xFF60),
+)
+
+
+def em_width(value: str) -> float:
+    """Estimate rendered width in em, ignoring markup and placeholders.
+
+    Calibrated against the shipped How to Fish corpus: a CJK glyph is one em, a
+    Latin glyph or digit is half an em, a space is a quarter em.  This is a
+    layout heuristic, not a font measurement -- see ``visual_style`` for the
+    exact path that measures a real font.
+    """
+
+    if not isinstance(value, str):
+        raise TypeError("value must be a string")
+    total = 0.0
+    for character in _visible_text(value):
+        if character.isspace():
+            total += 0.25
+            continue
+        point = ord(character)
+        if any(low <= point <= high for low, high in _EM_CJK_RANGES):
+            total += 1.0
+        else:
+            total += 0.5
+    return total
+
+
+# A short UI label is the only case where a translation can overflow its box:
+# measured over the 646-segment How to Fish candidate, only segments whose source
+# is under 20em ever widened, and 11% of labels under 8em widened by up to 2x.
+# Longer lines always came back shorter (33-39%) because Chinese packs more
+# meaning per glyph, so a budget on dialogue would only misfire.
+_LENGTH_BUDGET_SOURCE_LIMIT_EM = 20.0
+# 4em of slack is ~4 Chinese glyphs.  Measured hit rate at 4.0em: 1/546 short
+# segments in the reference corpus and 0/492 in the no-reference corpus, and
+# that single hit was a genuine over-expansion ("360" -> "360度转体击杀").
+# A relative gate (target > 1.3 * source) was tested and rejected: it flagged
+# 36/546 segments, every one of them a correct translation ("sir" -> "长官。".
+_LENGTH_BUDGET_ALLOWANCE_EM = 4.0
 
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _METADATA_ECHO_RE = re.compile(
@@ -641,6 +695,28 @@ def translation_quality_issues(
                     + ", ".join(f"{t.source}->{t.target}" for t in missing[:3]),
                 )
             )
+    source_width = em_width(request.text)
+    if source_width < _LENGTH_BUDGET_SOURCE_LIMIT_EM and re.search(r"[\u3400-\u9fff]", target):
+        # The budget is calibrated on Chinese renderings of English labels, so it
+        # only applies when the result is actually Chinese.  Comparing widths
+        # against a non-CJK result would flag a translation that has not been
+        # produced yet (a stub or an untranslated echo) for the wrong reason.
+        target_width = em_width(target)
+        allowed = source_width + _LENGTH_BUDGET_ALLOWANCE_EM
+        if target_width > allowed:
+            # Warning, not error: at the calibrated threshold this fires on about
+            # 0.2% of short segments, and on a false positive an error would fall
+            # back to the English source, which is *wider* than the Chinese that
+            # tripped the gate.  The pipeline instead re-asks once for a shorter
+            # rendering and keeps this text when that repair fails.
+            issues.append(
+                TranslationQualityIssue(
+                    "length_budget_exceeded",
+                    "warning",
+                    f"short-label translation is {target_width:.1f}em wide, "
+                    f"budget is {allowed:.1f}em (source {source_width:.1f}em)",
+                )
+            )
     if _METADATA_ECHO_RE.search(target) or _TRANSLATION_LABEL_RE.search(target):
         issues.append(
             TranslationQualityIssue(
@@ -742,6 +818,9 @@ class TranslationRouter:
             request.target_language,
             request.context,
             request.reference_translation,
+            # A repair round asks for a different rendering of the same segment,
+            # so it must not be served from the cache entry of the first attempt.
+            request.retry_instruction,
         )
         cached = self._cache.get(key)
         if cached is not None:
@@ -791,6 +870,7 @@ __all__ = [
     "TranslationRequest",
     "TranslationResult",
     "TranslationRouter",
+    "em_width",
     "enforce_translation_quality",
     "has_terminal_punctuation",
     "with_terminal_punctuation",

@@ -171,7 +171,7 @@ def _ollama_health(ollama_url: str, timeout: float) -> dict[str, str]:
 
 def _request_payload(
     payload: Any,
-) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...], str | None, str | None]:
+) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...], str | None, str, str | None]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     required = ("segment_id", "text", "source_language", "target_language")
@@ -191,6 +191,9 @@ def _request_payload(
         not isinstance(reference_translation, str) or not reference_translation.strip()
     ):
         raise ValueError("reference_translation must be a non-empty string")
+    retry_instruction = payload.get("retry_instruction", "")
+    if not isinstance(retry_instruction, str):
+        raise ValueError("retry_instruction must be a string")
     request_model = payload.get("model")
     if request_model is not None and (
         not isinstance(request_model, str) or not _REQUEST_MODEL_RE.fullmatch(request_model)
@@ -204,6 +207,7 @@ def _request_payload(
         tuple(context),
         tuple(protected_tokens),
         reference_translation,
+        retry_instruction.strip(),
         request_model,
     )
 
@@ -616,6 +620,16 @@ def _known_ui_fallback(source: str) -> str | None:
     return _KNOWN_UI_TRANSLATIONS.get(normalized)
 
 
+_RESIDUAL_ENGLISH_RETRY_INSTRUCTION = (
+    "The previous attempt left English text untranslated. Translate every word, "
+    "including short slang, onomatopoeia, reactions, and repeated sounds, into "
+    "natural Simplified Chinese. Translate fish species, animal names, and game "
+    "creature names even when they are capitalized; translate weapon attachments "
+    "and UI labels too. Do not preserve them merely because they look like proper "
+    "names. Do not return the English source unchanged."
+)
+
+
 def _translate_with_retries(
     *,
     attempts: int = TRANSLATION_ATTEMPTS,
@@ -623,19 +637,21 @@ def _translate_with_retries(
 ) -> str:
     if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts <= 0:
         raise ValueError("attempts must be a positive integer")
+    # The caller may already have a repair instruction (the pipeline re-asks a
+    # segment that failed a specific quality gate).  Retries must add to that
+    # instruction rather than replace it, or the repair request would be turned
+    # into a generic "left English untranslated" retry.
+    base_instruction = str(kwargs.get("retry_instruction") or "").strip()
     last_error: RuntimeError | None = None
     attempts_made = 0
     for _attempt in range(attempts):
         attempts_made += 1
         call_kwargs = dict(kwargs)
         if _attempt:
-            call_kwargs["retry_instruction"] = (
-                "The previous attempt left English text untranslated. Translate every word, "
-                "including short slang, onomatopoeia, reactions, and repeated sounds, into "
-                "natural Simplified Chinese. Translate fish species, animal names, and game "
-                "creature names even when they are capitalized; translate weapon attachments "
-                "and UI labels too. Do not preserve them merely because they look like proper "
-                "names. Do not return the English source unchanged."
+            call_kwargs["retry_instruction"] = " ".join(
+                part
+                for part in (base_instruction, _RESIDUAL_ENGLISH_RETRY_INSTRUCTION)
+                if part
             )
         try:
             translation = _translate_with_ollama(**call_kwargs)
@@ -726,6 +742,7 @@ class TranslationHandler(BaseHTTPRequestHandler):
                         "context",
                         "protected_tokens",
                         "reference_translation",
+                        "retry_instruction",
                     ),
                     request_values,
                 )),

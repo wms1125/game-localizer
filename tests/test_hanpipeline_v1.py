@@ -634,5 +634,146 @@ class PipelineGlossaryTests(unittest.TestCase):
         self.assertTrue(all(batch == () for batch in provider.seen))
 
 
+class _BudgetRepairProvider:
+    """Too wide on the first attempt, on budget when re-asked with an instruction."""
+
+    WIDE = "360度转体击杀"
+    COMPACT = "转体击杀"
+
+    def __init__(self, *, wide_for: str = "360") -> None:
+        self.attempts: list[tuple[str, str]] = []
+        self._wide_for = wide_for
+
+    def translate(self, request):
+        self.attempts.append((request.text, request.retry_instruction))
+        if request.text != self._wide_for:
+            return TranslationResult("早上好。", "cloud", "test-model", 0.9)
+        if request.retry_instruction:
+            return TranslationResult(self.COMPACT, "cloud", "test-model", 0.9)
+        return TranslationResult(self.WIDE, "cloud", "test-model", 0.9)
+
+    def attempts_for(self, text: str) -> list[str]:
+        return [i for t, i in self.attempts if t == text]
+
+
+class _StubbornProvider:
+    """Always too wide, no matter how often it is asked."""
+
+    def __init__(self) -> None:
+        self.attempts: list[tuple[str, str]] = []
+
+    def translate(self, request):
+        self.attempts.append((request.text, request.retry_instruction))
+        if request.text != "360":
+            return TranslationResult("早上好。", "cloud", "test-model", 0.9)
+        return TranslationResult("360度转体击杀外加空中翻滚", "cloud", "test-model", 0.9)
+
+    def attempts_for(self, text: str) -> list[str]:
+        return [i for t, i in self.attempts if t == text]
+
+
+class PipelineRepairRoundTests(unittest.TestCase):
+    """A repairable warning must trigger exactly one targeted re-ask."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.project = self.root / "project"
+        (self.project / "data").mkdir(parents=True)
+        (self.project / "game.rpgproject").write_text("RPG Maker MV", encoding="utf-8")
+        (self.project / "data" / "Actors.json").write_text(
+            json.dumps([None, {"name": "Hero", "nickname": "", "profile": ""}]),
+            encoding="utf-8",
+        )
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "360",
+                    "events": [{"list": [{"code": 401, "parameters": ["Good morning"]}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.state_root = self.root / "state"
+
+    def _translate(self, provider, **kwargs):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            outcome = workflow.translate(
+                catalog,
+                TranslationRouter((provider,)),
+                **kwargs,
+            )
+            return outcome, workflow.project_store.list_segments()
+
+    def test_overwide_label_is_reasked_once_and_replaced(self):
+        provider = _BudgetRepairProvider()
+        outcome, segments = self._translate(provider)
+        # First attempt plus exactly one repair attempt for the wide label.
+        attempts = provider.attempts_for("360")
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(attempts[0], "")
+        self.assertIn("shorter", attempts[1])
+        # The compact repair is what ships, and it carries no warning.
+        shipped = [s for s in segments if s.source_text == "360"]
+        self.assertEqual(len(shipped), 1)
+        self.assertIn(_BudgetRepairProvider.COMPACT, shipped[0].target_text)
+        quality = shipped[0].metadata.get("translation_quality", [])
+        self.assertEqual([q["code"] for q in quality], [])
+        self.assertEqual(outcome.untranslated_count, 0)
+
+    def test_other_segments_are_not_reasked(self):
+        provider = _BudgetRepairProvider()
+        self._translate(provider)
+        self.assertEqual(len(provider.attempts_for("Good morning")), 1)
+        self.assertEqual(len(provider.attempts_for("Hero")), 1)
+
+    def test_stubborn_provider_keeps_first_attempt(self):
+        provider = _StubbornProvider()
+        _, segments = self._translate(provider)
+        self.assertEqual(len(provider.attempts_for("360")), 2)
+        shipped = [s for s in segments if s.source_text == "360"]
+        # Still over budget, so the repair is rejected and the original stands.
+        # No terminal punctuation: the source ("360") has none to copy.
+        self.assertEqual(shipped[0].target_text.strip(), "360度转体击杀外加空中翻滚")
+        codes = [q["code"] for q in shipped[0].metadata["translation_quality"]]
+        self.assertEqual(codes, ["length_budget_exceeded"])
+
+    def test_repair_rounds_zero_disables_the_reask(self):
+        provider = _BudgetRepairProvider()
+        _, segments = self._translate(provider, repair_rounds=0)
+        self.assertEqual(len(provider.attempts_for("360")), 1)
+        codes = [
+            q["code"]
+            for s in segments
+            if s.source_text == "360"
+            for q in s.metadata.get("translation_quality", [])
+        ]
+        self.assertEqual(codes, ["length_budget_exceeded"])
+
+    def test_clean_segments_are_never_reasked(self):
+        class _CleanProvider:
+            def __init__(self) -> None:
+                self.texts: list[str] = []
+
+            def translate(self, request):
+                self.texts.append(request.text)
+                return TranslationResult("早上好。", "cloud", "test-model", 0.9)
+
+        provider = _CleanProvider()
+        self._translate(provider)
+        # Every segment is asked exactly once: no repair round for clean output.
+        self.assertEqual(sorted(provider.texts), sorted({"Hero", "360", "Good morning"}))
+
+    def test_negative_repair_rounds_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._translate(_BudgetRepairProvider(), repair_rounds=-1)
+
+
 if __name__ == "__main__":
     unittest.main()

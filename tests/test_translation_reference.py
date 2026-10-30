@@ -148,8 +148,9 @@ class TranslationReferenceTests(unittest.TestCase):
             "target_language": "zh-CN",
             "reference_translation": "你好！",
         })
-        self.assertEqual(values[-2], "你好！")
-        self.assertIsNone(values[-1])
+        self.assertEqual(values[6], "你好！")
+        self.assertEqual(values[7], "")
+        self.assertIsNone(values[8])
 
 
 if __name__ == "__main__":

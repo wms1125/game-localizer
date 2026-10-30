@@ -431,6 +431,7 @@ class StructuredWorkflowSession:
         reference_translations: Mapping[str, str] | None = None,
         workers: int = 1,
         glossary: Glossary | None = None,
+        repair_rounds: int = 1,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -453,6 +454,7 @@ class StructuredWorkflowSession:
             reference_translations=reference_translations,
             workers=workers,
             glossary=glossary,
+            repair_rounds=repair_rounds,
         )
 
     def persisted_events(self, task_id: str) -> tuple[TaskEvent, ...]:
