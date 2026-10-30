@@ -63,6 +63,7 @@ from game_localizer.hanengine import (
 )
 from game_localizer.hanengine.multiengine import LocalizationCatalog
 from game_localizer.hanengine.glossary import Glossary
+from game_localizer.hanengine.memory import TranslationMemory, with_memory
 from game_localizer.hanengine.adapter_runtime import AdapterNotDetectedError
 from game_localizer.hanengine.auth import AuthError, UserStore, auth_payload
 from game_localizer.structured_workflow import (
@@ -364,6 +365,19 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--translation-memory",
+        help=(
+            "SQLite file that remembers accepted translations by source text, so a "
+            "second project or a re-extraction reuses them; defaults to "
+            "<state-root>/translation_memory.sqlite3"
+        ),
+    )
+    parser.add_argument(
+        "--no-translation-memory",
+        action="store_true",
+        help="translate every segment again instead of reusing remembered answers",
+    )
+    parser.add_argument(
         "--translated-catalog",
         help="optional path for the completed translated catalog JSON",
     )
@@ -373,7 +387,20 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _translation_router(args) -> TranslationRouter | None:
+def _translation_memory(args, state_root):
+    """Open the shared translation memory, honouring the CLI switches."""
+
+    if getattr(args, "no_translation_memory", False):
+        return None
+    configured = getattr(args, "translation_memory", None)
+    if configured:
+        return TranslationMemory(Path(configured).expanduser().resolve())
+    if state_root is None:
+        return None
+    return TranslationMemory(Path(state_root) / "translation_memory.sqlite3")
+
+
+def _translation_router(args, state_root=None):
     providers = []
     if args.dictionary:
         providers.append(
@@ -398,7 +425,13 @@ def _translation_router(args) -> TranslationRouter | None:
         )
     if args.reference_report and not args.local_model_endpoint:
         raise ValueError("--reference-report requires --local-model-endpoint")
-    return None if not providers else TranslationRouter(providers)
+    if not providers:
+        return None
+    router = TranslationRouter(providers)
+    # The memory wraps the router, so a remembered answer skips the dictionary
+    # and the model alike; the key carries the model name because a different
+    # model is allowed to word the same line differently.
+    return with_memory(router, _translation_memory(args, state_root))
 
 
 def _load_glossary(raw_path: str | None) -> "Glossary | None":
@@ -558,6 +591,16 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
     local_model_timeout = getattr(args, "local_model_timeout", 120.0)
     if local_model_timeout != 120.0:
         arguments.extend(["--local-model-timeout", str(local_model_timeout)])
+    translation_memory = getattr(args, "translation_memory", None)
+    if translation_memory:
+        arguments.extend(
+            [
+                "--translation-memory",
+                str(Path(translation_memory).expanduser().resolve()),
+            ]
+        )
+    if getattr(args, "no_translation_memory", False):
+        arguments.append("--no-translation-memory")
     reference_report = getattr(args, "reference_report", None)
     if reference_report:
         arguments.extend(
@@ -907,7 +950,7 @@ def run_engine(
             extracted = None
             translation = None
             if args.command == "localize":
-                router = _translation_router(args)
+                router = _translation_router(args, state_root)
                 if router is None:
                     raise ValueError(
                         "localize requires --dictionary, --local-model-endpoint, "
@@ -920,7 +963,7 @@ def run_engine(
                     f"(task={extracted.execution.task.task_id})"
                 )
             else:
-                router = _translation_router(args)
+                router = _translation_router(args, state_root)
 
             if catalog.engine_id != args.engine and args.engine != "auto":
                 raise ValueError("catalog engine does not match the requested engine")

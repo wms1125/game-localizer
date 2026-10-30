@@ -337,14 +337,23 @@ def _pending_requests(
 def _finish(
     request: TranslationRequest,
     translation: TranslationResult,
+    *,
+    provider: object | None = None,
 ) -> _SegmentTranslation:
-    """Apply the punctuation rule and the quality gate to one provider answer."""
+    """Apply the punctuation rule and the quality gate to one provider answer.
+
+    A translation memory is written here, after the gate, so a rejected answer is
+    never remembered; that is the only place that knows an answer was accepted.
+    """
 
     try:
         translation = with_terminal_punctuation(request, translation)
         issues = enforce_translation_quality(request, translation)
     except BaseException as exc:  # re-raised in order on the main thread
         return _SegmentTranslation(request=request, error=exc)
+    remember = getattr(provider, "remember", None)
+    if remember is not None:
+        remember(request, translation)
     return _SegmentTranslation(
         request=request,
         translation=translation,
@@ -367,7 +376,7 @@ def _translate_one(
         translation = provider.translate(request)
     except BaseException as exc:  # re-raised in order on the main thread
         return _SegmentTranslation(request=request, error=exc)
-    return _finish(request, translation)
+    return _finish(request, translation, provider=provider)
 
 
 def _translate_batch(
@@ -429,7 +438,7 @@ def _translate_batch(
         if answer is None:
             leftovers.append(request)
             continue
-        results[request.segment_id] = _finish(request, answer)
+        results[request.segment_id] = _finish(request, answer, provider=provider)
     if leftovers:
         results.update(
             _translate_pending(
