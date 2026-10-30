@@ -5,14 +5,19 @@ import math
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from .multiengine import extract_placeholders as extract_structured_placeholders
 from .glossary import Glossary, GlossaryTerm
-from .placeholders import mask_placeholders, restore_placeholders
+from .placeholders import (
+    mask_placeholders,
+    restore_placeholders,
+    sentinel_count,
+    sentinel_fragment_count,
+)
 
 
 @dataclass(frozen=True)
@@ -256,6 +261,22 @@ def _local_endpoint(endpoint: str) -> str:
     return endpoint
 
 
+def _batch_endpoint(endpoint: str) -> str:
+    """Derive the batch path from the single-segment endpoint.
+
+    The bridge serves ``/translate`` and ``/translate-batch`` from one process, so
+    a caller only configures the endpoint once.
+    """
+
+    parsed = urlsplit(endpoint)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/translate"):
+        path = f"{path[: -len('/translate')]}/translate-batch"
+    else:
+        path = f"{path}/translate-batch"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
 class LocalModelTranslationProvider:
     """Call a local model runtime using HanEngine's translation JSON contract.
 
@@ -284,22 +305,23 @@ class LocalModelTranslationProvider:
         self._timeout = float(timeout)
         self._provider_name = provider_name
         self._model_name = model_name
+        self._batch_endpoint = _batch_endpoint(self._endpoint)
 
-    def translate(self, request: TranslationRequest) -> TranslationResult:
-        if not isinstance(request, TranslationRequest):
-            raise TypeError("request must be a TranslationRequest")
-        # Send sentinels instead of raw placeholders.  A model that moves
-        # "{0}" around, or turns it into "（0）", cannot corrupt a token it
-        # never saw; the real text is restored from the response below.
-        masked = mask_placeholders(request.text, _placeholder_tokens(request.text))
-        payload = {
+    def _payload(self, request: TranslationRequest, masked_text: str) -> dict[str, object]:
+        tokens = sorted(_placeholder_tokens(request.text))
+        payload: dict[str, object] = {
             "segment_id": request.segment_id,
-            "text": masked.text,
+            "text": masked_text,
             "source_language": request.source_language,
             "target_language": request.target_language,
             "context": list(request.context),
-            "protected_tokens": sorted(_placeholder_tokens(request.text)),
+            "protected_tokens": tokens,
         }
+        if tokens:
+            # The text already carries sentinels instead of the real tokens, so a
+            # bridge that masks again would find nothing to mask and reject the
+            # request.  Saying so keeps one masker per request.
+            payload["placeholders_masked"] = True
         if request.reference_translation is not None:
             payload["reference_translation"] = request.reference_translation
         if request.glossary:
@@ -309,6 +331,89 @@ class LocalModelTranslationProvider:
             ]
         if request.retry_instruction:
             payload["retry_instruction"] = request.retry_instruction
+        return payload
+
+    def translate_batch(
+        self,
+        requests: Sequence[TranslationRequest],
+    ) -> dict[str, TranslationResult]:
+        """Translate several segments in one round trip.
+
+        Returns only the segments the runtime answered and accepted.  Segments it
+        could not align, or that came back with a broken placeholder or residual
+        English, are simply absent; the caller re-asks those one at a time, where
+        the tag-splitting and retry ladder live.
+        """
+
+        if not requests:
+            return {}
+        for request in requests:
+            if not isinstance(request, TranslationRequest):
+                raise TypeError("requests must contain TranslationRequest items")
+        masked_by_id: dict[str, object] = {}
+        segments: list[dict[str, object]] = []
+        for request in requests:
+            masked = mask_placeholders(request.text, _placeholder_tokens(request.text))
+            masked_by_id[request.segment_id] = masked
+            segments.append(self._payload(request, masked.text))
+        body = json.dumps(
+            {"segments": segments},
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        response = self._transport(
+            self._batch_endpoint,
+            {"Content-Type": "application/json", "Accept": "application/json"},
+            body,
+            self._timeout,
+        )
+        if response.status < 200 or response.status >= 300:
+            raise TranslationProviderError(
+                f"local model returned HTTP {response.status} for a batch request",
+                code="http_error",
+            )
+        try:
+            decoded = json.loads(response.body)
+            if not isinstance(decoded, Mapping):
+                raise ValueError
+            translations = decoded["translations"]
+            if not isinstance(translations, Mapping):
+                raise ValueError
+            provider = decoded.get("provider", self._provider_name)
+            model = decoded.get("model", self._model_name)
+            confidence = decoded.get("confidence", 0.0)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise TranslationProviderError(
+                "local model returned an invalid batch response",
+                code="invalid_response",
+            ) from exc
+        results: dict[str, TranslationResult] = {}
+        for segment_id, text in translations.items():
+            masked = masked_by_id.get(str(segment_id))
+            if masked is None or not isinstance(text, str):
+                continue
+            restored = restore_placeholders(masked, text)
+            if sentinel_count(restored) or sentinel_fragment_count(restored):
+                # Leave it out of the batch answer: the single path re-asks it and
+                # fails loudly there instead of shipping a raw sentinel.
+                continue
+            results[str(segment_id)] = TranslationResult(
+                restored,
+                provider,
+                model,
+                confidence,
+            )
+        return results
+
+    def translate(self, request: TranslationRequest) -> TranslationResult:
+        if not isinstance(request, TranslationRequest):
+            raise TypeError("request must be a TranslationRequest")
+        # Send sentinels instead of raw placeholders.  A model that moves
+        # "{0}" around, or turns it into "（0）", cannot corrupt a token it
+        # never saw; the real text is restored from the response below.
+        masked = mask_placeholders(request.text, _placeholder_tokens(request.text))
+        payload = self._payload(request, masked.text)
         body = json.dumps(
             payload,
             ensure_ascii=False,
@@ -371,6 +476,15 @@ class LocalModelTranslationProvider:
             confidence = decoded.get("confidence", 0.0)
             # Restore the original tokens before any downstream check touches them.
             text = restore_placeholders(masked, text)
+            leaked = sentinel_count(text) + sentinel_fragment_count(text)
+            if leaked:
+                # A sentinel the model garbled cannot be restored, and leaving it
+                # in the output would ship "ZqBZx" to the player.
+                raise TranslationProviderError(
+                    f"local model left {leaked} placeholder sentinel(s) unrestorable",
+                    code="placeholder_mismatch",
+                    failure_codes=("placeholder_mismatch",),
+                )
             result = TranslationResult(text, provider, model, confidence)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise TranslationProviderError(

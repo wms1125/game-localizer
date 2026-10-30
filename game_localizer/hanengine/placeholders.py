@@ -32,6 +32,9 @@ _SENTINEL_RE = re.compile(r"Zq[A-Za-z]\d*Zx")
 # lossy round trip does not turn one sentinel into another.
 _SENTINEL_ALPHABET = "BCDFGHJKLMNPQRSTVWX"
 
+# A truncated or otherwise mangled sentinel: the prefix, plus at most one letter.
+_SENTINEL_FRAGMENT_RE = re.compile(r"Zq[A-Za-z]?")
+
 
 @dataclass(frozen=True)
 class MaskedText:
@@ -123,9 +126,23 @@ def sentinel_count(value: str) -> int:
     return len(_SENTINEL_RE.findall(value))
 
 
+def sentinel_fragment_count(value: str) -> int:
+    """How many sentinel *fragments* a string contains.
+
+    A model that truncates ``ZqBZx`` into ``ZqB`` leaves a marker that cannot be
+    restored, and the strict token check would not notice because the original
+    token is simply gone.  Counting the bare prefix catches that case before the
+    text is shipped.  Case sensitive on purpose: ``Zq`` does not occur in English.
+    """
+
+    leftover = _SENTINEL_RE.sub("", value)
+    return len(_SENTINEL_FRAGMENT_RE.findall(leftover))
+
+
 __all__ = [
     "MaskedText",
     "mask_placeholders",
     "restore_placeholders",
     "sentinel_count",
+    "sentinel_fragment_count",
 ]

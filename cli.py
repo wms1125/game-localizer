@@ -355,6 +355,15 @@ def _add_pipeline_translation_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help=(
+            "segments packed into one provider request when the provider supports "
+            "batching; 1 sends one request per segment"
+        ),
+    )
+    parser.add_argument(
         "--translated-catalog",
         help="optional path for the completed translated catalog JSON",
     )
@@ -565,6 +574,9 @@ def _engine_retry_arguments(args, project: Path, state_root: Path, risk: RiskLev
     repair_rounds = getattr(args, "repair_rounds", 1)
     if repair_rounds != 1:
         arguments.extend(["--repair-rounds", str(repair_rounds)])
+    batch_size = getattr(args, "batch_size", 8)
+    if batch_size != 8:
+        arguments.extend(["--batch-size", str(batch_size)])
     token_env = getattr(args, "token_env", "HANENGINE_TRANSLATION_TOKEN")
     if token_env != "HANENGINE_TRANSLATION_TOKEN":
         arguments.extend(["--token-env", token_env])
@@ -929,6 +941,7 @@ def run_engine(
                     workers=getattr(args, "workers", 1),
                     glossary=glossary,
                     repair_rounds=getattr(args, "repair_rounds", 1),
+                    batch_size=getattr(args, "batch_size", 8),
                 )
                 catalog = translation.catalog
                 print(

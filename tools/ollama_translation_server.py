@@ -27,6 +27,8 @@ _ASCII_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _PRESERVED_ENGLISH_UNITS = frozenset({"kg"})
 _REQUEST_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
+MAX_BATCH_SEGMENTS = 64
+_BATCH_LINE_RE = re.compile(r"^(\d+)\s*[|｜:：]\s*(.+)$")
 
 _SHORT_EXPRESSION_FALLBACKS = {
     "bing bong": "叮咚",
@@ -169,9 +171,214 @@ def _ollama_health(ollama_url: str, timeout: float) -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _batch_request_payload(payload: Any) -> tuple[tuple[dict[str, Any], ...], str | None]:
+    """Validate one batch request.
+
+    A batch carries the same per-segment fields as a single request, in
+    ``segments``.  Only the cheap validation happens here; anything that needs
+    the model to have been called (line alignment, placeholder survival) is
+    decided after the answer comes back.
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    segments = payload.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise ValueError("segments must be a non-empty list")
+    if len(segments) > MAX_BATCH_SEGMENTS:
+        raise ValueError(f"segments must contain at most {MAX_BATCH_SEGMENTS} items")
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(segments):
+        if not isinstance(item, dict):
+            raise ValueError(f"segments[{index}] must be a JSON object")
+        (
+            segment_id,
+            text,
+            source_language,
+            target_language,
+            context,
+            protected_tokens,
+            reference_translation,
+            retry_instruction,
+            placeholders_masked,
+            _request_model,
+        ) = _request_payload(item)
+        if segment_id in seen:
+            raise ValueError(f"duplicate segment_id {segment_id!r}")
+        seen.add(segment_id)
+        items.append(
+            {
+                "segment_id": segment_id,
+                "text": text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "context": context,
+                "protected_tokens": protected_tokens,
+                "reference_translation": reference_translation,
+                "retry_instruction": retry_instruction,
+                "placeholders_masked": placeholders_masked,
+            }
+        )
+    request_model = payload.get("model")
+    if request_model is not None and (
+        not isinstance(request_model, str) or not _REQUEST_MODEL_RE.fullmatch(request_model)
+    ):
+        raise ValueError("model must match [A-Za-z0-9._:-]{1,80}")
+    return tuple(items), request_model
+
+
+def _batch_system_prompt(target_language: str) -> str:
+    return (
+        "You are a professional video game localization translator. "
+        f"Translate every segment into concise natural {target_language} suitable for a game. "
+        "The user message holds one segment per line, formatted as `n|text`, where n is an integer. "
+        "Return one line per input line, in the same order, formatted as `n|translation`. "
+        "Keep the integer n exactly as given. Never merge, split, drop, or reorder lines. "
+        "Do not output JSON, brackets, quotes, code fences, bullets, or commentary. "
+        "Do not add physical line breaks inside a translation. "
+        "Lines beginning with # are translator notes for one segment; follow them for that n only."
+    )
+
+
+def _parse_batch_answer(
+    answer: str,
+    expected: tuple[int, ...],
+) -> tuple[dict[int, str], list[int]]:
+    """Split a `n|translation` answer into parsed lines and unusable ones."""
+
+    parsed: dict[int, str] = {}
+    broken: list[int] = []
+    for line in answer.splitlines():
+        line = line.strip()
+        if not line or line.startswith("```"):
+            continue
+        match = _BATCH_LINE_RE.match(line)
+        if match is None:
+            continue
+        index = int(match.group(1))
+        value = match.group(2).strip().strip('"').strip()
+        if not value or index not in expected or index in parsed:
+            if index in parsed or index in expected:
+                broken.append(index)
+            continue
+        parsed[index] = value
+    for index in expected:
+        if index not in parsed and index not in broken:
+            broken.append(index)
+    return parsed, broken
+
+
+def _batch_notes(item: dict[str, Any], index: int) -> str:
+    """Per-segment guidance that the model must see but must not translate."""
+
+    notes: list[str] = []
+    reference = item.get("reference_translation")
+    if reference:
+        notes.append(f"# {index} reference wording, for style only: {reference}")
+    instruction = item.get("retry_instruction")
+    if instruction:
+        notes.append(f"# {index} correction: {instruction}")
+    context = item.get("context")
+    if context:
+        notes.append(f"# {index} surrounding dialogue: {' / '.join(context)}")
+    return "\n".join(notes)
+
+
+def _translate_batch_with_ollama(
+    *,
+    ollama_url: str,
+    model: str,
+    target_language: str,
+    timeout: float,
+    items: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Translate a group of segments in one model round trip.
+
+    Segments that the single-segment path would treat specially (rich-text tags,
+    physical line breaks, an explicit retry instruction) are reported as failures
+    instead of being forced through the batch protocol: the single path splits and
+    re-asks those, and doing that here would duplicate a lot of careful logic for
+    a segment shape that batching does not help anyway.
+    """
+
+    eligible: list[dict[str, Any]] = []
+    translations: dict[str, str] = {}
+    failures: dict[str, str] = {}
+    for item in items:
+        tokens = _placeholder_tokens(item["text"])
+        if (
+            "\n" in item["text"]
+            or "\r" in item["text"]
+            or any(token == r"\n" or token.startswith("<") for token in tokens)
+        ):
+            failures[item["segment_id"]] = "needs_single_request"
+            continue
+        eligible.append(item)
+    if not eligible:
+        return translations, failures
+
+    masked: list[tuple[dict[str, Any], str, tuple[str, ...], dict[str, str]]] = []
+    for item in eligible:
+        if item.get("placeholders_masked"):
+            masked.append((item, item["text"], (), {}))
+            continue
+        masked_text, markers, token_by_marker = _mask_protected_tokens(
+            item["text"], item["protected_tokens"]
+        )
+        masked.append((item, masked_text, markers, token_by_marker))
+
+    lines: list[str] = []
+    for index, (item, masked_text, _markers, _token_by_marker) in enumerate(masked):
+        lines.extend(
+            part
+            for part in (_batch_notes(item, index), f"{index}|{masked_text}")
+            if part
+        )
+    answer = _ollama_chat_raw(
+        ollama_url=ollama_url,
+        model=model,
+        system_prompt=_batch_system_prompt(target_language),
+        user_message="\n".join(lines),
+        timeout=timeout,
+    )
+    parsed, broken = _parse_batch_answer(answer, tuple(range(len(masked))))
+    for index in broken:
+        failures[masked[index][0]["segment_id"]] = "batch_line_missing"
+    for index, (item, _masked_text, markers, token_by_marker) in enumerate(masked):
+        if index not in parsed:
+            continue
+        segment_id = item["segment_id"]
+        if item.get("placeholders_masked"):
+            # Sentinels are the client's to restore; only the checks that need no
+            # restoration apply here.
+            if _needs_residual_english_retry(item["text"], parsed[index]):
+                failures[segment_id] = "residual_english"
+                continue
+            translations[segment_id] = parsed[index]
+            continue
+        try:
+            restored = _restore_protected_tokens(parsed[index], markers, token_by_marker)
+        except TranslationBridgeError as exc:
+            # One segment losing a marker must not sink its neighbours: report it
+            # and let the single-segment path re-ask it on its own.
+            failures[segment_id] = exc.code
+            continue
+        if not _preserves_placeholders(item["text"], restored):
+            failures[segment_id] = "placeholder_mismatch"
+            continue
+        if _needs_residual_english_retry(item["text"], restored):
+            failures[segment_id] = "residual_english"
+            continue
+        translations[segment_id] = restored
+    return translations, failures
+
+
 def _request_payload(
     payload: Any,
-) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...], str | None, str, str | None]:
+) -> tuple[
+    str, str, str, str, tuple[str, ...], tuple[str, ...], str | None, str, str | None, bool
+]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     required = ("segment_id", "text", "source_language", "target_language")
@@ -194,6 +401,9 @@ def _request_payload(
     retry_instruction = payload.get("retry_instruction", "")
     if not isinstance(retry_instruction, str):
         raise ValueError("retry_instruction must be a string")
+    placeholders_masked = payload.get("placeholders_masked", False)
+    if not isinstance(placeholders_masked, bool):
+        raise ValueError("placeholders_masked must be a boolean")
     request_model = payload.get("model")
     if request_model is not None and (
         not isinstance(request_model, str) or not _REQUEST_MODEL_RE.fullmatch(request_model)
@@ -208,6 +418,7 @@ def _request_payload(
         tuple(protected_tokens),
         reference_translation,
         retry_instruction.strip(),
+        placeholders_masked,
         request_model,
     )
 
@@ -330,6 +541,61 @@ def _restore_protected_tokens(
     for marker, token in token_by_marker.items():
         restored = restored.replace(marker, token)
     return restored
+
+
+def _ollama_chat_raw(
+    *,
+    ollama_url: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    timeout: float,
+) -> str:
+    """One model call with an explicit prompt, no per-segment framing."""
+
+    request_payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        # A batch answer is long, and a truncated batch is worse than a slow one.
+        "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": 4096},
+    }
+    body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        f"{ollama_url}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_body = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(512).decode("utf-8", errors="replace")
+        raise TranslationBridgeError(
+            "ollama_http_error",
+            f"Ollama returned HTTP {exc.code}: {detail}",
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise TranslationBridgeError(
+            "transport_error",
+            f"Ollama request failed: {type(exc).__name__}",
+        ) from exc
+    try:
+        decoded = json.loads(response_body)
+        answer = decoded["message"]["content"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise TranslationBridgeError(
+            "invalid_response", "Ollama returned an invalid chat response"
+        ) from exc
+    if not isinstance(answer, str) or not answer.strip():
+        raise TranslationBridgeError(
+            "empty_translation", "Ollama returned an empty batch answer"
+        )
+    return answer.strip()
 
 
 def _ollama_chat(
@@ -546,7 +812,34 @@ def _translate_with_ollama(
     reference_translation: str | None = None,
     timeout: float,
     retry_instruction: str = "",
+    placeholders_masked: bool = False,
 ) -> str:
+    if placeholders_masked:
+        # The client already replaced its placeholders with sentinels and will
+        # restore them itself, tolerating the spacing and case drift a model
+        # introduces.  Masking again here would find nothing to mask and then
+        # reject the request for a token set that no longer exists in the text.
+        # Do not echo the real tokens back into the prompt: the model has been
+        # known to paste a token it was told about even though the text carries a
+        # sentinel instead, and that duplicate is then unremovable.
+        return _ollama_chat(
+            ollama_url=ollama_url,
+            model=model,
+            segment_id=segment_id,
+            text=text,
+            source_language=source_language,
+            target_language=target_language,
+            context=context,
+            protected_tokens=(),
+            reference_translation=reference_translation,
+            timeout=timeout,
+            retry_instruction=retry_instruction,
+            instructions=(
+                "The text contains ASCII sentinels of the form Zq<letter><digits>Zx. "
+                "Copy every sentinel exactly as written, keep its position in the "
+                "sentence, and never translate, split, or reorder it."
+            ),
+        )
     source_tokens = _placeholder_tokens(text)
     if any(token == r"\n" or token.startswith("<") for token in source_tokens):
         return _translate_fragmented(
@@ -716,6 +1009,9 @@ class TranslationHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib HTTP handler API
+        if self.path == "/translate-batch":
+            self._handle_batch()
+            return
         if self.path != "/translate":
             self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
@@ -743,6 +1039,7 @@ class TranslationHandler(BaseHTTPRequestHandler):
                         "protected_tokens",
                         "reference_translation",
                         "retry_instruction",
+                        "placeholders_masked",
                     ),
                     request_values,
                 )),
@@ -750,6 +1047,60 @@ class TranslationHandler(BaseHTTPRequestHandler):
             self._write_json(
                 HTTPStatus.OK,
                 {"translation": translation, "provider": "ollama", "model": model},
+            )
+        except TranslationBridgeError as exc:
+            self._write_json(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                {
+                    "error_code": exc.code,
+                    "error": str(exc)[:1000],
+                    "retry_count": exc.retry_count,
+                },
+            )
+        except ValueError as exc:
+            self._write_json(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                {"error_code": "invalid_request", "error": str(exc)[:1000], "retry_count": 0},
+            )
+        except RuntimeError as exc:
+            self._write_json(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                {"error_code": "translation_error", "error": str(exc)[:1000], "retry_count": 0},
+            )
+
+    def _handle_batch(self) -> None:
+        """Translate many segments in one round trip.
+
+        Partial success is a normal outcome: the client is expected to re-ask the
+        segments listed in ``failures`` through the single-segment endpoint, where
+        tag splitting and the residual-English retry ladder live.
+        """
+
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+            if length < 0 or length > self.server.max_body_bytes:
+                raise ValueError("request body is too large or missing")
+            payload = json.loads(self.rfile.read(length))
+            items, request_model = _batch_request_payload(payload)
+            model = self.server.model
+            if self.server.accept_request_models and request_model:
+                model = request_model
+            target_language = items[0]["target_language"]
+            translations, failures = _translate_batch_with_ollama(
+                ollama_url=self.server.ollama_url,
+                model=model,
+                target_language=target_language,
+                timeout=self.server.timeout,
+                items=items,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "translations": translations,
+                    "failures": failures,
+                    "provider": "ollama",
+                    "model": model,
+                },
             )
         except TranslationBridgeError as exc:
             self._write_json(

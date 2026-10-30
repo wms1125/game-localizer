@@ -6,6 +6,7 @@ from game_localizer.hanengine.placeholders import (
     mask_placeholders,
     restore_placeholders,
     sentinel_count,
+    sentinel_fragment_count,
 )
 
 
@@ -92,6 +93,24 @@ class SentinelShapeTests(unittest.TestCase):
         self.assertEqual(len(set(masked.tokens)), 30)
         self.assertEqual(sentinel_count(masked.text), 30)
         self.assertEqual(restore_placeholders(masked, masked.text), text)
+
+
+class SentinelFragmentTests(unittest.TestCase):
+    """A truncated sentinel cannot be restored, so it must be countable."""
+
+    def test_intact_sentinel_is_not_a_fragment(self):
+        masked = mask_placeholders("Hold {0}", ("{0}",))
+        self.assertEqual(sentinel_fragment_count(masked.text), 0)
+
+    def test_truncated_sentinel_counts(self):
+        masked = mask_placeholders("Press {0} to sprint", ("{0}",))
+        sentinel = masked.text.split()[1]
+        truncated = sentinel[:-2]  # "ZqB" out of "ZqBZx"
+        self.assertEqual(sentinel_fragment_count(f"按{truncated}键冲刺"), 1)
+
+    def test_plain_chinese_has_no_fragments(self):
+        self.assertEqual(sentinel_fragment_count("按 Zq 键冲刺"), 1)
+        self.assertEqual(sentinel_fragment_count("没有占位符"), 0)
 
 
 if __name__ == "__main__":

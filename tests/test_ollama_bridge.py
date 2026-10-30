@@ -81,7 +81,8 @@ class OllamaBridgeTests(unittest.TestCase):
         self.assertEqual(values[0], "unity:1")
         self.assertEqual(values[4], ("HUD",))
         self.assertEqual(values[7], "")
-        self.assertIsNone(values[8])
+        self.assertFalse(values[8])
+        self.assertIsNone(values[9])
 
     def test_request_model_field_is_validated_and_optional(self):
         values = _request_payload(
@@ -93,7 +94,7 @@ class OllamaBridgeTests(unittest.TestCase):
                 "model": "qwen2.5:7b",
             }
         )
-        self.assertEqual(values[8], "qwen2.5:7b")
+        self.assertEqual(values[9], "qwen2.5:7b")
         with self.assertRaisesRegex(ValueError, "model must match"):
             _request_payload(
                 {
@@ -162,6 +163,62 @@ class OllamaBridgeTests(unittest.TestCase):
             )
 
         self.assertEqual(result, "复活(按住 {0})")
+
+    def test_client_masked_sentinels_are_not_masked_twice(self):
+        seen: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            payload = json.loads(request.data)
+            seen.append(payload["messages"][1]["content"])
+            return _Response(
+                json.dumps(
+                    {"message": {"content": "复活 (按住 ZqBZx)"}}, ensure_ascii=False
+                ).encode("utf-8")
+            )
+
+        with patch("tools.ollama_translation_server.urllib.request.urlopen", fake_urlopen):
+            result = _translate_with_ollama(
+                ollama_url="http://127.0.0.1:11434",
+                model="qwen2.5:3b",
+                segment_id="unity:pre-masked",
+                text="Revive (Hold ZqBZx)",
+                source_language="en",
+                target_language="zh-CN",
+                context=(),
+                protected_tokens=("{0}",),
+                timeout=30.0,
+                placeholders_masked=True,
+            )
+
+        # The sentinel reaches the model untouched and comes back to the client,
+        # which restores it; the bridge must not reject the request or rewrite it.
+        self.assertIn("ZqBZx", seen[0])
+        self.assertEqual(result, "复活 (按住 ZqBZx)")
+
+    def test_pre_masked_requests_are_allowed_to_carry_no_visible_tokens(self):
+        values = _request_payload(
+            {
+                "segment_id": "unity:pre-masked",
+                "text": "Revive (Hold ZqBZx)",
+                "source_language": "en",
+                "target_language": "zh-CN",
+                "protected_tokens": ["{0}"],
+                "placeholders_masked": True,
+            }
+        )
+        self.assertTrue(values[-2])
+
+    def test_placeholders_masked_must_be_a_boolean(self):
+        with self.assertRaisesRegex(ValueError, "placeholders_masked must be a boolean"):
+            _request_payload(
+                {
+                    "segment_id": "unity:bad-flag",
+                    "text": "Revive",
+                    "source_language": "en",
+                    "target_language": "zh-CN",
+                    "placeholders_masked": "yes",
+                }
+            )
 
     def test_translation_request_and_response_preserve_rich_text_tags(self):
         responses = [

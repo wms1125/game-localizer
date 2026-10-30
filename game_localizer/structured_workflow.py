@@ -40,6 +40,7 @@ from game_localizer.hanengine.multiengine import (
 )
 from game_localizer.hanengine.segments import JsonValue
 from game_localizer.hanengine.pipeline import (
+    DEFAULT_BATCH_SIZE,
     HanPipelineV1,
     PipelineTranslationOutcome,
     catalog_segments,
@@ -432,6 +433,7 @@ class StructuredWorkflowSession:
         workers: int = 1,
         glossary: Glossary | None = None,
         repair_rounds: int = 1,
+        batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> PipelineTranslationOutcome:
         if not isinstance(catalog, LocalizationCatalog):
             raise TypeError("catalog must be a LocalizationCatalog")
@@ -455,6 +457,7 @@ class StructuredWorkflowSession:
             workers=workers,
             glossary=glossary,
             repair_rounds=repair_rounds,
+            batch_size=batch_size,
         )
 
     def persisted_events(self, task_id: str) -> tuple[TaskEvent, ...]:

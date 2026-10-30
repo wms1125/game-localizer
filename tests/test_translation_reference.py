@@ -150,7 +150,8 @@ class TranslationReferenceTests(unittest.TestCase):
         })
         self.assertEqual(values[6], "你好！")
         self.assertEqual(values[7], "")
-        self.assertIsNone(values[8])
+        self.assertFalse(values[8])
+        self.assertIsNone(values[9])
 
 
 if __name__ == "__main__":
