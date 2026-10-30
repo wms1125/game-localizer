@@ -18,6 +18,7 @@ from game_localizer.hanengine import (
     UnrealExtractor,
     extract_placeholders,
 )
+from game_localizer.hanengine.multiengine import _read_text
 
 
 class MultiEnginePipelineTests(unittest.TestCase):
@@ -533,6 +534,45 @@ class MultiEnginePipelineTests(unittest.TestCase):
                     1,
                 )
             self.assertIn("\u6d4b\u8bd5", (output / "data" / "System.json").read_text(encoding="utf-8"))
+
+
+class TextEncodingTests(unittest.TestCase):
+    """A decode that only appears to work must not reach the catalog.
+
+    EUC-JP, GB18030, Big5 and CP949 byte streams almost always decode without
+    raising as CP932 or UTF-16, producing halfwidth katakana and private-use
+    glyphs instead of an error.  Reporting that as text is worse than failing:
+    the garbage would be extracted, translated and shipped.
+    """
+
+    def _read(self, data: bytes) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "resource.txt"
+            path.write_bytes(data)
+            return _read_text(path)
+
+    def test_utf8_is_read_verbatim(self):
+        self.assertEqual(self._read("\u4f60\u597d，世界".encode("utf-8")), "\u4f60\u597d，世界")
+
+    def test_utf8_bom_is_not_kept(self):
+        self.assertEqual(self._read("\u4f60\u597d".encode("utf-8-sig")), "\u4f60\u597d")
+
+    def test_cp932_is_read_verbatim(self):
+        text = "こんにちは、世界。"
+        self.assertEqual(self._read(text.encode("cp932")), text)
+
+    def test_utf16_is_read_verbatim(self):
+        text = "こんにちは、世界。"
+        self.assertEqual(self._read(text.encode("utf-16")), text)
+
+    def test_euc_jp_fails_instead_of_returning_private_use_garbage(self):
+        with self.assertRaises(MultiEngineError) as caught:
+            self._read("こんにちは、世界。".encode("euc_jp"))
+        self.assertIn("unable to decode text resource", str(caught.exception))
+
+    def test_gb18030_fails_instead_of_returning_private_use_garbage(self):
+        with self.assertRaises(MultiEngineError):
+            self._read("\u4f60\u597d，世界".encode("gb18030"))
 
 
 if __name__ == "__main__":

@@ -160,14 +160,42 @@ def _validate_placeholders(source: str, target: str) -> None:
         raise MultiEngineError("translation changes placeholders")
 
 
+_PRIVATE_USE_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
+
+
+def _has_private_use(text: str) -> bool:
+    """True when the decode only *appeared* to succeed.
+
+    Every engine this adapter family supports writes UTF-8, so the legacy
+    fallbacks below only ever fire on a foreign file.  Those fallbacks are
+    dangerous in one specific way: EUC-JP, GB18030, Big5 and CP949 bytes
+    nearly always decode without error as CP932 or UTF-16, and the result is
+    halfwidth katakana plus private-use glyphs rather than an exception.
+    Private-use code points are the one unambiguous fingerprint of that
+    mistake -- no real script contains them -- so a candidate that produces
+    them is rejected instead of quietly entering the catalog.
+    """
+    for character in text:
+        code = ord(character)
+        for low, high in _PRIVATE_USE_RANGES:
+            if low <= code <= high:
+                return True
+    return False
+
+
 def _read_text(path: Path) -> str:
     data = path.read_bytes()
     for encoding in ("utf-8-sig", "utf-8", "cp932", "utf-16"):
         try:
-            return data.decode(encoding)
+            text = data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise MultiEngineError(f"unable to decode text resource: {path.name}")
+        if not _has_private_use(text):
+            return text
+    raise MultiEngineError(
+        f"unable to decode text resource: {path.name} "
+        "(no UTF-8/CP932/UTF-16 reading is free of private-use glyphs)"
+    )
 
 
 def _relative(path: Path, root: Path) -> str:
