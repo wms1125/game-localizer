@@ -235,7 +235,7 @@ class CloudTranslationProvider:
             text = decoded["translation"]
             provider = decoded.get("provider", "cloud")
             model = decoded.get("model", "unknown")
-            confidence = decoded.get("confidence", 0.0)
+            confidence = decoded.get("confidence", _UNREPORTED_CONFIDENCE)
             text = restore_placeholders(masked, text)
             result = TranslationResult(text, provider, model, confidence)
         except (KeyError, TypeError, ValueError) as exc:
@@ -382,7 +382,7 @@ class LocalModelTranslationProvider:
                 raise ValueError
             provider = decoded.get("provider", self._provider_name)
             model = decoded.get("model", self._model_name)
-            confidence = decoded.get("confidence", 0.0)
+            confidence = decoded.get("confidence", _UNREPORTED_CONFIDENCE)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise TranslationProviderError(
                 "local model returned an invalid batch response",
@@ -473,7 +473,7 @@ class LocalModelTranslationProvider:
             text = decoded["translation"]
             provider = decoded.get("provider", self._provider_name)
             model = decoded.get("model", self._model_name)
-            confidence = decoded.get("confidence", 0.0)
+            confidence = decoded.get("confidence", _UNREPORTED_CONFIDENCE)
             # Restore the original tokens before any downstream check touches them.
             text = restore_placeholders(masked, text)
             leaked = sentinel_count(text) + sentinel_fragment_count(text)
@@ -492,6 +492,15 @@ class LocalModelTranslationProvider:
                 code="invalid_response",
             ) from exc
         return result
+
+
+# Providers that never score their own output must not be reported as unsure.
+# The local Ollama bridge returns only {translation, provider, model}; reading the
+# absent field as 0.0 made low_confidence fire on every single segment, which
+# filled the review queue (4/4 in a smoke run, 189/646 on the real corpus) and
+# buried the warnings that do carry information.
+_UNREPORTED_CONFIDENCE = 1.0
+_LOW_CONFIDENCE_THRESHOLD = 0.45
 
 
 _PERCENT_PLACEHOLDER_RE = re.compile(r"%(?:\d+\$)?[A-Za-z]|%\d+")
@@ -873,12 +882,12 @@ def translation_quality_issues(
                         + ", ".join(mixed_words),
                     )
                 )
-        if result.confidence < 0.45:
+        if result.confidence < _LOW_CONFIDENCE_THRESHOLD:
             issues.append(
                 TranslationQualityIssue(
                     "low_confidence",
                     "warning",
-                    f"model confidence {result.confidence:.2f} is below 0.45",
+                    f"model confidence {result.confidence:.2f} is below {_LOW_CONFIDENCE_THRESHOLD}",
                 )
             )
         reference = request.reference_translation

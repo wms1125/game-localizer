@@ -320,5 +320,60 @@ class PipelineBatchTests(unittest.TestCase):
         self.assertEqual(context.checkpoints, 3)
 
 
+class UnreportedConfidenceTests(unittest.TestCase):
+    """A provider that never scores itself must not be reported as unsure."""
+
+    def test_batch_answer_without_confidence_is_not_low_confidence(self):
+        transport = _RecordingTransport(
+            lambda url, payload: HttpResponse(
+                200,
+                "application/json",
+                json.dumps(
+                    {"translations": {"a": "开始游戏"}, "provider": "fake", "model": "fake"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+        )
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:9/translate", transport=transport
+        )
+        results = provider.translate_batch([_request("a", "Start Game")])
+        self.assertEqual(results["a"].confidence, 1.0)
+
+    def test_single_answer_without_confidence_is_not_low_confidence(self):
+        transport = _RecordingTransport(
+            lambda url, payload: HttpResponse(
+                200,
+                "application/json",
+                json.dumps(
+                    {"translation": "开始游戏", "provider": "fake", "model": "fake"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+        )
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:9/translate", transport=transport
+        )
+        result = provider.translate(_request("a", "Start Game"))
+        self.assertEqual(result.confidence, 1.0)
+
+    def test_reported_low_confidence_is_still_reported(self):
+        transport = _RecordingTransport(
+            lambda url, payload: HttpResponse(
+                200,
+                "application/json",
+                json.dumps(
+                    {"translation": "开始游戏", "provider": "fake", "model": "fake", "confidence": 0.2},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+        )
+        provider = LocalModelTranslationProvider(
+            "http://127.0.0.1:9/translate", transport=transport
+        )
+        result = provider.translate(_request("a", "Start Game"))
+        self.assertEqual(result.confidence, 0.2)
+
+
 if __name__ == "__main__":
     unittest.main()
