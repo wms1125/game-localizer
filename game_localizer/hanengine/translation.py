@@ -125,6 +125,7 @@ class TranslationProviderError(RuntimeError):
         code: str = "provider_error",
         failure_codes: Iterable[str] = (),
         retry_count: int = 0,
+        issue: object | None = None,
     ) -> None:
         super().__init__(message)
         if not isinstance(code, str) or not code:
@@ -136,6 +137,10 @@ class TranslationProviderError(RuntimeError):
         if isinstance(retry_count, bool) or not isinstance(retry_count, int) or retry_count < 0:
             raise ValueError("retry_count must be a non-negative integer")
         self.retry_count = retry_count
+        # The quality issue that caused the rejection, when one exists.  The
+        # router aggregates provider failures into one error, and without this
+        # the repair round can no longer tell *why* the segment was rejected.
+        self.issue = issue
 
 
 class TranslationNotFoundError(TranslationProviderError):
@@ -626,6 +631,38 @@ _TRAILING_RICH_TEXT_RE = re.compile(r"</?[A-Za-z][^<>]*>\s*$")
 # the string table shows up in-game as a box and cannot be fixed after build.
 _REPLACEMENT_CHARACTER = "\ufffd"
 
+# Characters whose Simplified counterpart is a different codepoint, so finding
+# one in a zh-CN catalog is always wrong.  Measured on the How to Fish corpus
+# (573 no-reference segments): 10 segments shipped Traditional glyphs such as
+# 歡迎來到黃金鈎魚賭場 / 查看浮動 / 鯉魚游去.  A model asked for Simplified
+# Chinese still emits these because the two scripts share most vocabulary.
+# Kept as a guard, not a converter: it reports and triggers a re-ask.
+_TRADITIONAL_ONLY = frozenset(
+    "這們個時後來島歡黃隻動視檢體開關點魚貓龍語說話麼樣對學國會員場車東長門問間頭題風飛"
+    "飲買賣貴錢銀鐵鋼鐘陣陽陰難雙雜雞馬鳥麗龜臺灣灣蘋葉華萬與專業絲兩嚴喪豐臨為"
+    "舉義烏樂喬習鄉書爭於虧雲亞產畝親億僅從倉儀價眾優夥傘偉傳傷倫偽餘傭"
+    "俠侶偵側僑儉兒兌黨蘭興舊艙艦藝節範築簡簽籃籌籠粵"
+    "糞糧緊縣總績織繡繩繪繼續纏纖纜網羅罰罷羨聖聞聯聰聲職聽肅腸膚腎腫脹脅"
+    "膽勝膠脈臟莖萊獲蕭薩藍藥蘇蘊處虛蟲蠻補裝裡製複褲襲見觀規覓覺覽"
+    "計訂認討讓訓議訊記講論設訪證評識譯詩該詳誇誌誰課調談請諒諮諾謀謂"
+    "謝謠謙譜護讀變讚艷貝負財貢貧貨販貪責貸費貼貿賀賄資賊賓賜賞賠"
+    "賴購賽贈贊贏趙趕趨踐躍軀軌軍軒軟較載輔輕輛輝輪輸轉轟跡蹤顯驚髮鬥鬧"
+    "鬱魯鮮鯉鯨鳳鳴鴻鵲鷹鹽麥麵黴齊齋齒齡"
+)
+
+# Target-language labels that mean "Simplified Chinese" for the check above.
+_SIMPLIFIED_CHINESE_TARGETS = frozenset(
+    {"zh-cn", "zh_cn", "zh-hans", "zh_hans", "zh-hans-cn", "simplified chinese"}
+)
+
+
+def traditional_characters(value: str) -> tuple[str, ...]:
+    """Return the Traditional-only characters found in ``value``, sorted."""
+
+    if not isinstance(value, str):
+        raise TypeError("value must be a string")
+    return tuple(sorted({character for character in value if character in _TRADITIONAL_ONLY}))
+
 
 def has_terminal_punctuation(value: str) -> bool:
     """Return whether visible text ends in sentence punctuation."""
@@ -760,6 +797,17 @@ def translation_quality_issues(
                 "translation contains U+FFFD, so characters were already lost",
             )
         )
+    if request.target_language.strip().casefold() in _SIMPLIFIED_CHINESE_TARGETS:
+        traditional = traditional_characters(target)
+        if traditional:
+            issues.append(
+                TranslationQualityIssue(
+                    "traditional_chinese",
+                    "error",
+                    "translation uses Traditional characters in a Simplified Chinese target: "
+                    + " ".join(traditional[:8]),
+                )
+            )
     source_breaks = tuple(re.findall(r"\r\n|\r|\n", request.text))
     target_breaks = tuple(re.findall(r"\r\n|\r|\n", target))
     if source_breaks != target_breaks:
@@ -952,6 +1000,7 @@ class TranslationRouter:
         failure_codes: list[str] = []
         retry_count = 0
         misses = 0
+        rejected: object | None = None
         for provider in self._providers:
             try:
                 result = provider.translate(request)
@@ -964,6 +1013,8 @@ class TranslationRouter:
                 failures.append(f"{exc.code}:{type(exc).__name__}")
                 failure_codes.extend(exc.failure_codes or (exc.code,))
                 retry_count += exc.retry_count
+                if getattr(exc, "issue", None) is not None:
+                    rejected = exc.issue
             except Exception as exc:
                 failures.append(f"provider_error:{type(exc).__name__}")
                 failure_codes.append("provider_error")
@@ -974,6 +1025,7 @@ class TranslationRouter:
             code="all_providers_failed",
             failure_codes=tuple(dict.fromkeys(failure_codes)),
             retry_count=retry_count,
+            issue=rejected,
         )
 
     def translate_many(self, requests: Iterable[TranslationRequest]) -> tuple[TranslationResult, ...]:
@@ -996,6 +1048,7 @@ __all__ = [
     "em_width",
     "enforce_translation_quality",
     "has_terminal_punctuation",
+    "traditional_characters",
     "with_terminal_punctuation",
     "translation_quality_issues",
 ]

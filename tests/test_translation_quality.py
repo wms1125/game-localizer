@@ -196,6 +196,80 @@ class GarbledCharacterTests(unittest.TestCase):
         self.assertIn("garbled_replacement_character", FALLBACK_ERROR_CODES)
 
 
+class TraditionalChineseTests(unittest.TestCase):
+    """A zh-CN catalog must never ship Traditional-only glyphs."""
+
+    def test_shipped_traditional_lines_are_rejected(self):
+        # Real rows from the no-reference How to Fish run.
+        for source, target in (
+            ("welcome to Lucky Bait Casino", "歡迎來到黃金鈎魚賭場"),
+            ("View Bobbing", "查看浮動"),
+            ("Oarfish", "鯨魚"),
+        ):
+            issues = translation_quality_issues(_request(source), _result(target))
+            codes = {issue.code: issue.severity for issue in issues}
+            self.assertEqual(codes.get("traditional_chinese"), "error", target)
+
+    def test_simplified_translation_passes(self):
+        issues = translation_quality_issues(_request("Hello"), _result("你好，欢迎光临。"))
+        self.assertNotIn("traditional_chinese", {issue.code for issue in issues})
+
+    def test_shared_characters_are_not_flagged(self):
+        # 果 / 食 / 鬼 exist in both scripts; these renderings are Simplified.
+        for text in ("血液效果", "美味的食材", "魔鬼鱼", "吸血鬼"):
+            issues = translation_quality_issues(_request("x"), _result(text))
+            self.assertNotIn("traditional_chinese", {issue.code for issue in issues}, text)
+
+    def test_traditional_target_is_not_checked(self):
+        request = TranslationRequest("unity:1", "Hello", "en", "zh-TW")
+        issues = translation_quality_issues(request, _result("歡迎光臨"))
+        self.assertNotIn("traditional_chinese", {issue.code for issue in issues})
+
+    def test_it_is_in_the_fallback_and_repair_sets(self):
+        from game_localizer.hanengine.pipeline import (
+            FALLBACK_ERROR_CODES,
+            REPAIRABLE_ERROR_CODES,
+        )
+
+        self.assertIn("traditional_chinese", FALLBACK_ERROR_CODES)
+        self.assertIn("traditional_chinese", REPAIRABLE_ERROR_CODES)
+
+    def test_traditional_characters_helper(self):
+        from game_localizer.hanengine.translation import traditional_characters
+
+        self.assertEqual(traditional_characters("查看浮動"), ("動",))
+        self.assertEqual(traditional_characters("你好"), ())
+        with self.assertRaises(TypeError):
+            traditional_characters(1)
+
+
+class RouterQualityFailureTests(unittest.TestCase):
+    """The router must keep *why* a segment was rejected.
+
+    A router folds every provider failure into one aggregate error.  Without the
+    surviving quality issue the repair round cannot tell a fixable rendering
+    problem from a dead endpoint, and every targeted re-ask silently stops
+    happening.
+    """
+
+    def test_aggregate_error_carries_the_quality_issue(self):
+        from game_localizer.hanengine.translation import (
+            TranslationProviderError,
+            TranslationRouter,
+        )
+
+        class _TraditionalProvider:
+            def translate(self, request):
+                return TranslationResult("查看浮動", "local-model", "qwen2.5:3b", 1.0)
+
+        router = TranslationRouter((_TraditionalProvider(),))
+        with self.assertRaises(TranslationProviderError) as caught:
+            router.translate(_request("View Bobbing"))
+        self.assertEqual(caught.exception.code, "all_providers_failed")
+        self.assertIn("traditional_chinese", caught.exception.failure_codes)
+        self.assertEqual(getattr(caught.exception.issue, "code", None), "traditional_chinese")
+
+
 class GlossaryViolationTests(unittest.TestCase):
     """A pinned term is a deterministic contract, not a suggestion.
 

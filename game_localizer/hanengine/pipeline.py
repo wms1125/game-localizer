@@ -20,6 +20,7 @@ from .translation import (
     TranslationRequest,
     TranslationResult,
     enforce_translation_quality,
+    traditional_characters,
     with_terminal_punctuation,
 )
 
@@ -64,6 +65,7 @@ FALLBACK_ERROR_CODES = frozenset(
         "rich_text_tag_order_mismatch",
         "rich_text_body_duplication",
         "garbled_replacement_character",
+        "traditional_chinese",
         "glossary_violation",
     }
 )
@@ -80,6 +82,7 @@ REPAIRABLE_ERROR_CODES = frozenset(
         "placeholder_mismatch",
         "glossary_violation",
         "metadata_contamination",
+        "traditional_chinese",
     }
 )
 
@@ -114,6 +117,10 @@ _REPAIR_INSTRUCTIONS = {
     "length_budget_exceeded": (
         "The previous attempt is too wide for its UI label. Render it shorter while "
         "keeping the meaning: this string sits in a small button or caption."
+    ),
+    "traditional_chinese": (
+        "The previous attempt used Traditional Chinese characters. Write the same "
+        "meaning in Simplified Chinese only: every character must be the Simplified form."
     ),
 }
 
@@ -474,11 +481,42 @@ def _repair_instruction(item: _SegmentTranslation) -> str | None:
 
     error_code = getattr(item.error, "code", None)
     if isinstance(error_code, str) and error_code in REPAIRABLE_ERROR_CODES:
-        return _REPAIR_INSTRUCTIONS[error_code]
+        return _named_repair_instruction(error_code, item)
+    # A provider router aggregates every failure into one error, so the code that
+    # actually rejected the segment arrives separately from the aggregate code.
+    issue = getattr(item.error, "issue", None)
+    issue_code = getattr(issue, "code", None)
+    if isinstance(issue_code, str) and issue_code in REPAIRABLE_ERROR_CODES:
+        return _named_repair_instruction(issue_code, item, issue=issue)
     for issue in item.quality_issues:
         if issue.severity == "warning" and issue.code in REPAIRABLE_WARNING_CODES:
             return _REPAIR_INSTRUCTIONS[issue.code]
     return None
+
+
+def _named_repair_instruction(
+    code: str, item: _SegmentTranslation, *, issue: object | None = None
+) -> str:
+    """Add the offending characters to a repair instruction when we know them.
+
+    Telling the model which characters it got wrong is far more effective than
+    asking it in general terms to use Simplified Chinese, and the characters are
+    already known from the gate that rejected the attempt.
+    """
+
+    instruction = _REPAIR_INSTRUCTIONS[code]
+    if code != "traditional_chinese":
+        return instruction
+    text = getattr(item.translation, "text", "")
+    offenders = traditional_characters(text) if isinstance(text, str) else ()
+    if not offenders:
+        # The router path loses the rejected text, but the issue message already
+        # lists the characters after its final colon.
+        message = str(getattr(issue, "message", "") or "")
+        offenders = tuple(message.rsplit(": ", 1)[-1].split()) if ": " in message else ()
+    if not offenders:
+        return instruction
+    return f"{instruction} The Traditional characters were: {' '.join(offenders[:8])}."
 
 
 def _adopts_repair(candidate: _SegmentTranslation, original: _SegmentTranslation) -> bool:

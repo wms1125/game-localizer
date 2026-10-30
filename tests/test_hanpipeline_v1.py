@@ -775,5 +775,86 @@ class PipelineRepairRoundTests(unittest.TestCase):
             self._translate(_BudgetRepairProvider(), repair_rounds=-1)
 
 
+class _TraditionalProvider:
+    """Ships Traditional glyphs first, Simplified when told which ones were wrong."""
+
+    TRADITIONAL = "查看浮動"
+    SIMPLIFIED = "查看浮动"
+
+    def __init__(self) -> None:
+        self.attempts: list[tuple[str, str]] = []
+
+    def translate(self, request):
+        self.attempts.append((request.text, request.retry_instruction))
+        if request.text != "360":
+            return TranslationResult("早上好。", "cloud", "test-model", 0.9)
+        if request.retry_instruction:
+            return TranslationResult(self.SIMPLIFIED, "cloud", "test-model", 0.9)
+        return TranslationResult(self.TRADITIONAL, "cloud", "test-model", 0.9)
+
+    def attempts_for(self, text: str) -> list[str]:
+        return [i for t, i in self.attempts if t == text]
+
+
+class PipelineTraditionalChineseTests(unittest.TestCase):
+    """A zh-CN run must not ship Traditional glyphs, and must self-correct once."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.project = self.root / "project"
+        (self.project / "data").mkdir(parents=True)
+        (self.project / "game.rpgproject").write_text("RPG Maker MV", encoding="utf-8")
+        (self.project / "data" / "Actors.json").write_text(
+            json.dumps([None, {"name": "Hero", "nickname": "", "profile": ""}]),
+            encoding="utf-8",
+        )
+        (self.project / "data" / "Map001.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "360",
+                    "events": [{"list": [{"code": 401, "parameters": ["Good morning"]}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.state_root = self.root / "state"
+
+    def _translate(self, provider, **kwargs):
+        with StructuredWorkflowSession(
+            self.project,
+            engine_id="rpg_maker_mv",
+            state_root=self.state_root,
+        ) as workflow:
+            catalog = workflow.extract().catalog
+            outcome = workflow.translate(catalog, TranslationRouter((provider,)), **kwargs)
+            return outcome, workflow.project_store.list_segments()
+
+    def test_traditional_output_is_reasked_with_the_named_characters(self):
+        provider = _TraditionalProvider()
+        outcome, segments = self._translate(provider)
+        attempts = provider.attempts_for("360")
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(attempts[0], "")
+        self.assertIn("Traditional Chinese", attempts[1])
+        self.assertIn("動", attempts[1])
+        shipped = [s for s in segments if s.source_text == "360"]
+        self.assertEqual(shipped[0].target_text, _TraditionalProvider.SIMPLIFIED)
+        self.assertEqual(
+            [q["code"] for q in shipped[0].metadata.get("translation_quality", [])], []
+        )
+        self.assertEqual(outcome.untranslated_count, 0)
+
+    def test_without_the_repair_round_the_segment_falls_back(self):
+        provider = _TraditionalProvider()
+        outcome, segments = self._translate(provider, repair_rounds=0)
+        self.assertEqual(len(provider.attempts_for("360")), 1)
+        shipped = [s for s in segments if s.source_text == "360"]
+        # Falling back to the English source is the safe outcome: never ship 繁体.
+        self.assertIsNone(shipped[0].target_text)
+        self.assertEqual(outcome.untranslated_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
