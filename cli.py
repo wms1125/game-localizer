@@ -976,6 +976,8 @@ def run_engine(
                     output_options["godot_font_paths"] = configured_fonts
                 elif selected_engine in {"rpg_maker_mv", "rpg_maker_mz"}:
                     output_options["rpg_maker_font_paths"] = configured_fonts
+                elif selected_engine == "unity":
+                    output_options["unity_font_paths"] = configured_fonts
                 else:
                     raise ValueError(
                         f"--font is not supported for detected engine {selected_engine}"

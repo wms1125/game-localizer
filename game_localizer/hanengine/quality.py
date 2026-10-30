@@ -302,6 +302,7 @@ def build_quality_report(
         "build": {
             "candidate_fingerprint": None if build_result is None else build_result.candidate_fingerprint,
             "generated_files": [] if build_result is None else list(build_result.generated_files),
+            "statistics": {} if build_result is None else dict(build_result.statistics),
             "warnings": list(build_warnings),
         },
         "verification": {

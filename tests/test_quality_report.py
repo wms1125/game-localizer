@@ -46,6 +46,10 @@ class QualityReportTests(unittest.TestCase):
             self.assertEqual(payload["status"], "passed")
             self.assertEqual(payload["summary"]["segment_count"], 1)
             self.assertEqual(payload["summary"]["untranslated_count"], 0)
+            # Build statistics must reach the report: they are the only place a
+            # caller can see how many files were written and what the build did.
+            self.assertEqual(payload["build"]["statistics"]["segments"], 1)
+            self.assertEqual(payload["build"]["statistics"]["files"], 1)
             self.assertIn("Quality report:", stdout.getvalue())
 
     def test_localize_writes_failed_report_when_translation_is_incomplete(self):

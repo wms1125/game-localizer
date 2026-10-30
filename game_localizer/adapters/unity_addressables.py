@@ -15,6 +15,12 @@ from game_localizer.hanengine.multiengine import (
     LocalizationEntry,
 )
 from game_localizer.hanengine.tasks import TaskCancelled
+from game_localizer.hanengine.unity_fonts import (
+    UnityFontError,
+    font_codepoints,
+    repair_font,
+    required_codepoints,
+)
 
 from .contract import (
     AdapterError,
@@ -425,6 +431,203 @@ def _update_catalog(
         temporary.unlink(missing_ok=True)
 
 
+def _catalog_crc_references(catalog_data: bytes, bundle: Path) -> int:
+    return catalog_data.count(struct.pack("<I", _bundle_crc(bundle)))
+
+
+@dataclass(frozen=True)
+class _FontRecord:
+    bundle: Path
+    name: str
+    codepoints: frozenset[int]
+
+
+def _font_inventory(platform_dir: Path, context) -> tuple[_FontRecord, ...]:
+    """Every legacy dynamic ``Font`` shipped in one Addressables platform folder."""
+
+    records: list[_FontRecord] = []
+    for bundle in sorted(platform_dir.iterdir(), key=lambda path: path.name.casefold()):
+        context.checkpoint()
+        if not bundle.is_file() or bundle.is_symlink() or bundle.suffix.casefold() != ".bundle":
+            continue
+        try:
+            environment = _unitypy_load(bundle)
+        except UnityAddressablesError:
+            raise
+        except Exception:
+            # Not a UnityFS bundle (or not readable): font repair is best-effort
+            # here, so one odd file must not stop the build.
+            continue
+        try:
+            for obj in environment.objects:
+                if obj.type.name != "Font":
+                    continue
+                try:
+                    data = obj.read()
+                except Exception:
+                    continue
+                payload = getattr(data, "m_FontData", None)
+                name = getattr(data, "m_Name", None)
+                if not isinstance(payload, list) or not payload or not isinstance(name, str):
+                    continue
+                try:
+                    codepoints = font_codepoints(bytes(payload))
+                except UnityFontError:
+                    continue
+                records.append(_FontRecord(bundle, name, codepoints))
+        finally:
+            del environment
+            gc.collect()
+    return tuple(records)
+
+
+def _font_payload(bundle: Path, name: str) -> bytes | None:
+    environment = _unitypy_load(bundle)
+    try:
+        for obj in environment.objects:
+            if obj.type.name != "Font":
+                continue
+            try:
+                data = obj.read()
+            except Exception:
+                continue
+            if getattr(data, "m_Name", None) != name:
+                continue
+            payload = getattr(data, "m_FontData", None)
+            if isinstance(payload, list) and payload:
+                return bytes(payload)
+        return None
+    finally:
+        del environment
+        gc.collect()
+
+
+def _repair_fonts(
+    bundle: Path,
+    *,
+    required: frozenset[int],
+    donor: bytes,
+    context,
+) -> int:
+    """Merge missing CJK glyphs from ``donor`` into every ``Font`` in ``bundle``.
+
+    Returns the number of font assets that changed.  Bundles whose fonts already
+    cover ``required`` are left byte-identical, which matters because re-saving a
+    bundle drops its compression: a 350 KB bundle becomes 2.4 MB once rewritten.
+    """
+
+    try:
+        environment = _unitypy_load(bundle)
+    except UnityAddressablesError:
+        raise
+    except Exception as exc:
+        raise UnityAddressablesError(f"UnityPy could not open {bundle.name}") from exc
+    temporary = Path(tempfile.mkdtemp(prefix=".hnu-font-", dir=str(bundle.parent)))
+    try:
+        changed = 0
+        for obj in environment.objects:
+            context.checkpoint()
+            if obj.type.name != "Font":
+                continue
+            try:
+                data = obj.read()
+            except Exception as exc:
+                raise UnityAddressablesError(
+                    f"UnityPy could not read a font in {bundle.name}"
+                ) from exc
+            payload = getattr(data, "m_FontData", None)
+            if not isinstance(payload, list) or not payload:
+                # Static/atlased fonts store bitmaps in m_CharacterRects; this
+                # adapter only knows how to extend dynamic TTFs.
+                continue
+            shipped = bytes(payload)
+            if not (required - font_codepoints(shipped)):
+                continue
+            name = getattr(data, "m_Name", None) or "font"
+            try:
+                merged = repair_font(shipped, donor, required=required)
+            except UnityFontError as exc:
+                raise UnityAddressablesError(f"{bundle.name}:{name}: {exc}") from exc
+            data.m_FontData = list(merged)
+            obj.save_typetree(data)
+            changed += 1
+        if not changed:
+            return 0
+        environment.save(out_path=str(temporary))
+        del environment
+        gc.collect()
+        written = temporary / bundle.name
+        if not written.is_file():
+            raise UnityAddressablesError(f"UnityPy did not write the repaired bundle: {bundle.name}")
+        written.replace(bundle)
+        return changed
+    except (TaskCancelled, UnityAddressablesError):
+        raise
+    except Exception as exc:
+        raise UnityAddressablesError(f"UnityPy could not rebuild {bundle.name}") from exc
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
+
+
+def _repair_project_fonts(
+    layout: _AddressablesLayout,
+    translations: dict[tuple[str, int], str],
+    donor_paths: tuple[Path, ...],
+    context,
+) -> tuple[tuple[Path, ...], dict[str, object], tuple[str, ...]]:
+    """Guarantee every shipped font can render the translated text.
+
+    Returns the bundles that changed, statistics, and warnings.  A donor is
+    either configured (``--font``) or taken from any font the game already ships
+    that covers the missing codepoints, so games with an existing CJK face need
+    no configuration at all.
+    """
+
+    required = required_codepoints(value for value in translations.values() if value)
+    platform_dir = layout.chinese_bundle.parent
+    inventory = _font_inventory(platform_dir, context)
+    if not inventory or not required:
+        return (), {"fonts_repaired": 0, "font_bundles": 0}, ()
+    incomplete = [
+        record for record in inventory if required - record.codepoints
+    ]
+    if not incomplete:
+        return (), {"fonts_repaired": 0, "font_bundles": 0}, ()
+    missing_all: set[int] = set()
+    for record in incomplete:
+        missing_all.update(required - record.codepoints)
+    donors: list[tuple[str, bytes]] = []
+    for path in donor_paths:
+        donors.append((path.name, path.read_bytes()))
+    for record in inventory:
+        if missing_all <= record.codepoints:
+            payload = _font_payload(record.bundle, record.name)
+            if payload is not None:
+                donors.append((f"{record.bundle.name}:{record.name}", payload))
+    donor = next(
+        (payload for _name, payload in donors if missing_all <= font_codepoints(payload)),
+        None,
+    )
+    if donor is None:
+        warnings = tuple(
+            f"{record.name} is missing {len(required - record.codepoints)} glyph(s) and no "
+            "donor font covers them; pass --font to supply a CJK font"
+            for record in incomplete
+        )
+        return (), {"fonts_repaired": 0, "font_bundles": 0}, warnings
+    target_bundles = {record.bundle for record in incomplete}
+    changed_bundles: list[Path] = []
+    repaired = 0
+    for bundle in sorted(target_bundles, key=lambda path: path.name.casefold()):
+        repaired += _repair_fonts(bundle, required=required, donor=donor, context=context)
+        changed_bundles.append(bundle)
+    return (
+        tuple(changed_bundles),
+        {"fonts_repaired": repaired, "font_bundles": len(changed_bundles)},
+        (),
+    )
+
+
 class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
     """Unity adapter with a narrow Unity Localization Addressables profile."""
 
@@ -661,12 +864,36 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 progress_offset=0,
                 progress_total=progress_total,
             )
+            failure_stage = "font-repair"
+            donor_paths = tuple(
+                Path(item) for item in request.output_options.get("unity_font_paths", ())
+            )
+            changed_font_bundles, font_statistics, font_warnings = _repair_project_fonts(
+                candidate_profile.layout,
+                translations,
+                donor_paths,
+                request.context,
+            )
             failure_stage = "catalog-update"
+            catalog_data = candidate_profile.layout.catalog.read_bytes()
+            tracked_font_bundles = []
+            for bundle in changed_font_bundles:
+                source_bundle = profile.layout.chinese_bundle.parent / bundle.name
+                references = _catalog_crc_references(catalog_data, source_bundle)
+                if references == 1:
+                    tracked_font_bundles.append(bundle)
+                elif references > 1:
+                    raise UnityAddressablesError(
+                        f"catalog.bin contains {references} CRC references for {bundle.name}"
+                    )
+                # Zero references means the catalog never validates this bundle,
+                # so it can be rewritten without a catalog update.
+            crc_bundles = (candidate_profile.layout.chinese_bundle, *tracked_font_bundles)
             _update_catalog(
                 profile.layout.catalog,
                 candidate_profile.layout.catalog,
-                (profile.layout.chinese_bundle,),
-                (candidate_profile.layout.chinese_bundle,),
+                tuple(profile.layout.chinese_bundle.parent / bundle.name for bundle in crc_bundles),
+                crc_bundles,
             )
             failure_stage = "candidate-read-back"
             checked_candidate = _profile(temporary)
@@ -679,7 +906,17 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                     "rebuilt Simplified Chinese table failed read-back or English table changed"
                 )
             failure_stage = "manifest-generation"
-            relative_paths = tuple(sorted(checked_candidate.layout.localized_files(temporary)))
+            relative_paths = tuple(
+                sorted(
+                    {
+                        *checked_candidate.layout.localized_files(temporary),
+                        *(
+                            bundle.relative_to(temporary).as_posix()
+                            for bundle in changed_font_bundles
+                        ),
+                    }
+                )
+            )
             manifest = tuple(
                 BuildManifestEntry(
                     relative_path=relative,
@@ -702,8 +939,16 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                     "segments": len(translations),
                     "english_entries_preserved": len(profile.english_records),
                     "chinese_entries": changed_chinese,
+                    "fonts_repaired": font_statistics["fonts_repaired"],
                 },
             )
+            statistics: dict[str, object] = {
+                "files": len(relative_paths),
+                "segments": len(translations),
+                "english_entries_preserved": len(profile.english_records),
+                "chinese_entries": changed_chinese,
+                **font_statistics,
+            }
             return BuildResult(
                 generated_files=relative_paths,
                 added_files=(),
@@ -712,13 +957,8 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
                 manifest=manifest,
                 artifacts=(),
                 candidate_fingerprint=_candidate_fingerprint(manifest),
-                warnings=(),
-                statistics={
-                    "files": len(relative_paths),
-                    "segments": len(translations),
-                    "english_entries_preserved": len(profile.english_records),
-                    "chinese_entries": changed_chinese,
-                },
+                warnings=font_warnings,
+                statistics=statistics,
             )
         except TaskCancelled as exc:
             return self._error(
@@ -781,7 +1021,24 @@ class UnityAddressablesAdapterV1(PlainUnityAdapterV1):
             issues: list[ValidationIssue] = []
             manifest_paths = tuple(sorted(entry.relative_path for entry in request.manifest))
             profile_paths = tuple(sorted(profile.layout.localized_files(request.staging_root)))
-            profile_matches = manifest_paths == profile_paths and len(manifest_paths) == len(set(manifest_paths))
+            required = set(profile_paths)
+            extras = set(manifest_paths) - required
+            platform_dir = profile.layout.chinese_bundle.parent.relative_to(
+                request.staging_root.resolve(strict=True)
+            ).as_posix()
+            # Font repair adds the bundles it rewrote to the manifest, so the
+            # required files must be covered and every extra entry must be a
+            # bundle beside them -- nothing outside the platform folder counts.
+            extras_are_bundles = all(
+                path.startswith(f"{platform_dir}/")
+                and Path(path).suffix.casefold() == ".bundle"
+                for path in extras
+            )
+            profile_matches = (
+                required <= set(manifest_paths)
+                and len(manifest_paths) == len(set(manifest_paths))
+                and extras_are_bundles
+            )
             checks.append(
                 VerificationCheck(
                     "unity_addressables_manifest",
